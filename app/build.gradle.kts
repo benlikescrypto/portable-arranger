@@ -18,7 +18,7 @@ android {
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
-        applicationId = "com.arrangerbox"
+        applicationId = "com.arrangerbox.internal"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
