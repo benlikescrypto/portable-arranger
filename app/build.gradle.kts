@@ -1,4 +1,4 @@
-import java.util.Properties
+﻿import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -22,8 +22,8 @@ android {
         applicationId = "com.arrangerbox.internal"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
 
         externalNativeBuild {
             cmake {
@@ -125,3 +125,4 @@ play {
     track.set("internal")
     defaultToAppBundles.set(true)
 }
+
