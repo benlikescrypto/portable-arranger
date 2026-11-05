@@ -1,0 +1,1 @@
+-keep class com.portablearranger.engine.NativeEngine { *; }

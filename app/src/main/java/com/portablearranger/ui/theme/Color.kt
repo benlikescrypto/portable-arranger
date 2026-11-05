@@ -1,0 +1,25 @@
+package com.portablearranger.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val PaBg = Color(0xFF0B0C0E)
+val PaBgRaised = Color(0xFF121418)
+val PaPanel = Color(0xFF181B20)
+val PaPanelAlt = Color(0xFF1F232A)
+val PaStroke = Color(0xFF2C3138)
+val PaStrokeSoft = Color(0xFF252A31)
+val PaText = Color(0xFFF4F5F7)
+val PaMuted = Color(0xFF9AA3AE)
+val PaDim = Color(0xFF6B7380)
+val PaOrange = Color(0xFFFF7A18)
+val PaOrangeDim = Color(0xFFC45A10)
+val PaOrangeGlow = Color(0x33FF7A18)
+val PaBlue = Color(0xFF4EA3FF)
+val PaBlueDim = Color(0xFF1E5A96)
+val PaGreen = Color(0xFF3DDC84)
+val PaRed = Color(0xFFE85D4C)
+val PaGold = Color(0xFFFFC857)
+val PaPurple = Color(0xFFC77DFF)
+val PaMeter = Color(0xFF7CDB9B)
+val PaKeyWhite = Color(0xFFEDE7DC)
+val PaKeyBlack = Color(0xFF16181C)
