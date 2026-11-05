@@ -15,15 +15,15 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.portablearranger"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.arrangerbox.internal"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        targetSdk = 36
+        versionCode = 2
+        versionName = "0.1.1"
 
         externalNativeBuild {
             cmake {
