@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.github.triplet.play")
 }
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -114,4 +115,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("com.google.oboe:oboe:1.9.0")
+}
+
+play {
+    val playJson = rootProject.file("play-service-account.json")
+    if (playJson.exists()) {
+        serviceAccountCredentials.set(playJson)
+    }
+    track.set("internal")
+    defaultToAppBundles.set(true)
 }

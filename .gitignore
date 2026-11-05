@@ -16,5 +16,6 @@ captures/
 keystore.properties
 upload-keystore.jks
 upload-keystore.p12
+play-service-account.json
 CMakeUserPresets.json
 .kotlin/
