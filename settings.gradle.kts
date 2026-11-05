@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PortableArranger"
+rootProject.name = "ArrangerBox"
 include(":app")

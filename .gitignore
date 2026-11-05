@@ -12,5 +12,9 @@ captures/
 *.aab
 *.keystore
 *.jks
+*.p12
+keystore.properties
+upload-keystore.jks
+upload-keystore.p12
 CMakeUserPresets.json
 .kotlin/

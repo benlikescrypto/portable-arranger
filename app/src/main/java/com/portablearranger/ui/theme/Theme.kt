@@ -16,6 +16,6 @@ private val Scheme = darkColorScheme(
 )
 
 @Composable
-fun PortableArrangerTheme(content: @Composable () -> Unit) {
+fun ArrangerBoxTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = Scheme, typography = PaTypography, content = content)
 }

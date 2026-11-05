@@ -30,7 +30,7 @@ data class MixerState(
 data class ArrangerUiState(
     val mode: Mode = Mode.STYLE,
     val setName: String = "Factory Engine",
-    val adapterName: String = "Portable Arranger",
+    val adapterName: String = "ArrangerBox",
     val sounds: List<SoundItem> = emptyList(),
     val styles: List<StyleItem> = emptyList(),
     val query: String = "",

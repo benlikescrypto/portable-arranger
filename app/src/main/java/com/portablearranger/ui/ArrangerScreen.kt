@@ -107,7 +107,7 @@ private fun TopBar(s: ArrangerUiState, vm: ArrangerViewModel, onLoad: () -> Unit
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Column {
-            Text("PORTABLE ARRANGER", color = PaOrange, fontWeight = FontWeight.Black, fontSize = 13.sp, letterSpacing = 1.4.sp)
+            Text("ARRANGERBOX", color = PaOrange, fontWeight = FontWeight.Black, fontSize = 13.sp, letterSpacing = 1.4.sp)
             Text("${s.adapterName}  ·  ${s.setName}", color = PaMuted, fontSize = 11.sp)
         }
         Spacer(Modifier.weight(1f))

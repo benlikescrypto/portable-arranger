@@ -11,7 +11,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.portablearranger.ui.ArrangerScreen
 import com.portablearranger.ui.ArrangerViewModel
-import com.portablearranger.ui.theme.PortableArrangerTheme
+import com.portablearranger.ui.theme.ArrangerBoxTheme
 
 class MainActivity : ComponentActivity() {
     private val vm: ArrangerViewModel by viewModels()
@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         setContent {
-            PortableArrangerTheme {
+            ArrangerBoxTheme {
                 ArrangerScreen(vm)
             }
         }
