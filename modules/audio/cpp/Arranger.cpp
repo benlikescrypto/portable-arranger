@@ -213,8 +213,11 @@ void Arranger::renderTicks(Engine& eng, ArrangerState& st, int ticks, float) {
                 ch = 4 + std::max(0, std::min(2, (int)ev.trk - 2));
             }
             if (inst < 0) continue;
+            if (!st.chordSet && bus != BusDrums) continue;
             eng.playInternal(inst, note, ev.vel, bus, ch);
-            if (ev.flags == kEvTrans) captureHold(*this, inst, note, ch, ev.dur);
+            if (bus != BusDrums) {
+                captureHold(*this, inst, note, ch, ev.dur > 0 ? ev.dur : 24);
+            }
         }
         tickHolds(eng, *this);
         ph++;

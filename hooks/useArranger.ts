@@ -21,6 +21,21 @@ function catalogStyles(): StyleItem[] {
   }))
 }
 
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+
+function audition(id: number, restore?: number) {
+  if (!isAudioNativeAvailable) return
+  if (previewTimer) clearTimeout(previewTimer)
+  audio.cc(0, 123, 0)
+  audio.setPartProgram(0, id)
+  audio.noteOn(0, 72, 96)
+  previewTimer = setTimeout(() => {
+    audio.noteOff(0, 72)
+    audio.cc(0, 123, 0)
+    if (restore != null) audio.setPartProgram(0, restore)
+  }, 320)
+}
+
 const initial: ArrangerUiState = {
   mode: "STYLE",
   setName: "",
@@ -147,6 +162,7 @@ export function useArranger() {
       if (part === 1) return { ...s, upper2: id, upper2On: true, recentSounds }
       if (part === 2) return { ...s, upper3: id, upper3On: true, recentSounds }
       if (part === 3) return { ...s, lower: id, recentSounds }
+      audition(id)
       return { ...s, upper1: id, recentSounds }
     })
   }, [])
@@ -316,13 +332,7 @@ export function useArranger() {
       },
       previewSound: (id: number) => {
         setState((s) => {
-          const restore = s.upper1
-          audio.setPartProgram(0, id)
-          audio.noteOn(0, 72, 100)
-          setTimeout(() => {
-            audio.noteOff(0, 72)
-            audio.setPartProgram(0, restore)
-          }, 450)
+          audition(id, s.upper1)
           return s
         })
       },

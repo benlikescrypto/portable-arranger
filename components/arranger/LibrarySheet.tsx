@@ -11,6 +11,7 @@ type Props = {
   category: string
   categories: string[]
   filter: "all" | "factory" | "imported"
+  showSourceFilter?: boolean
   onQuery: (q: string) => void
   onCategory: (c: string) => void
   onFilter: (f: "all" | "factory" | "imported") => void
@@ -24,6 +25,7 @@ export function LibrarySheet({
   category,
   categories,
   filter,
+  showSourceFilter = false,
   onQuery,
   onCategory,
   onFilter,
@@ -37,17 +39,17 @@ export function LibrarySheet({
       style={[
         styles.sheet,
         {
-          paddingTop: Math.max(insets.top, 8) + 4,
+          paddingTop: Math.max(insets.top, 8) + 6,
           paddingBottom: Math.max(insets.bottom, 8),
-          paddingLeft: Math.max(insets.left, 12),
-          paddingRight: Math.max(insets.right, 12),
+          paddingLeft: Math.max(insets.left, 16),
+          paddingRight: Math.max(insets.right, 16),
         },
       ]}
     >
       <View style={styles.head}>
         <Text style={styles.title}>{title}</Text>
-        <Pressable onPress={onClose} style={styles.close} hitSlop={8}>
-          <Text style={styles.closeLabel}>CLOSE</Text>
+        <Pressable onPress={onClose} style={({ pressed }) => [styles.close, pressed && styles.pressed]} hitSlop={8}>
+          <Text style={styles.closeLabel}>Done</Text>
         </Pressable>
       </View>
       <TextInput
@@ -57,13 +59,15 @@ export function LibrarySheet({
         placeholderTextColor={Pa.dim}
         style={styles.search}
       />
-      <View style={styles.row}>
-        {(["all", "factory", "imported"] as const).map((f) => (
-          <Pressable key={f} onPress={() => onFilter(f)} style={[styles.chip, filter === f && styles.chipOn]}>
-            <Text style={[styles.chipLabel, filter === f && styles.chipLabelOn]}>{f.toUpperCase()}</Text>
-          </Pressable>
-        ))}
-      </View>
+      {showSourceFilter ? (
+        <View style={styles.row}>
+          {(["all", "factory", "imported"] as const).map((f) => (
+            <Pressable key={f} onPress={() => onFilter(f)} style={[styles.chip, filter === f && styles.chipOn]}>
+              <Text style={[styles.chipLabel, filter === f && styles.chipLabelOn]}>{f}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
         {categories.map((c) => (
           <Pressable key={c} onPress={() => onCategory(c)} style={[styles.chip, category === c && styles.chipOn]}>
@@ -71,7 +75,7 @@ export function LibrarySheet({
           </Pressable>
         ))}
       </ScrollView>
-      <ScrollView style={styles.body} contentContainerStyle={styles.grid}>
+      <ScrollView style={styles.body} contentContainerStyle={styles.grid} keyboardShouldPersistTaps="handled">
         {children}
       </ScrollView>
     </View>
@@ -101,7 +105,12 @@ export function LibraryItem({
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
-      style={[styles.item, active && styles.itemOn, width != null ? { width, minWidth: 0 } : null]}
+      style={({ pressed }) => [
+        styles.item,
+        active && styles.itemOn,
+        width != null ? { width, minWidth: 0 } : null,
+        pressed && styles.pressed,
+      ]}
     >
       <View style={{ flex: 1 }}>
         <Text style={styles.itemName} numberOfLines={1}>
@@ -112,8 +121,8 @@ export function LibraryItem({
         </Text>
       </View>
       {onFavorite ? (
-        <Pressable onPress={onFavorite} hitSlop={8}>
-          <Text style={{ color: favorite ? Pa.gold : Pa.dim }}>{favorite ? "★" : "☆"}</Text>
+        <Pressable onPress={onFavorite} hitSlop={10}>
+          <Text style={{ color: favorite ? Pa.gold : Pa.dim, fontSize: 16 }}>{favorite ? "★" : "☆"}</Text>
         </Pressable>
       ) : null}
     </Pressable>
@@ -142,8 +151,8 @@ export function filterLibrary<T extends SoundItem | StyleItem>(
 }
 
 export function libraryItemWidth(windowWidth: number): `${number}%` {
-  if (windowWidth < 520) return "100%"
-  if (windowWidth < 900) return "48%"
+  if (windowWidth < 560) return "100%"
+  if (windowWidth < 980) return "48%"
   return "31%"
 }
 
@@ -151,43 +160,50 @@ const styles = StyleSheet.create({
   sheet: {
     ...StyleSheet.absoluteFill,
     backgroundColor: Pa.bg,
-    gap: 8,
+    gap: 10,
     zIndex: 20,
   },
   head: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  title: { color: Pa.orange, fontWeight: "900", fontSize: 16, letterSpacing: 1.4, flex: 1 },
-  close: { height: 44, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: Pa.stroke, justifyContent: "center" },
-  closeLabel: { color: Pa.text, fontWeight: "800" },
+  title: { color: Pa.text, fontWeight: "700", fontSize: 28, letterSpacing: -0.6, flex: 1 },
+  close: { height: 40, paddingHorizontal: 14, borderRadius: 20, backgroundColor: Pa.panel, justifyContent: "center" },
+  closeLabel: { color: Pa.text, fontWeight: "700", fontSize: 15 },
   search: {
-    height: 42,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Pa.stroke,
+    height: 46,
+    borderRadius: 14,
     color: Pa.text,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     backgroundColor: Pa.panel,
+    fontSize: 16,
   },
-  row: { flexDirection: "row", gap: 6, alignItems: "center" },
-  chip: { height: 32, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: Pa.stroke, justifyContent: "center" },
-  chipOn: { backgroundColor: Pa.orange, borderColor: Pa.orange },
-  chipLabel: { color: Pa.muted, fontSize: 11, fontWeight: "700" },
+  row: { flexDirection: "row", gap: 8, alignItems: "center" },
+  chip: {
+    height: 34,
+    paddingHorizontal: 12,
+    borderRadius: 17,
+    backgroundColor: Pa.panel,
+    justifyContent: "center",
+  },
+  chipOn: { backgroundColor: Pa.text },
+  chipLabel: { color: Pa.muted, fontSize: 13, fontWeight: "700" },
   chipLabelOn: { color: Pa.bg },
   body: { flex: 1 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingBottom: 16 },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingBottom: 20 },
   item: {
     width: "31%",
     minWidth: 160,
     flexGrow: 1,
     backgroundColor: Pa.panel,
-    borderWidth: 1,
-    borderColor: Pa.stroke,
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    borderWidth: 1,
+    borderColor: "transparent",
   },
-  itemOn: { borderColor: Pa.orange, backgroundColor: "#2A1C10" },
-  itemName: { color: Pa.text, fontWeight: "700", fontSize: 14 },
-  itemMeta: { color: Pa.muted, fontSize: 11, marginTop: 2 },
+  itemOn: { backgroundColor: Pa.panelAlt, borderColor: Pa.text },
+  itemName: { color: Pa.text, fontWeight: "700", fontSize: 16 },
+  itemMeta: { color: Pa.muted, fontSize: 13, marginTop: 3 },
+  pressed: { opacity: 0.82 },
 })

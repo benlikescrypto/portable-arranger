@@ -357,7 +357,7 @@ void Engine::startTsfVoice(const Patch& p, int note, int vel, int bus, int ch) {
 
 void Engine::tsfAllNotesOff(int fromCh, int toCh) {
     if (!gmFont) return;
-    for (int c = fromCh; c <= toCh; ++c) tsf_channel_note_off_all(gmFont, c);
+    for (int c = fromCh; c <= toCh; ++c) tsf_channel_sounds_off_all(gmFont, c);
 }
 
 int Engine::loadSoundfont(const char* path) {
@@ -609,6 +609,7 @@ void Engine::detectChord() {
         if (n < lowest) lowest = n;
     }
     if (count == 0) return;
+    arrSt.chordSet = true;
     int bestRoot = lowest % 12;
     int bestType = 0;
     int bestScore = -1;
@@ -704,6 +705,14 @@ void Engine::handle(const MidiEvent& e) {
                 setFx(0, e.c / 127.0f);
             } else if (e.b == 93) {
                 setFx(1, e.c / 127.0f);
+            } else if (e.b == 120 || e.b == 123) {
+                tsfAllNotesOff(0, 15);
+                for (auto& v : voices) {
+                    v.amp.noteOff();
+                    v.filtEg.noteOff();
+                    v.releasing = true;
+                    v.active = false;
+                }
             }
             break;
         case MidiKind::Pb: {

@@ -24,7 +24,7 @@ export default function RootLayout() {
         screenOptions={{
           headerShown: false,
           orientation: "default",
-          contentStyle: { backgroundColor: "#0B0C0E", flex: 1 },
+          contentStyle: { backgroundColor: "#07080A", flex: 1 },
         }}
       />
       <StatusBar style="light" />
