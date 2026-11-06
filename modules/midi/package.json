@@ -1,0 +1,12 @@
+{
+  "name": "arrangerbox-midi",
+  "version": "0.1.0",
+  "description": "USB-MIDI host using Android MidiManager and iOS CoreMIDI",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "keywords": ["expo", "expo-module", "midi"],
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "license": "UNLICENSED"
+}

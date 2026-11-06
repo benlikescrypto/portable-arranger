@@ -1,0 +1,12 @@
+{
+  "name": "arrangerbox-device",
+  "version": "0.1.0",
+  "description": "USB host and hardware capability reporting",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "keywords": ["expo", "expo-module"],
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ArrangerBoxAudioModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.arrangerboxaudio.ArrangerBoxAudioModule"]
+  }
+}

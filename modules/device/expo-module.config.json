@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ArrangerBoxDeviceModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.arrangerboxdevice.ArrangerBoxDeviceModule"]
+  }
+}
