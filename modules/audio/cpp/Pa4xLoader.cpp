@@ -174,6 +174,37 @@ struct MidiNote {
     int tick = 0, ch = 0, note = 0, vel = 0, dur = 0;
 };
 
+struct Marker {
+    int tick = 0;
+    std::string name;
+};
+
+std::string lowerCopy(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+int markerSection(const std::string& raw) {
+    const std::string s = lowerCopy(raw);
+    auto has = [&](const char* k) { return s.find(k) != std::string::npos; };
+    if (has("v1cv") || has("variation 1") || has("var 1") || has("main a") || s == "v1") return 3;
+    if (has("v2cv") || has("variation 2") || has("var 2") || has("main b") || s == "v2") return 4;
+    if (has("v3cv") || has("variation 3") || has("var 3") || has("main c") || s == "v3") return 5;
+    if (has("v4cv") || has("variation 4") || has("var 4") || has("main d") || s == "v4") return 6;
+    if (has("i1cv") || has("intro 1") || has("intro a") || s == "i1") return 0;
+    if (has("i2cv") || has("intro 2") || has("intro b") || s == "i2") return 1;
+    if (has("i3cv") || has("intro 3") || has("c.in") || has("cin") || s == "i3") return 2;
+    if (has("f1cv") || has("fill 1") || has("fill in a") || has("fill in aa") || s == "f1") return 7;
+    if (has("f2cv") || has("fill 2") || has("fill in b") || has("fill in bb") || s == "f2") return 8;
+    if (has("f3cv") || has("fill 3") || has("fill in c") || has("fill in cc") || s == "f3") return 9;
+    if (has("f4cv") || has("fill 4") || has("fill in d") || has("fill in dd") || s == "f4") return 10;
+    if (has("brv") || has("break") || s == "brk") return 11;
+    if (has("e1cv") || has("ending 1") || has("ending a") || s == "e1") return 12;
+    if (has("e2cv") || has("ending 2") || has("ending b") || s == "e2") return 13;
+    if (has("e3cv") || has("ending 3") || has("ending c") || s == "e3") return 14;
+    return -1;
+}
+
 bool looksLikeMidi(const uint8_t* d, size_t n) {
     if (n < 8) return false;
     if (std::memcmp(d, "MThd", 4) == 0 || std::memcmp(d, "MTrk", 4) == 0) return true;
@@ -185,7 +216,7 @@ bool looksLikeMidi(const uint8_t* d, size_t n) {
     return false;
 }
 
-void parseSmfTrack(const uint8_t* p, size_t n, int division, std::vector<MidiNote>& notes) {
+void parseSmfTrack(const uint8_t* p, size_t n, int division, std::vector<MidiNote>& notes, std::vector<Marker>* markers) {
     const uint8_t* cur = p;
     const uint8_t* end = p + n;
     int tick = 0;
@@ -223,8 +254,10 @@ void parseSmfTrack(const uint8_t* p, size_t n, int division, std::vector<MidiNot
             if (cur >= end) break;
             const uint8_t meta = *cur++;
             const uint32_t len = readVlq(cur, end);
-            (void)meta;
             if (cur + len > end) break;
+            if (markers && (meta == 0x06 || meta == 0x03) && len > 0) {
+                markers->push_back({tick, std::string((const char*)cur, (size_t)len)});
+            }
             cur += len;
             continue;
         }
@@ -261,7 +294,7 @@ void parseSmfTrack(const uint8_t* p, size_t n, int division, std::vector<MidiNot
     (void)division;
 }
 
-void parseSmf(const uint8_t* b, size_t n, std::vector<MidiNote>& notes, int& division) {
+void parseSmf(const uint8_t* b, size_t n, std::vector<MidiNote>& notes, int& division, std::vector<Marker>* markers) {
     division = 96;
     size_t i = 0;
     bool any = false;
@@ -279,7 +312,7 @@ void parseSmf(const uint8_t* b, size_t n, std::vector<MidiNote>& notes, int& div
         if (std::memcmp(b + i, "MTrk", 4) == 0) {
             const uint32_t sz = ru32be(b + i + 4);
             if (i + 8 + sz <= n) {
-                parseSmfTrack(b + i + 8, sz, division, notes);
+                parseSmfTrack(b + i + 8, sz, division, notes, markers);
                 any = true;
             }
             i += 8 + (sz ? sz : 1);
@@ -287,7 +320,7 @@ void parseSmf(const uint8_t* b, size_t n, std::vector<MidiNote>& notes, int& div
         }
         ++i;
     }
-    if (!any && looksLikeMidi(b, n)) parseSmfTrack(b, n, division, notes);
+    if (!any && looksLikeMidi(b, n)) parseSmfTrack(b, n, division, notes, markers);
 }
 
 bool inflateZlibBlock(const uint8_t* p, size_t n, std::vector<uint8_t>& out) {
@@ -346,36 +379,70 @@ int scaleTick(int tick, int division) {
     return std::max(0, (int)((int64_t)tick * kPpq / division));
 }
 
+void splitByMarkers(const std::vector<MidiNote>& notes, std::vector<Marker> markers, std::vector<std::vector<MidiNote>>& out) {
+    std::vector<std::pair<int, int>> spans;
+    for (const auto& mk : markers) {
+        const int sec = markerSection(mk.name);
+        if (sec >= 0) spans.push_back({mk.tick, sec});
+    }
+    if (spans.empty()) {
+        if (!notes.empty()) out.push_back(notes);
+        return;
+    }
+    std::sort(spans.begin(), spans.end());
+    std::vector<std::vector<MidiNote>> sections(15);
+    for (const auto& n : notes) {
+        int sec = spans[0].second;
+        int start = spans[0].first;
+        for (const auto& sp : spans) {
+            if (n.tick >= sp.first) {
+                sec = sp.second;
+                start = sp.first;
+            }
+        }
+        MidiNote c = n;
+        c.tick = std::max(0, n.tick - start);
+        sections[(size_t)sec].push_back(c);
+    }
+    out.assign(15, {});
+    for (int i = 0; i < 15; ++i) out[(size_t)i] = std::move(sections[(size_t)i]);
+}
+
+void ingestMidiBuffer(const uint8_t* b, size_t n, std::vector<std::vector<MidiNote>>& blobs) {
+    std::vector<MidiNote> notes;
+    std::vector<Marker> markers;
+    int div = 96;
+    parseSmf(b, n, notes, div, &markers);
+    if (notes.empty()) return;
+    for (auto& m : notes) {
+        m.tick = scaleTick(m.tick, div);
+        m.dur = std::max(1, scaleTick(m.dur, div));
+    }
+    for (auto& mk : markers) mk.tick = scaleTick(mk.tick, div);
+    std::vector<std::vector<MidiNote>> split;
+    splitByMarkers(notes, markers, split);
+    if (split.size() == 15) {
+        blobs = std::move(split);
+        return;
+    }
+    for (auto& s : split) {
+        if (!s.empty()) blobs.push_back(std::move(s));
+    }
+}
+
 void collectMidiBlobs(const uint8_t* b, size_t n, std::vector<std::vector<MidiNote>>& blobs) {
     for (size_t i = 0; i + 8 < n; ++i) {
         if (std::memcmp(b + i, "MThd", 4) == 0 || std::memcmp(b + i, "MTrk", 4) == 0) {
-            std::vector<MidiNote> notes;
-            int div = 96;
-            parseSmf(b + i, n - i, notes, div);
-            if (!notes.empty()) {
-                for (auto& m : notes) {
-                    m.tick = scaleTick(m.tick, div);
-                    m.dur = std::max(1, scaleTick(m.dur, div));
-                }
-                blobs.push_back(std::move(notes));
-                i += 64;
-            }
-        } else if (i + 8 < n && std::memcmp(b + i, "OC31", 4) == 0) {
+            const size_t before = blobs.size();
+            ingestMidiBuffer(b + i, n - i, blobs);
+            if (blobs.size() > before) i += 64;
+        } else if (std::memcmp(b + i, "OC31", 4) == 0) {
             uint32_t cap = ru32le(b + i + 4);
             if (cap < 64 || cap > 8u * 1024u * 1024u) cap = ru32be(b + i + 4);
             if (cap < 64 || cap > 8u * 1024u * 1024u) cap = 1u * 1024u * 1024u;
             std::vector<uint8_t> unpacked;
             if (lzssInflate(b + i + 8, n - (i + 8), unpacked, cap) && looksLikeMidi(unpacked.data(), unpacked.size())) {
-                std::vector<MidiNote> notes;
-                int div = 96;
-                parseSmf(unpacked.data(), unpacked.size(), notes, div);
-                if (!notes.empty()) {
-                    for (auto& m : notes) {
-                        m.tick = scaleTick(m.tick, div);
-                        m.dur = std::max(1, scaleTick(m.dur, div));
-                    }
-                    blobs.push_back(std::move(notes));
-                }
+                ingestMidiBuffer(unpacked.data(), unpacked.size(), blobs);
             }
             i += 8;
         }
@@ -383,16 +450,7 @@ void collectMidiBlobs(const uint8_t* b, size_t n, std::vector<std::vector<MidiNo
     if (blobs.empty()) {
         std::vector<uint8_t> inflated;
         if (inflateZlibBlock(b, n, inflated) && looksLikeMidi(inflated.data(), inflated.size())) {
-            std::vector<MidiNote> notes;
-            int div = 96;
-            parseSmf(inflated.data(), inflated.size(), notes, div);
-            if (!notes.empty()) {
-                for (auto& m : notes) {
-                    m.tick = scaleTick(m.tick, div);
-                    m.dur = std::max(1, scaleTick(m.dur, div));
-                }
-                blobs.push_back(std::move(notes));
-            }
+            ingestMidiBuffer(inflated.data(), inflated.size(), blobs);
         }
     }
 }
@@ -404,17 +462,20 @@ void notesToPattern(const std::vector<MidiNote>& notes, Arranger::Pattern& p) {
         const int tick = m.tick;
         const int dur = std::max(1, m.dur);
         last = std::max(last, tick + dur);
+        // PA-series style SMF: 9 bass, 10 drums, 11 perc, 12-16 acc
         uint8_t flags = kEvTrans;
-        uint8_t trk = (uint8_t)m.ch;
-        if (m.ch == 9) {
+        uint8_t trk = 2;
+        if (m.ch == 9 || m.ch == 10) {
             flags = kEvAbs;
             trk = 0;
+        } else if (m.ch == 8) {
+            trk = 1;
+        } else if (m.ch >= 11 && m.ch <= 15) {
+            trk = (uint8_t)(m.ch - 9);
         } else if (m.ch == 1) {
             trk = 1;
-        } else if (m.ch == 0) {
-            trk = 2;
         } else {
-            trk = (uint8_t)std::min(5, m.ch);
+            trk = (uint8_t)std::min(5, std::max(2, (int)m.ch));
         }
         p.evs.push_back({(uint16_t)std::min(tick, 65535), trk, (uint8_t)m.note, (uint8_t)m.vel, (uint16_t)std::min(dur, 65535),
                          flags});
@@ -753,10 +814,37 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         }
     }
 
+    auto parseKorfNames = [&](const uint8_t* b, size_t n, std::vector<std::string>& names) {
+        if (n < 64) return false;
+        size_t tag = n;
+        for (size_t i = 0; i + 4 <= 48; ++i) {
+            if (std::memcmp(b + i, "KORF", 4) == 0) {
+                tag = i;
+                break;
+            }
+        }
+        if (tag > 40) return false;
+        uint32_t indexLen = ru32be(b + 32);
+        if (indexLen < 24 || 36 + indexLen > n) indexLen = ru32le(b + 32);
+        if (indexLen < 24 || 36 + indexLen > n) return false;
+        const int entries = (int)(indexLen / 24);
+        for (int e = 0; e < entries; ++e) {
+            const uint8_t* row = b + 36 + (size_t)e * 24;
+            if (row + 24 > b + n) break;
+            const int kind = row[18];
+            if (kind != 2 && kind != 0 && kind != 7) continue;
+            if (kind == 7) continue;
+            const std::string name = readFixed(row, 16);
+            if (name.size() >= 3) names.push_back(name);
+        }
+        return names.size() >= 1;
+    };
+
     auto ingestStyleFile = [&](const std::string& path, const std::string& fallbackName) {
         std::vector<uint8_t> bytes;
         if (!readFileBytes(path.c_str(), bytes)) return;
-        auto names = extractNames(bytes.data(), bytes.size());
+        std::vector<std::string> names;
+        if (!parseKorfNames(bytes.data(), bytes.size(), names)) names = extractNames(bytes.data(), bytes.size());
         if (names.empty()) names.push_back(fallbackName);
         std::vector<std::vector<MidiNote>> blobs;
         collectMidiBlobs(bytes.data(), bytes.size(), blobs);
