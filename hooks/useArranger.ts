@@ -217,7 +217,7 @@ export function useArranger() {
       ...s,
       importing: true,
       importProgress: 0,
-      importMessage: "Pick a PA4X STY, or STY + PCM/KMP from the SET…",
+      importMessage: "Pick a PA4X .SET folder…",
     }))
     try {
       const lib = await importPa4xSet((progress) => {
