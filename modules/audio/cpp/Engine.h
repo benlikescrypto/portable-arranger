@@ -143,8 +143,6 @@ int loadKsf(const char* path, Sample& out);
 int scanPcmBank(const char* path, std::vector<Sample>& out);
 bool readFileBytes(const char* path, std::vector<uint8_t>& bytes);
 int loadKsfBytes(const uint8_t* bytes, size_t n, Sample& out, bool* compressed = nullptr);
-Arranger::Style completeStyle(Arranger::Style s);
-Arranger::Style fallbackStyle(const char* name, const char* cat, float tempo);
 
 class Arranger {
 public:
@@ -188,6 +186,9 @@ public:
     Hold holds[64]{};
     int holdn = 0;
 };
+
+Arranger::Style completeStyle(Arranger::Style s);
+Arranger::Style fallbackStyle(const char* name, const char* cat, float tempo);
 
 class Engine {
 public:
