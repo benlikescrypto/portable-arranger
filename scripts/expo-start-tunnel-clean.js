@@ -10,6 +10,7 @@
  */
 const { execSync, spawn } = require("child_process")
 const fs = require("fs")
+const http = require("http")
 const https = require("https")
 const path = require("path")
 const { pipeline } = require("stream/promises")
@@ -95,7 +96,7 @@ function waitForTunnelUrl(child, timeoutMs = 60000) {
       const match = buf.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i)
       if (match) {
         cleanup()
-        resolve(match[0])
+        resolve(match[0].replace(/\/$/, ""))
       }
     }
 
@@ -114,6 +115,57 @@ function waitForTunnelUrl(child, timeoutMs = 60000) {
   })
 }
 
+function getText(url, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith("https:") ? https : http
+    const req = lib.get(url, { timeout: timeoutMs }, (res) => {
+      let body = ""
+      res.setEncoding("utf8")
+      res.on("data", (chunk) => {
+        body += chunk
+      })
+      res.on("end", () => {
+        if ((res.statusCode ?? 500) >= 400) {
+          reject(new Error(`HTTP ${res.statusCode}`))
+          return
+        }
+        resolve(body)
+      })
+    })
+    req.on("timeout", () => {
+      req.destroy(new Error(`Timed out fetching ${url}`))
+    })
+    req.on("error", reject)
+  })
+}
+
+async function waitFor(label, fn, timeoutMs = 45000) {
+  const started = Date.now()
+  let lastError = "not started"
+  while (Date.now() - started < timeoutMs) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    }
+  }
+  throw new Error(`${label} was not ready: ${lastError}`)
+}
+
+function printOpenLinks(url) {
+  const encoded = encodeURIComponent(url)
+  const sdk58 = `exp+arrangerbox://?__expo_url=${encoded}`
+  const legacy = `exp+arrangerbox://expo-development-client/?url=${encoded}`
+  console.log("\n==============================================")
+  console.log("Metro is up. Open ArrangerBox with this link:")
+  console.log(sdk58)
+  console.log("\nIf that sits on Looking for server, use:")
+  console.log(legacy)
+  console.log("\nDo not paste the https URL into Expo Home.")
+  console.log("==============================================\n")
+}
+
 async function main() {
   if (process.platform !== "win32") {
     console.error("This helper is intended for Windows PowerShell environments.")
@@ -125,7 +177,7 @@ async function main() {
   killPortListeners(8081)
 
   const bin = await ensureCloudflared()
-  console.log("Expo shared ngrok is unavailable; starting Cloudflare quick tunnel...")
+  console.log("Starting Cloudflare quick tunnel...")
 
   const tunnel = spawn(
     bin,
@@ -134,11 +186,12 @@ async function main() {
       "--url",
       "http://127.0.0.1:8081",
       "--no-autoupdate",
-      // http2 is more reliable than quic for Expo Metro on Windows.
       "--protocol",
       "http2",
       "--ha-connections",
-      "1",
+      "4",
+      "--edge-ip-version",
+      "4",
     ],
     {
       cwd: root,
@@ -148,16 +201,8 @@ async function main() {
   )
 
   const url = await waitForTunnelUrl(tunnel)
-  const host = new URL(url).hostname
-  const launchUrl =
-    `exp+arrangerbox://?__expo_url=${encodeURIComponent(url)}` +
-    `&__expo_disable_onboarding=1&__expo_disable_fab=1&__expo_disable_auto_launch=1`
-
   console.log(`\nTunnel ready: ${url}`)
-  console.log(`Using EXPO_PACKAGER_PROXY_URL=${url}`)
-  console.log("\nOpen ArrangerBox with this link (do not paste the https URL into Expo Home):")
-  console.log(launchUrl)
-  console.log("Scan the Metro QR on the iPad instead of typing a URL.\n")
+  console.log(`Using EXPO_PACKAGER_PROXY_URL=${url}\n`)
 
   const expo = spawn(
     "npx",
@@ -170,8 +215,6 @@ async function main() {
         ...process.env,
         EXPO_TUNNEL_SUBDOMAIN: "",
         EXPO_PACKAGER_PROXY_URL: url,
-        REACT_NATIVE_PACKAGER_HOSTNAME: host,
-        EXPO_NO_DEV_MENU: "1",
       },
     },
   )
@@ -206,6 +249,23 @@ async function main() {
       // ignore
     }
   })
+
+  try {
+    await waitFor("Metro", async () => {
+      const body = await getText("http://127.0.0.1:8081/status", 4000)
+      if (!body.includes("running")) throw new Error(body.trim() || "metro not running")
+      return body
+    })
+    await waitFor("tunnel", async () => {
+      const body = await getText(`${url}/status`, 8000)
+      if (!body.includes("running")) throw new Error(body.trim() || "tunnel not running")
+      return body
+    })
+    printOpenLinks(url)
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error)
+    printOpenLinks(url)
+  }
 }
 
 main().catch((error) => {
