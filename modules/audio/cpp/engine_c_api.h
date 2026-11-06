@@ -68,6 +68,7 @@ int arrangerbox_scan_pcm_bank(const char* path);
 int arrangerbox_load_pa4x_set(const char* folder, char* report, int reportLen);
 int arrangerbox_load_sfz(const char* path, char* report, int reportLen);
 int arrangerbox_load_abstyle(const char* path, char* report, int reportLen);
+int arrangerbox_load_soundfont(const char* path);
 
 #ifdef __cplusplus
 }

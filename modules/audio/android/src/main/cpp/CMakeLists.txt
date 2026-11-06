@@ -18,7 +18,8 @@ add_library(arranger_engine SHARED
         ${PA_CPP}/Pa4xLoader.cpp
         ${PA_CPP}/SfzParser.cpp
         ${PA_CPP}/StyleFormat.cpp
-        ${PA_CPP}/PcgParser.cpp)
+        ${PA_CPP}/PcgParser.cpp
+        ${PA_CPP}/TsfHost.cpp)
 
 find_library(log-lib log)
 find_library(android-lib android)

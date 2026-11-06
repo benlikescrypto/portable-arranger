@@ -24,6 +24,12 @@ Java_expo_modules_arrangerboxaudio_EngineNative_nativeStart(JNIEnv*, jclass) {
     return arrangerbox_audio_start() ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadSoundfont(JNIEnv* env, jclass, jstring path) {
+    const std::string p = jstr(env, path);
+    return arrangerbox_load_soundfont(p.c_str()) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeStop(JNIEnv*, jclass) {
     arrangerbox_audio_stop();

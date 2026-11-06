@@ -2,12 +2,30 @@ package expo.modules.arrangerboxaudio
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.io.File
 
 class ArrangerBoxAudioModule : Module() {
+  private fun loadFactorySoundfont() {
+    val ctx = appContext.reactContext?.applicationContext ?: return
+    val dest = File(ctx.filesDir, "GeneralUser-GS.sf2")
+    if (dest.length() < 1_000_000L) {
+      ctx.assets.open("GeneralUser-GS.sf2").use { input ->
+        dest.outputStream().use { output -> input.copyTo(output) }
+      }
+    }
+    if (dest.length() > 1_000_000L) {
+      EngineNative.nativeLoadSoundfont(dest.absolutePath)
+    }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("ArrangerBoxAudio")
 
     OnCreate {
+      try {
+        loadFactorySoundfont()
+      } catch (_: Throwable) {
+      }
       EngineNative.nativeStart()
     }
 
@@ -18,6 +36,10 @@ class ArrangerBoxAudioModule : Module() {
     Function("isAvailable") { true }
 
     AsyncFunction("start") {
+      try {
+        loadFactorySoundfont()
+      } catch (_: Throwable) {
+      }
       EngineNative.nativeStart()
     }
 

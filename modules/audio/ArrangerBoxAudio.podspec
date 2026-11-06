@@ -29,4 +29,7 @@ Pod::Spec.new do |s|
   s.source_files = 'ios/**/*.{h,m,mm,swift}', 'cpp/*.{h,hpp,c,cpp}'
   s.private_header_files = 'cpp/*.{h,hpp}'
   s.exclude_files = 'cpp/tests/**/*'
+  s.resource_bundles = {
+    'ArrangerBoxAudio' => ['factory/GeneralUser-GS.sf2', 'factory/LICENSE.txt']
+  }
 end

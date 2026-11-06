@@ -1,11 +1,11 @@
 # ArrangerBox factory license manifest
 
-No third-party PCM, SoundFont, or manufacturer ROM is shipped in this repository.
-
 | Instrument / style | Original library | Source URL | License | Redistribution | Attribution | Modifications |
 | --- | --- | --- | --- | --- | --- | --- |
-| All factory patches in `modules/audio/cpp/Factory.cpp` | ArrangerBox modeled ROM | this repository | Proprietary ArrangerBox (original synthesis) | Yes, with the app | None required | Original models |
-| All factory styles in `modules/audio/cpp/FactoryStyles.cpp` | ArrangerBox original MIDI arrangements | this repository | Proprietary ArrangerBox | Yes, with the app | None required | Original patterns |
+| Factory GM samples (`modules/audio/factory/GeneralUser-GS.sf2`) | GeneralUser GS 2.0.3 by S. Christian Collins | https://github.com/mrbumpy409/GeneralUser-GS | See `modules/audio/factory/LICENSE.txt` | Yes, bundled with the app and LICENSE.txt | Credit S. Christian Collins | Unmodified SF2 |
+| TinySoundFont (`modules/audio/cpp/third_party/tsf.h`) | TinySoundFont | https://github.com/schellingb/TinySoundFont | MIT | Yes | Copyright Bernhard Schelling / SFZero | Vendored header |
+| Factory patch names / GM mapping in `Factory.cpp` | ArrangerBox | this repository | Proprietary ArrangerBox | Yes, with the app | None required | Maps UI names onto GeneralUser GS GM programs |
+| Factory styles in `FactoryStyles.cpp` | ArrangerBox original MIDI arrangements | this repository | Proprietary ArrangerBox | Yes, with the app | None required | Original patterns |
 
 ## Approved external sources (not bundled here)
 

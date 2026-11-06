@@ -80,6 +80,18 @@ int arrangerbox_audio_start(void) {
     pa::Engine* engine = arrangerbox_live_engine();
     if (!engine) return 0;
 
+    if (!engine->hasSoundfont()) {
+        NSString* path = [[NSBundle mainBundle] pathForResource:@"GeneralUser-GS" ofType:@"sf2"];
+        if (!path) {
+            NSString* bundlePath = [[NSBundle mainBundle] pathForResource:@"ArrangerBoxAudio" ofType:@"bundle"];
+            if (bundlePath) {
+                NSBundle* extra = [NSBundle bundleWithPath:bundlePath];
+                path = [extra pathForResource:@"GeneralUser-GS" ofType:@"sf2"];
+            }
+        }
+        if (path) engine->loadSoundfont(path.fileSystemRepresentation);
+    }
+
     AVAudioSession* session = [AVAudioSession sharedInstance];
     NSError* error = nil;
     [session setCategory:AVAudioSessionCategoryPlayback

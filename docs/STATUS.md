@@ -4,7 +4,7 @@ This is the honest record of what is implemented, what was tested, and what is s
 
 ## Architecture (done)
 
-One C++ engine in `modules/audio/cpp` owns voices, samples, effects, chord detection, and accompaniment. Factory modeled patches, SFZ instruments, and imported Korg KMP/KSF/WAV instruments all become `Patch` + `Zone` + `Sample`. React Native never renders audio. Kotlin `MidiManager` and Swift CoreMIDI parse MIDI and push a lock-free queue.
+One C++ engine in `modules/audio/cpp` owns voices, samples, effects, chord detection, and accompaniment. Factory GM notes play through TinySoundFont + GeneralUser GS. SFZ instruments and imported Korg KMP/KSF/WAV instruments stay on the sampler IR. React Native never renders audio. Kotlin `MidiManager` and Swift CoreMIDI parse MIDI and push a lock-free queue.
 
 See `docs/SOUND_ENGINE.md`, `docs/STYLE_FORMAT.md`, and `assets/factory/LICENSE_MANIFEST.md`.
 
@@ -12,19 +12,19 @@ See `docs/SOUND_ENGINE.md`, `docs/STYLE_FORMAT.md`, and `assets/factory/LICENSE_
 
 | Area | Status |
 | --- | --- |
-| Unified sample + modeled synth, 96 voices, hermite interpolation, loops, ADSR, SVF, reverb/chorus/delay | Implemented |
-| Factory modeled ROM | **111** patches (original IDs 0–33 kept stable) |
+| Unified sampler + TinySoundFont factory GM, 96 sampler voices + 128 SF2 voices, hermite interpolation, loops, ADSR, SVF, reverb/chorus/delay | Implemented |
+| Factory GM bank | **GeneralUser GS** (~30 MB SF2) mapped to **111** patch names (original IDs 0–33 kept stable) |
 | Factory styles | **31** original `.abstyle` arrangements with intro/var/fill/break/ending, chord bass/comp |
 | SFZ subset loader | Implemented (see opcode list in SOUND_ENGINE.md) |
 | PA4X SET walk, WAV, KSF, PCM, KMP zones, STY/SMF, PCG names + missing refs | Implemented as a compatibility layer |
 | UI: instrument/style browsers, favorites, recent, import progress, transport, transpose/octave, FX | Implemented |
 | Android + iOS native audio/MIDI modules | Compiled architecture; **not hardware-verified** |
 
-Factory sounds are **original modeled instruments**, not recorded Steinway/PA4X PCM. That is a licensing choice, not a finished multisample ROM. CC0 libraries (VCSL / VSCO 2 CE) may be ingested through the SFZ loader; they are not bundled.
+Factory sounds are **GeneralUser GS samples** played by TinySoundFont, not Korg/Yamaha/Roland ROM and not a modeled synth. TinySoundFont does not implement SoundFont modulators, so some presets are approximate. CC0 libraries (VCSL / VSCO 2 CE) may be ingested through the SFZ loader; they are not bundled.
 
 ## Verified in this workspace
 
-- NDK clang (`x86_64-linux-android26`) compiled Engine, Factory, FactoryStyles, Arranger, Sampler, Pa4xLoader, SfzParser, StyleFormat, PcgParser, engine_c_api, and `tests/test_parsers.cpp`.
+- NDK clang (`x86_64-linux-android26`) compiled Engine, Factory, FactoryStyles, Arranger, Sampler, Pa4xLoader, SfzParser, StyleFormat, PcgParser, engine_c_api, and `tests/test_parsers.cpp`. TinySoundFont (`TsfHost.cpp`) is included in the Android CMake and iOS podspec; this pass was not host-compiled on Windows.
 - `npx tsc --noEmit` passed.
 
 Host `test_engine` playback tests (polyphony, sustain, pitch bend, SFZ zones, arranger audio, KSF, PCG names) are in `modules/audio/cpp/tests`. They require a host C++ toolchain. They were **not executed on this Windows agent** when zlib/MSVC were unavailable.

@@ -29,6 +29,9 @@ android {
       path "src/main/cpp/CMakeLists.txt"
     }
   }
+  sourceSets {
+    main.assets.srcDirs += ['../factory']
+  }
 }
 
 dependencies {

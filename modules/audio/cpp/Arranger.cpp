@@ -177,15 +177,16 @@ void Arranger::renderTicks(Engine& eng, ArrangerState& st, int ticks, float) {
             int note = ev.note;
             int bus = BusDrums;
             int inst = pat->drumProg;
-            int ch = 10 + ev.trk;
+            int ch = 9;
             if (ev.flags == F_ABS) {
                 bus = BusDrums;
                 inst = pat->drumProg;
+                ch = 9;
             } else if (ev.flags == F_BASS) {
                 note = bassNote(st.chordRoot, st.chordType, ev.note);
                 bus = BusBass;
                 inst = pat->bassProg;
-                ch = 9;
+                ch = 8;
             } else if (ev.flags == kEvTrans) {
                 note = (int)ev.note + st.chordRoot;
                 while (note > 96) note -= 12;
@@ -194,22 +195,22 @@ void Arranger::renderTicks(Engine& eng, ArrangerState& st, int ticks, float) {
                 if (ev.trk == 0 || ((ev.note >= 35 && ev.note <= 81) && ev.trk == 9)) {
                     bus = BusDrums;
                     inst = pat->drumProg;
-                    ch = 10;
+                    ch = 9;
                     note = ev.note;
                 } else if (ev.trk == 1) {
                     bus = BusBass;
                     inst = pat->bassProg;
-                    ch = 9;
+                    ch = 8;
                 } else {
                     bus = BusAcc;
                     inst = ev.trk == 2 ? pat->acc1 : (ev.trk == 3 ? pat->acc2 : pat->acc3);
-                    ch = 8;
+                    ch = 4 + std::max(0, std::min(2, (int)ev.trk - 2));
                 }
             } else {
                 note = compNote(st.chordRoot, st.chordType, ev.note);
                 bus = BusAcc;
                 inst = (ev.trk == 2) ? pat->acc1 : (ev.trk == 3 ? pat->acc2 : pat->acc3);
-                ch = 8;
+                ch = 4 + std::max(0, std::min(2, (int)ev.trk - 2));
             }
             if (inst < 0) continue;
             eng.playInternal(inst, note, ev.vel, bus, ch);

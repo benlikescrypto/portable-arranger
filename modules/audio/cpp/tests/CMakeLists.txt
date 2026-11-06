@@ -15,7 +15,8 @@ add_executable(test_engine
         ${PA_CPP}/Sampler.cpp
         ${PA_CPP}/SfzParser.cpp
         ${PA_CPP}/StyleFormat.cpp
-        ${PA_CPP}/PcgParser.cpp)
+        ${PA_CPP}/PcgParser.cpp
+        ${PA_CPP}/TsfHost.cpp)
 
 target_include_directories(test_engine PRIVATE ${PA_CPP})
 

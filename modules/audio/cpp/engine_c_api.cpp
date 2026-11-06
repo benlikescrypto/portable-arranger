@@ -237,4 +237,11 @@ int arrangerbox_load_abstyle(const char* path, char* report, int reportLen) {
     return e->loadAbStyle(path, report, reportLen);
 }
 
+int arrangerbox_load_soundfont(const char* path) {
+    if (!live()) arrangerbox_engine_create();
+    auto* e = live();
+    if (!e || !path) return 0;
+    return e->loadSoundfont(path);
+}
+
 }  // extern "C"

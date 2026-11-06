@@ -15,6 +15,6 @@ TypeScript never talks to this API directly. Kotlin and Swift wrap it.
 | `arrangerbox_midi_clock/start/stop/continue` | MIDI | Clock counter + arranger transport |
 | catalog / mixer / style | UI | Not called from the audio thread |
 
-Do not call filesystem, JNI, or network from `render`. Sample loading (`load_wav`, `load_ksf`, `scan_pcm_bank`, `load_sfz`, `load_pa4x_set`, `load_abstyle`) is UI/background only.
+Do not call filesystem, JNI, or network from `render`. Sample loading (`load_wav`, `load_ksf`, `scan_pcm_bank`, `load_sfz`, `load_pa4x_set`, `load_abstyle`, `load_soundfont`) is UI/background only. Factory GM uses TinySoundFont + `factory/GeneralUser-GS.sf2`.
 
 Architecture notes: `docs/SOUND_ENGINE.md`. Style file format: `docs/STYLE_FORMAT.md`. Verification status: `docs/STATUS.md`.

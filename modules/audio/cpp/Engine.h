@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+struct tsf;
+
 namespace pa {
 
 struct Sample {
@@ -286,6 +288,8 @@ public:
     int loadPa4xSet(const char* folder, char* report, int reportLen);
     int loadSfz(const char* path, char* report, int reportLen);
     int loadAbStyle(const char* path, char* report, int reportLen);
+    int loadSoundfont(const char* path);
+    bool hasSoundfont() const { return gmFont != nullptr; }
 
     float latencyMs() const { return latency.load(); }
     int currentChordRoot() const { return arrSt.displayRoot.load(); }
@@ -313,6 +317,10 @@ private:
     void renderSample(Voice& v, float& L, float& R);
     void detectChord();
     void wireFactoryStylePrograms();
+    void startTsfVoice(const Patch& p, int note, int vel, int bus, int ch);
+    int tsfChannelFor(int bus, int ch, bool drums) const;
+    void applyTsfProgram(int tsfCh, const Patch& p);
+    void tsfAllNotesOff(int fromCh, int toCh);
 
     MidiQueue<1024> midi;
     Voice voices[kMaxVoices];
@@ -347,6 +355,7 @@ private:
     std::atomic<uint32_t> clockTicks{0};
     std::mutex loadMu;
     bool factoryReady = false;
+    tsf* gmFont = nullptr;
 };
 
 }  // namespace pa

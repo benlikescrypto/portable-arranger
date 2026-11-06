@@ -6,6 +6,7 @@ internal object EngineNative {
   }
 
   @JvmStatic external fun nativeStart(): Boolean
+  @JvmStatic external fun nativeLoadSoundfont(path: String): Boolean
   @JvmStatic external fun nativeStop()
   @JvmStatic external fun nativeDestroy()
   @JvmStatic external fun nativeNoteOn(ch: Int, note: Int, vel: Int)

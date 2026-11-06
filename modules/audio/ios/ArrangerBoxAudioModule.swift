@@ -126,6 +126,35 @@ func arrangerbox_load_sfz(_ path: UnsafePointer<CChar>, _ report: UnsafeMutableP
 @_silgen_name("arrangerbox_load_abstyle")
 func arrangerbox_load_abstyle(_ path: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
 
+@_silgen_name("arrangerbox_load_soundfont")
+func arrangerbox_load_soundfont(_ path: UnsafePointer<CChar>) -> Int32
+
+private func factorySoundfontPath() -> String? {
+  let fileName = "GeneralUser-GS"
+  if let path = Bundle.main.path(forResource: fileName, ofType: "sf2") {
+    return path
+  }
+  if let path = Bundle(for: ArrangerBoxAudioModule.self).path(forResource: fileName, ofType: "sf2") {
+    return path
+  }
+  if let bundleUrl = Bundle.main.url(forResource: "ArrangerBoxAudio", withExtension: "bundle"),
+     let bundle = Bundle(url: bundleUrl),
+     let path = bundle.path(forResource: fileName, ofType: "sf2") {
+    return path
+  }
+  if let bundleUrl = Bundle(for: ArrangerBoxAudioModule.self).url(forResource: "ArrangerBoxAudio", withExtension: "bundle"),
+     let bundle = Bundle(url: bundleUrl),
+     let path = bundle.path(forResource: fileName, ofType: "sf2") {
+    return path
+  }
+  return nil
+}
+
+private func loadFactorySoundfont() {
+  guard let path = factorySoundfontPath() else { return }
+  _ = path.withCString { arrangerbox_load_soundfont($0) }
+}
+
 private func stringFromCBuffer(capacity: Int, fill: (UnsafeMutablePointer<CChar>, Int32) -> Void) -> String {
   let cap = max(1, capacity)
   let bytes = UnsafeMutablePointer<CChar>.allocate(capacity: cap)
@@ -157,6 +186,7 @@ public class ArrangerBoxAudioModule: Module {
     Name("ArrangerBoxAudio")
 
     OnCreate {
+      loadFactorySoundfont()
       _ = arrangerbox_audio_start()
     }
 
@@ -167,6 +197,7 @@ public class ArrangerBoxAudioModule: Module {
     Function("isAvailable") { true }
 
     AsyncFunction("start") {
+      loadFactorySoundfont()
       arrangerbox_audio_start() != 0
     }
 

@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "third_party/tsf.h"
 
 #include <cmath>
 #include <cstdio>
@@ -41,7 +42,12 @@ Engine::Engine() {
     factoryReady = true;
 }
 
-Engine::~Engine() = default;
+Engine::~Engine() {
+    if (gmFont) {
+        tsf_close(gmFont);
+        gmFont = nullptr;
+    }
+}
 
 void Engine::prepare(float sr) {
     sampleRate = sr > 1.0f ? sr : 48000.0f;
@@ -51,6 +57,7 @@ void Engine::prepare(float sr) {
     eqMidR.setPeaking(sampleRate, 1200.0f, 0.7f, 0.0f);
     eqHighL.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f);
     eqHighR.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f);
+    if (gmFont) tsf_set_output(gmFont, TSF_STEREO_INTERLEAVED, (int)sampleRate, -4.0f);
 }
 
 void Engine::noteOn(int ch, int note, int vel) {
@@ -107,6 +114,265 @@ const char* Engine::soundSource(int id) const {
         case PatchSource::User: return "USER";
         default: return "FACTORY";
     }
+}
+
+static void gmProgramFor(const Patch& p, int& bank, int& program, bool drums) {
+    bank = 0;
+    program = 0;
+    if (drums) {
+        switch (p.model) {
+            case Model::KitDance:
+                program = 25;
+                break;
+            case Model::KitOrchestral:
+                program = 48;
+                break;
+            case Model::KitLatin:
+                program = 8;
+                break;
+            case Model::KitArabic:
+            case Model::KitWorld:
+                program = 40;
+                break;
+            default:
+                program = 0;
+                break;
+        }
+        return;
+    }
+    switch (p.model) {
+        case Model::Piano:
+            program = 0;
+            break;
+        case Model::BrightPiano:
+            program = 1;
+            break;
+        case Model::SoftPiano:
+            program = 0;
+            break;
+        case Model::UprightPiano:
+            program = 0;
+            break;
+        case Model::DigitalPiano:
+            program = 2;
+            break;
+        case Model::Rhodes:
+            program = 4;
+            break;
+        case Model::Wurly:
+            program = 5;
+            break;
+        case Model::Clav:
+            program = 7;
+            break;
+        case Model::Harpsichord:
+            program = 6;
+            break;
+        case Model::Violin:
+            program = 40;
+            break;
+        case Model::OrientalStrings:
+        case Model::ConcertStrings:
+            program = 48;
+            break;
+        case Model::CinematicStrings:
+            program = 49;
+            break;
+        case Model::Pizzicato:
+            program = 45;
+            break;
+        case Model::SoloCello:
+            program = 42;
+            break;
+        case Model::WarmPad:
+            program = 89;
+            break;
+        case Model::Atmosphere:
+            program = 99;
+            break;
+        case Model::Oud:
+        case Model::Saz:
+        case Model::Bouzouki:
+            program = 105;
+            break;
+        case Model::Ney:
+        case Model::Duduk:
+            program = 77;
+            break;
+        case Model::Kanun:
+            program = 15;
+            break;
+        case Model::Accordion:
+            program = 21;
+            break;
+        case Model::Sax:
+            program = 66;
+            break;
+        case Model::Trumpet:
+            program = 56;
+            break;
+        case Model::Brass:
+            program = 61;
+            break;
+        case Model::Trombone:
+            program = 57;
+            break;
+        case Model::FrenchHorn:
+            program = 60;
+            break;
+        case Model::Tuba:
+            program = 58;
+            break;
+        case Model::SynthBrass:
+            program = 62;
+            break;
+        case Model::AcousticBass:
+        case Model::UprightBass:
+            program = 32;
+            break;
+        case Model::FingerBass:
+            program = 33;
+            break;
+        case Model::PickedBass:
+            program = 34;
+            break;
+        case Model::SynthBass:
+            program = 38;
+            break;
+        case Model::JazzOrgan:
+            program = 17;
+            break;
+        case Model::RockOrgan:
+            program = 18;
+            break;
+        case Model::ChurchOrgan:
+        case Model::PipeOrgan:
+            program = 19;
+            break;
+        case Model::DrawbarOrgan:
+            program = 16;
+            break;
+        case Model::SquareLead:
+            program = 80;
+            break;
+        case Model::SawLead:
+        case Model::AnalogLead:
+            program = 81;
+            break;
+        case Model::DigitalLead:
+            program = 87;
+            break;
+        case Model::NylonGuitar:
+            program = 24;
+            break;
+        case Model::SteelGuitar:
+            program = 25;
+            break;
+        case Model::CleanGuitar:
+            program = 27;
+            break;
+        case Model::MuteGuitar:
+            program = 28;
+            break;
+        case Model::DistGuitar:
+            program = 30;
+            break;
+        case Model::Flute:
+            program = 73;
+            break;
+        case Model::Piccolo:
+            program = 72;
+            break;
+        case Model::Clarinet:
+            program = 71;
+            break;
+        case Model::Oboe:
+            program = 68;
+            break;
+        case Model::Bassoon:
+            program = 70;
+            break;
+        case Model::Pluck:
+            program = 45;
+            break;
+        case Model::Choir:
+            program = 52;
+            break;
+        case Model::Harp:
+            program = 46;
+            break;
+        case Model::Vibraphone:
+            program = 11;
+            break;
+        case Model::Marimba:
+            program = 12;
+            break;
+        case Model::Xylophone:
+            program = 13;
+            break;
+        case Model::Bells:
+            program = 14;
+            break;
+        case Model::Timpani:
+            program = 47;
+            break;
+        default:
+            program = 0;
+            break;
+    }
+}
+
+int Engine::tsfChannelFor(int bus, int ch, bool drums) const {
+    if (drums || bus == BusDrums) return 9;
+    if (bus == BusBass) return 8;
+    if (bus == BusPad) return 7;
+    if (ch >= 0 && ch < 16) return ch;
+    if (bus == BusAcc) return 4;
+    return 0;
+}
+
+void Engine::applyTsfProgram(int tsfCh, const Patch& p) {
+    if (!gmFont) return;
+    const bool drums = isKit(p.model);
+    int bank = 0, program = 0;
+    gmProgramFor(p, bank, program, drums);
+    if (drums) {
+        tsf_channel_set_presetnumber(gmFont, tsfCh, program, 1);
+    } else {
+        tsf_channel_set_bank_preset(gmFont, tsfCh, bank, program);
+    }
+}
+
+void Engine::startTsfVoice(const Patch& p, int note, int vel, int bus, int ch) {
+    if (!gmFont) return;
+    const bool drums = isKit(p.model);
+    const int tch = tsfChannelFor(bus, ch, drums);
+    applyTsfProgram(tch, p);
+    const float vol = clampf(chanVol[ch & 15] * chanExpr[ch & 15] * 0.95f, 0.08f, 1.0f);
+    tsf_channel_set_volume(gmFont, tch, vol);
+    const int pw = (int)clampf(8192.0f + chanBend[ch & 15] * 8192.0f, 0.0f, 16383.0f);
+    tsf_channel_set_pitchwheel(gmFont, tch, pw);
+    tsf_channel_note_on(gmFont, tch, note, clampf((float)vel / 127.0f, 0.0f, 1.0f));
+}
+
+void Engine::tsfAllNotesOff(int fromCh, int toCh) {
+    if (!gmFont) return;
+    for (int c = fromCh; c <= toCh; ++c) tsf_channel_note_off_all(gmFont, c);
+}
+
+int Engine::loadSoundfont(const char* path) {
+    if (gmFont) return 1;
+    if (!path || !path[0]) return 0;
+    tsf* font = tsf_load_filename(path);
+    if (!font) return 0;
+    tsf_set_max_voices(font, 128);
+    const int sr = (int)(sampleRate > 1.0f ? sampleRate : 48000.0f);
+    tsf_set_output(font, TSF_STEREO_INTERLEAVED, sr, -4.0f);
+    tsf_channel_set_presetnumber(font, 9, 0, 1);
+    std::lock_guard<std::mutex> g(loadMu);
+    if (gmFont) tsf_close(gmFont);
+    gmFont = font;
+    return 1;
 }
 
 void Engine::wireFactoryStylePrograms() {
@@ -267,6 +533,10 @@ void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note,
 void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
     if (instId < 0 || instId >= (int)patches.size() || vel <= 0) return;
     const Patch& p = patches[instId];
+    if (gmFont && !p.sampled) {
+        startTsfVoice(p, note, vel, bus, ch);
+        return;
+    }
     if (!p.sampled || p.zones.empty()) {
         Zone dummy;
         startVoiceZone(instId, p, dummy, note, vel, bus, ch);
@@ -302,6 +572,14 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
 }
 
 void Engine::stopVoices(int note, int ch, bool matchInst, int instId) {
+    if (gmFont && !(sustainOn && (ch < 4 || ch < 0))) {
+        if (ch < 0) {
+            for (int c = 0; c < 4; ++c) tsf_channel_note_off(gmFont, c, note);
+        } else {
+            const int tch = tsfChannelFor(-1, ch, ch == 9);
+            tsf_channel_note_off(gmFont, tch, note);
+        }
+    }
     for (int i = 0; i < kMaxVoices; ++i) {
         Voice& v = voices[i];
         if (!v.active) continue;
@@ -404,6 +682,9 @@ void Engine::handle(const MidiEvent& e) {
                 if (e.b >= 0 && e.b < 4) partOn[e.b] = e.c != 0;
             } else if (e.b == 64) {
                 sustainOn = e.c >= 64;
+                if (gmFont) {
+                    for (int c = 0; c < 4; ++c) tsf_channel_set_sustain(gmFont, c, sustainOn ? 1 : 0);
+                }
                 if (!sustainOn) {
                     for (int n = 0; n < 128; ++n) {
                         bool any = false;
@@ -416,6 +697,7 @@ void Engine::handle(const MidiEvent& e) {
                 for (auto& v : voices) v.vibDepth = (e.c / 127.0f) * 0.12f;
             } else if (e.b == 7) {
                 chanVol[e.a & 15] = clampf(e.c / 127.0f, 0.0f, 1.0f);
+                if (gmFont) tsf_channel_set_volume(gmFont, tsfChannelFor(-1, e.a, false), chanVol[e.a & 15]);
             } else if (e.b == 11) {
                 chanExpr[e.a & 15] = clampf(e.c / 127.0f, 0.0f, 1.0f);
             } else if (e.b == 91) {
@@ -429,13 +711,20 @@ void Engine::handle(const MidiEvent& e) {
             const int value = (e.b & 0x7f) | ((e.c & 0x7f) << 7);
             chanBend[ch] = (value - 8192) / 8192.0f;
             chanBendRatio[ch] = std::pow(2.0f, chanBend[ch] * 2.0f / 12.0f);
+            if (gmFont) tsf_channel_set_pitchwheel(gmFont, tsfChannelFor(-1, ch, false), value);
             break;
         }
         case MidiKind::Pc:
             if (e.a >= 0 && e.a < 4) partProg[e.a] = e.b;
+            if (gmFont && e.a >= 0 && e.a < 4 && e.b >= 0 && e.b < (int)patches.size()) {
+                applyTsfProgram(e.a, patches[(size_t)e.b]);
+            }
             break;
         case MidiKind::LoadInst:
             if (e.a >= 0 && e.a < 4) partProg[e.a] = e.b;
+            if (gmFont && e.a >= 0 && e.a < 4 && e.b >= 0 && e.b < (int)patches.size()) {
+                applyTsfProgram(e.a, patches[(size_t)e.b]);
+            }
             break;
         case MidiKind::Style:
             if (e.a == 0 || (e.a == 2 && arrSt.running)) {
@@ -443,6 +732,7 @@ void Engine::handle(const MidiEvent& e) {
                     stopInternal(arr.holds[i].inst, arr.holds[i].note, arr.holds[i].ch);
                 }
                 arr.holdn = 0;
+                tsfAllNotesOff(4, 9);
             }
             if (e.a == 0) arr.stop(arrSt);
             else if (e.a == 1) arr.start(arrSt);
@@ -986,6 +1276,14 @@ void Engine::render(float* out, int frames) {
         float accR = buses[BusAcc * 2 + 1] * mix.g[BusAcc] + buses[BusPad * 2 + 1] * mix.g[BusPad];
         float L = buses[BusKeyboard * 2] * mix.g[BusKeyboard] + buses[BusBass * 2] * mix.g[BusBass] + dL + accL;
         float R = buses[BusKeyboard * 2 + 1] * mix.g[BusKeyboard] + buses[BusBass * 2 + 1] * mix.g[BusBass] + dR + accR;
+        if (gmFont) {
+            float tsfS[2] = {0.0f, 0.0f};
+            tsf_render_float(gmFont, tsfS, 1, 0);
+            L += tsfS[0];
+            R += tsfS[1];
+            sends[0] += tsfS[0] * 0.16f;
+            sends[1] += tsfS[1] * 0.16f;
+        }
         const float choL = chorus.processL(sends[2], sampleRate);
         const float choR = chorus.processR(sends[3], sampleRate);
         float dlyL = 0, dlyR = 0;

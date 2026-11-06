@@ -2,29 +2,32 @@
 
 This document records architecture decisions for the unified C++ engine in `modules/audio/cpp`.
 
-## Decision: one internal representation
+## Decision: one arranger, two sample sources
 
-Factory modeled instruments, SFZ instruments, and imported Korg KMP/KSF/WAV instruments all become `Patch` + `Zone` + `Sample`. The audio thread only sees that IR. There is no second sampler for Korg and no second synth for SFZ.
+The arranger, MIDI queue, mixer, and FX stay in `Engine`. Factory GM notes render through **TinySoundFont** (MIT) and the bundled **GeneralUser GS** SoundFont. Imported Korg KMP/KSF/WAV and SFZ instruments stay on the existing sampler (`Patch` + `Zone` + `Sample`). There is no Korg/Yamaha/Roland ROM and no second arranger.
+
+Modeled additive/FM voices remain only as a fallback if the SF2 file is missing at startup.
 
 ## Evaluated libraries
 
 | Project | License | Role | Decision |
 | --- | --- | --- | --- |
-| JUCE | GPL-3 / commercial | Audio/MIDI host | **Not used.** GPLv3 is incompatible with a closed commercial app without a paid license. Too heavy for the existing Expo native modules. |
-| sfizz | BSD-2-Clause | SFZ player | **Not vendored.** Excellent engine, but it is its own voice graph. Mapping SFZ into our IR keeps Korg import and factory models on the same voice path. |
-| TinySoundFont | MIT | SF2 player | **Not used as a second renderer.** SF2 can be converted offline to SFZ. |
-| FluidSynth | LGPL-2.1 | SF2 synth | **Not linked.** LGPL dynamic linking is awkward on iOS. |
+| TinySoundFont | MIT | SF2 player | **Vendored** (`modules/audio/cpp/third_party/tsf.h`). In-process, no GPL/LGPL, plays the bundled GM bank. |
+| GeneralUser GS | See `modules/audio/factory/LICENSE.txt` | GM SoundFont (~30 MB) | **Bundled.** Real sampled GM/GS bank by S. Christian Collins. TinySoundFont does not implement SoundFont modulators, so some GS programming is approximate; the PCM is still sampled instruments, not a modeled synth. |
+| JUCE | GPL-3 / commercial | Audio/MIDI host | **Not used.** GPLv3 is incompatible with a closed commercial app without a paid license. |
+| sfizz | BSD-2-Clause | SFZ player | **Not vendored.** SFZ import maps into our sampler IR so Korg SET and SFZ share one voice path. |
+| FluidSynth | LGPL-2.1 | SF2 synth | **Not linked.** Better spec completeness (modulators), but LGPL dynamic linking is awkward on iOS. |
 | ConvertWithMoss | GPL-3.0 | Format conversion | **Reference only.** Confirms KMP/KSF/KSC are documented and PCG program data is unpublished. We did not copy GPL code. |
 | Meta Open Sound | Custom | Sample library | **Not bundled.** Redistribution terms need a separate legal pass. |
-| VCSL / VSCO 2 CE | CC0 | Sample library | **Allowed to redistribute.** Not bundled in this tree because the downloads are multi-gigabyte. The SFZ loader is the ingest path. See `assets/factory/LICENSE_MANIFEST.md`. |
+| VCSL / VSCO 2 CE | CC0 | Sample library | **Allowed to redistribute.** Not bundled (multi-gigabyte). The SFZ loader is the ingest path. |
 
 ## Factory library
 
-ArrangerBox ships a **modeled factory ROM**: additive/FM/physical models covering pianos, organs, strings, brass, woodwinds, guitars, basses, world instruments, synths, choir, mallets, and drum kits.
+ArrangerBox ships **GeneralUser GS** as the factory GM bank, mapped from the existing 111 patch names onto GM programs / drum kits. Styles are original ArrangerBox MIDI arrangements that now trigger those GM programs.
 
-This is original ArrangerBox content. It is **not** a dump of Korg, Yamaha, or Roland PCM.
+This is **not** a dump of Korg, Yamaha, or Roland PCM.
 
-Acoustic realism of a recorded Steinway or a PA4X EDS-X program is **not** claimed. Users who want recorded multisamples should import:
+Acoustic realism of a recorded Steinway or a PA4X EDS-X program is **not** claimed. Users who want those libraries should import:
 
 1. Their own PA4X SET (KMP + PCM/KSF).
 2. CC0 SFZ packs such as VCSL.

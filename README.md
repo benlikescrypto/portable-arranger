@@ -100,7 +100,7 @@ The SET files are copied into the app. Native code then:
 
 This is **not** a full EDS-X recreation. PCG oscillator/filter programs are unpublished; playable instruments come from KMP + samples. Confirm with a real SET on hardware.
 
-The app also ships an original modeled factory sound ROM (111 patches) and original factory styles (31). See `docs/SOUND_ENGINE.md`, `docs/STATUS.md`, and `assets/factory/LICENSE_MANIFEST.md`.
+The app ships GeneralUser GS as the factory GM bank (111 named patches mapped to GM programs) plus original factory styles (31). See `docs/SOUND_ENGINE.md`, `docs/STATUS.md`, and `assets/factory/LICENSE_MANIFEST.md`.
 
 ## Remaining work
 
