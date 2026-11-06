@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState, type ComponentRef } from "react"
 import {
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -12,7 +12,12 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { Led } from "@/components/arranger/Led"
-import { filterLibrary, LibraryItem, LibrarySheet } from "@/components/arranger/LibrarySheet"
+import {
+  filterLibrary,
+  LibraryItem,
+  LibrarySheet,
+  libraryItemWidth,
+} from "@/components/arranger/LibrarySheet"
 import { PaButton } from "@/components/arranger/PaButton"
 import { PartTile } from "@/components/arranger/PartTile"
 import { VolumeFader } from "@/components/arranger/VolumeFader"
@@ -24,7 +29,10 @@ export function ArrangerScreen() {
   const s = vm.state
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
+  const pager = useRef<ComponentRef<typeof ScrollView>>(null)
   const [page, setPage] = useState(0)
+  const stacked = width < 700
+  const short = height < 520
   const style = s.styles.find((item) => item.id === s.styleId)
   const soundName = (id: number | null) =>
     id == null ? "—" : (s.sounds.find((item) => item.id === id)?.name ?? "—")
@@ -33,15 +41,20 @@ export function ArrangerScreen() {
   const shownSounds = filterLibrary(s.sounds, s.query, s.category, s.libraryFilter, s.favorites, s.recentSounds)
   const shownStyles = filterLibrary(s.styles, s.query, s.category, s.libraryFilter, s.favorites, s.recentStyles)
   const browsePart = s.mode === "SOUND" ? (s.upper3On && s.upper3 != null ? 2 : 0) : 0
+  const itemWidth = libraryItemWidth(width)
 
   const pagePad = {
     width,
     height,
     paddingTop: Math.max(insets.top, 8),
-    paddingBottom: Math.max(insets.bottom, 10),
+    paddingBottom: Math.max(insets.bottom, 10) + 18,
     paddingLeft: Math.max(insets.left, 10),
     paddingRight: Math.max(insets.right, 10),
   }
+
+  useEffect(() => {
+    pager.current?.scrollTo({ x: page * width, animated: false })
+  }, [width, height, page])
 
   const onPage = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const next = Math.round(event.nativeEvent.contentOffset.x / Math.max(1, width))
@@ -55,13 +68,14 @@ export function ArrangerScreen() {
       onPress={() => vm.book(id)}
       active={s.section === id}
       accent={accent}
-      style={[styles.elem, extra]}
+      style={[styles.elem, short && styles.elemShort, extra]}
     />
   )
 
   return (
     <View style={styles.root}>
       <ScrollView
+        ref={pager}
         horizontal
         pagingEnabled
         bounces={false}
@@ -70,15 +84,22 @@ export function ArrangerScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={[styles.page, pagePad]}>
-          <View style={styles.top}>
+          <View style={[styles.top, stacked && styles.topStacked]}>
             <Text style={styles.mode}>STYLE PLAY</Text>
-            <Text style={styles.status} numberOfLines={1}>
-              {s.importMessage || "Swipe right for START / VOLUME"}
-            </Text>
+            {!stacked ? (
+              <Text style={styles.status} numberOfLines={1}>
+                {s.importMessage || "Swipe right for START / VOLUME"}
+              </Text>
+            ) : null}
             <Led on={s.midiConnected} color={Pa.green} label={s.midiConnected ? s.midiName.slice(0, 8) : "MIDI"} />
             <PaButton label="SOUND" accent={Pa.gold} onPress={() => vm.setMode("SOUND")} style={styles.media} />
             <PaButton label="MEDIA" accent={Pa.blue} onPress={vm.importSet} style={styles.media} />
           </View>
+          {stacked ? (
+            <Text style={styles.status} numberOfLines={1}>
+              {s.importMessage || "Swipe right for START / VOLUME"}
+            </Text>
+          ) : null}
 
           {s.importing ? (
             <View style={styles.progressTrack}>
@@ -86,8 +107,8 @@ export function ArrangerScreen() {
             </View>
           ) : null}
 
-          <View style={styles.play}>
-            <View style={styles.elements}>
+          <View style={[styles.play, stacked && styles.playStacked]}>
+            <View style={[styles.elements, stacked && styles.elementsStacked, short && !stacked && styles.elementsShort]}>
               <Text style={styles.group}>INTRO</Text>
               <View style={styles.row}>
                 {elem(Sections.INTRO1, "1", Pa.orange)}
@@ -98,19 +119,23 @@ export function ArrangerScreen() {
               <View style={styles.row}>
                 {elem(Sections.VAR1, "1", Pa.orange, styles.var)}
                 {elem(Sections.VAR2, "2", Pa.orange, styles.var)}
+                {stacked ? elem(Sections.VAR3, "3", Pa.orange, styles.var) : null}
+                {stacked ? elem(Sections.VAR4, "4", Pa.orange, styles.var) : null}
               </View>
-              <View style={styles.row}>
-                {elem(Sections.VAR3, "3", Pa.orange, styles.var)}
-                {elem(Sections.VAR4, "4", Pa.orange, styles.var)}
-              </View>
+              {!stacked ? (
+                <View style={styles.row}>
+                  {elem(Sections.VAR3, "3", Pa.orange, styles.var)}
+                  {elem(Sections.VAR4, "4", Pa.orange, styles.var)}
+                </View>
+              ) : null}
               <Text style={styles.group}>FILL / BREAK</Text>
               <View style={styles.row}>
                 {elem(Sections.FILL1, "1", Pa.orange)}
                 {elem(Sections.FILL2, "2", Pa.orange)}
                 {elem(Sections.FILL3, "3", Pa.orange)}
                 {elem(Sections.FILL4, "4", Pa.orange)}
+                {elem(Sections.BREAK, "BRK", Pa.gold, styles.break)}
               </View>
-              {elem(Sections.BREAK, "BREAK", Pa.gold, styles.break)}
               <Text style={styles.group}>ENDING</Text>
               <View style={styles.row}>
                 {elem(Sections.END1, "1", Pa.red)}
@@ -119,19 +144,19 @@ export function ArrangerScreen() {
               </View>
             </View>
 
-            <View style={styles.touch}>
+            <View style={[styles.touch, stacked && styles.touchStacked]}>
               <Text style={styles.kicker}>STYLE</Text>
-              <Text style={styles.styleName} numberOfLines={1}>
+              <Text style={[styles.styleName, short && styles.styleNameShort]} numberOfLines={1}>
                 {style?.name ?? "No Style"}
               </Text>
               <View style={styles.chordRow}>
                 <View>
                   <Text style={styles.kicker}>CHORD</Text>
-                  <Text style={styles.chord}>{chordLabel(s.chordRoot, s.chordType)}</Text>
+                  <Text style={[styles.chord, short && styles.chordShort]}>{chordLabel(s.chordRoot, s.chordType)}</Text>
                 </View>
                 <View style={styles.tempoBox}>
                   <Text style={styles.kicker}>TEMPO</Text>
-                  <Text style={styles.tempo}>{Math.round(s.tempo)}</Text>
+                  <Text style={[styles.tempo, short && styles.tempoShort]}>{Math.round(s.tempo)}</Text>
                 </View>
               </View>
               <View style={styles.row}>
@@ -146,43 +171,59 @@ export function ArrangerScreen() {
                   />
                 ))}
               </View>
-              <View style={styles.parts}>
-                <PartTile
-                  title="UPPER 1"
-                  name={soundName(s.upper1)}
-                  on
-                  selected
-                  accent={Pa.orange}
-                  onPress={() => vm.setMode("SOUND")}
-                  onToggle={() => undefined}
-                />
-                <PartTile
-                  title="UPPER 2"
-                  name={soundName(s.upper2)}
-                  on={s.upper2On}
-                  selected={false}
-                  accent={Pa.blue}
-                  onPress={() => vm.selectSound(s.upper2 ?? 7, 1)}
-                  onToggle={() => vm.togglePart(1)}
-                />
-                <PartTile
-                  title="UPPER 3"
-                  name={soundName(s.upper3)}
-                  on={s.upper3On}
-                  selected={false}
-                  accent={Pa.purple}
-                  onPress={() => vm.setMode("SOUND")}
-                  onToggle={() => vm.togglePart(2)}
-                />
-                <PartTile
-                  title="LOWER"
-                  name={soundName(s.lower)}
-                  on={s.lowerOn}
-                  selected={false}
-                  accent={Pa.gold}
-                  onPress={() => vm.selectSound(s.lower, 3)}
-                  onToggle={() => vm.togglePart(3)}
-                />
+              <View style={[styles.parts, stacked && styles.partsStacked]}>
+                {(
+                  [
+                    {
+                      title: "UPPER 1",
+                      name: soundName(s.upper1),
+                      on: true,
+                      selected: true,
+                      accent: Pa.orange,
+                      onPress: () => vm.setMode("SOUND"),
+                      onToggle: () => undefined,
+                    },
+                    {
+                      title: "UPPER 2",
+                      name: soundName(s.upper2),
+                      on: s.upper2On,
+                      selected: false,
+                      accent: Pa.blue,
+                      onPress: () => vm.selectSound(s.upper2 ?? 7, 1),
+                      onToggle: () => vm.togglePart(1),
+                    },
+                    {
+                      title: "UPPER 3",
+                      name: soundName(s.upper3),
+                      on: s.upper3On,
+                      selected: false,
+                      accent: Pa.purple,
+                      onPress: () => vm.setMode("SOUND"),
+                      onToggle: () => vm.togglePart(2),
+                    },
+                    {
+                      title: "LOWER",
+                      name: soundName(s.lower),
+                      on: s.lowerOn,
+                      selected: false,
+                      accent: Pa.gold,
+                      onPress: () => vm.selectSound(s.lower, 3),
+                      onToggle: () => vm.togglePart(3),
+                    },
+                  ] as const
+                ).map((part) => (
+                  <View key={part.title} style={stacked ? styles.partHalf : styles.partFlex}>
+                    <PartTile
+                      title={part.title}
+                      name={part.name}
+                      on={part.on}
+                      selected={part.selected}
+                      accent={part.accent}
+                      onPress={part.onPress}
+                      onToggle={part.onToggle}
+                    />
+                  </View>
+                ))}
               </View>
               <View style={styles.row}>
                 <Text style={styles.kicker}>STYLES</Text>
@@ -208,17 +249,21 @@ export function ArrangerScreen() {
         </View>
 
         <View style={[styles.page, pagePad]}>
-          <View style={styles.top}>
+          <View style={[styles.top, stacked && styles.topStacked]}>
             <Text style={styles.mode}>CONTROL PANEL</Text>
-            <Text style={styles.status}>START, SYNCHRO, VOLUME — swipe left for Style Play</Text>
+            <Text style={styles.status} numberOfLines={1}>
+              START, VOLUME — swipe left for Style Play
+            </Text>
           </View>
-          <View style={styles.panel}>
-            <View style={styles.transport}>
+          <View style={[styles.panel, stacked && styles.panelStacked]}>
+            <View style={[styles.transport, stacked && styles.transportStacked]}>
               <Pressable
                 onPress={vm.toggleStart}
-                style={[styles.start, { backgroundColor: s.playing ? Pa.red : Pa.green }]}
+                style={[styles.start, short && styles.startShort, { backgroundColor: s.playing ? Pa.red : Pa.green }]}
               >
-                <Text style={styles.startLabel}>{s.playing ? "STOP" : "START / STOP"}</Text>
+                <Text style={[styles.startLabel, short && styles.startLabelShort]}>
+                  {s.playing ? "STOP" : "START / STOP"}
+                </Text>
               </Pressable>
               <View style={styles.row}>
                 <PaButton
@@ -248,7 +293,7 @@ export function ArrangerScreen() {
                 <PaButton label="O−" onPress={() => vm.setOctave(-1)} style={styles.panelBtn} />
               </View>
             </View>
-            <View style={styles.faders}>
+            <View style={[styles.faders, stacked && styles.fadersStacked]}>
               <VolumeFader label={"KEYBOARD\nVOLUME"} value={s.mixer.keyboard} onChange={(v) => vm.setMixer(0, v)} />
               <VolumeFader label={"ACC.\nVOLUME"} value={s.mixer.acc} onChange={vm.setAccVolume} />
               <VolumeFader label={"MASTER\nVOLUME"} value={s.mixer.master} onChange={(v) => vm.setMixer(5, v)} />
@@ -279,6 +324,7 @@ export function ArrangerScreen() {
               meta={`${item.category} · ${item.source ?? "FACTORY"}`}
               active={item.id === s.upper1}
               favorite={s.favorites.includes(item.id)}
+              width={itemWidth}
               onPress={() => {
                 vm.selectSound(item.id, browsePart)
                 vm.setMode("STYLE")
@@ -309,6 +355,7 @@ export function ArrangerScreen() {
               meta={`${item.category} · ${Math.round(item.tempo)} BPM`}
               active={item.id === s.styleId}
               favorite={s.favorites.includes(item.id)}
+              width={itemWidth}
               onPress={() => {
                 vm.selectStyle(item.id)
                 vm.setMode("STYLE")
@@ -340,7 +387,17 @@ export function ArrangerScreen() {
         </LibrarySheet>
       ) : null}
 
-      <View pointerEvents="none" style={[styles.dots, { bottom: Math.max(insets.bottom, 6) }]}>
+      <View
+        pointerEvents="none"
+        style={[
+          styles.dots,
+          {
+            bottom: Math.max(insets.bottom, 6),
+            left: Math.max(insets.left, 0),
+            right: Math.max(insets.right, 0),
+          },
+        ]}
+      >
         <View style={[styles.dot, page === 0 && styles.dotOn]} />
         <View style={[styles.dot, page === 1 && styles.dotOn]} />
       </View>
@@ -351,11 +408,13 @@ export function ArrangerScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Pa.bg },
   page: { backgroundColor: Pa.bg, gap: 8 },
-  top: { flexDirection: "row", alignItems: "center", gap: 10 },
+  top: { flexDirection: "row", alignItems: "center", gap: 8 },
+  topStacked: { flexWrap: "wrap" },
   mode: { color: Pa.orange, fontWeight: "900", fontSize: 14, letterSpacing: 1.6 },
-  status: { color: Pa.muted, fontSize: 12, flex: 1 },
-  media: { width: 96, height: 44 },
+  status: { color: Pa.muted, fontSize: 12, flex: 1, minWidth: 80 },
+  media: { width: 88, height: 44 },
   play: { flex: 1, flexDirection: "row", gap: 10, minHeight: 0 },
+  playStacked: { flexDirection: "column" },
   elements: {
     width: 220,
     backgroundColor: Pa.panel,
@@ -365,6 +424,8 @@ const styles = StyleSheet.create({
     padding: 8,
     gap: 5,
   },
+  elementsShort: { width: 168 },
+  elementsStacked: { width: "100%" },
   touch: {
     flex: 1,
     backgroundColor: Pa.panel,
@@ -374,20 +435,29 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 8,
     minWidth: 0,
+    minHeight: 0,
   },
+  touchStacked: { flex: 1 },
   group: { color: Pa.dim, fontSize: 9, fontWeight: "700", letterSpacing: 1, marginTop: 2 },
   row: { flexDirection: "row", alignItems: "center", gap: 5 },
   elem: { flex: 1, minHeight: 40, paddingHorizontal: 4 },
+  elemShort: { minHeight: 34 },
   var: { minHeight: 52 },
-  break: { minHeight: 40 },
+  break: { minHeight: 40, flex: 1.2 },
   kicker: { color: Pa.orange, fontSize: 10, fontWeight: "700", letterSpacing: 1.4 },
   styleName: { color: Pa.text, fontSize: 26, fontWeight: "800" },
+  styleNameShort: { fontSize: 20 },
   chordRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
   chord: { color: Pa.green, fontSize: 42, fontWeight: "900", lineHeight: 46 },
+  chordShort: { fontSize: 28, lineHeight: 32 },
   tempoBox: { alignItems: "flex-end" },
   tempo: { color: Pa.gold, fontSize: 28, fontWeight: "900" },
+  tempoShort: { fontSize: 22 },
   sts: { flex: 1, height: 40 },
   parts: { flexDirection: "row", gap: 6 },
+  partsStacked: { flexWrap: "wrap" },
+  partFlex: { flex: 1, minWidth: 0 },
+  partHalf: { width: "48%", flexGrow: 1 },
   styleList: { flex: 1, minHeight: 0 },
   styleGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6, paddingBottom: 8 },
   styleChip: { height: 44, minWidth: 120 },
@@ -395,17 +465,22 @@ const styles = StyleSheet.create({
   progressTrack: { height: 6, borderRadius: 3, backgroundColor: Pa.stroke, overflow: "hidden" },
   progressFill: { height: "100%", backgroundColor: Pa.orange },
   panel: { flex: 1, flexDirection: "row", gap: 14, minHeight: 0 },
+  panelStacked: { flexDirection: "column" },
   transport: { flex: 1.2, gap: 10, justifyContent: "center" },
+  transportStacked: { flex: 0, justifyContent: "flex-start" },
   start: {
     height: 96,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
+  startShort: { height: 72 },
   startLabel: { color: Pa.bg, fontSize: 28, fontWeight: "900", letterSpacing: 1.4 },
-  panelBtn: { flex: 1, height: 56 },
+  startLabelShort: { fontSize: 22 },
+  panelBtn: { flex: 1, height: 52 },
   faders: {
     width: 420,
+    maxWidth: "48%",
     flexDirection: "row",
     gap: 8,
     backgroundColor: Pa.panel,
@@ -414,10 +489,9 @@ const styles = StyleSheet.create({
     borderColor: Pa.stroke,
     padding: 12,
   },
+  fadersStacked: { width: "100%", maxWidth: "100%", flex: 1, minHeight: 160 },
   dots: {
     position: "absolute",
-    left: 0,
-    right: 0,
     flexDirection: "row",
     justifyContent: "center",
     gap: 8,

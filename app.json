@@ -4,7 +4,7 @@
     "slug": "arrangerbox",
     "scheme": "arrangerbox",
     "version": "0.2.0",
-    "orientation": "landscape",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0B0C0E",
@@ -21,14 +21,15 @@
         "LSSupportsOpeningDocumentsInPlace": true,
         "UIFileSharingEnabled": true,
         "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationPortrait",
           "UIInterfaceOrientationLandscapeLeft",
           "UIInterfaceOrientationLandscapeRight"
         ],
         "UISupportedInterfaceOrientations~ipad": [
-          "UIInterfaceOrientationLandscapeLeft",
-          "UIInterfaceOrientationLandscapeRight",
           "UIInterfaceOrientationPortrait",
-          "UIInterfaceOrientationPortraitUpsideDown"
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
         ]
       }
     },
@@ -68,7 +69,7 @@
       [
         "expo-screen-orientation",
         {
-          "initialOrientation": "LANDSCAPE"
+          "initialOrientation": "DEFAULT"
         }
       ],
       [

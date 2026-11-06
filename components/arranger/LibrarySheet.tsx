@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { Pa } from "@/constants/theme"
 import type { SoundItem, StyleItem } from "@/lib/types"
@@ -29,11 +30,23 @@ export function LibrarySheet({
   onClose,
   children,
 }: Props) {
+  const insets = useSafeAreaInsets()
+
   return (
-    <View style={styles.sheet}>
+    <View
+      style={[
+        styles.sheet,
+        {
+          paddingTop: Math.max(insets.top, 8) + 4,
+          paddingBottom: Math.max(insets.bottom, 8),
+          paddingLeft: Math.max(insets.left, 12),
+          paddingRight: Math.max(insets.right, 12),
+        },
+      ]}
+    >
       <View style={styles.head}>
         <Text style={styles.title}>{title}</Text>
-        <Pressable onPress={onClose} style={styles.close}>
+        <Pressable onPress={onClose} style={styles.close} hitSlop={8}>
           <Text style={styles.closeLabel}>CLOSE</Text>
         </Pressable>
       </View>
@@ -73,6 +86,7 @@ export function LibraryItem({
   onPress,
   onLongPress,
   onFavorite,
+  width,
 }: {
   name: string
   meta: string
@@ -81,9 +95,14 @@ export function LibraryItem({
   onPress: () => void
   onLongPress?: () => void
   onFavorite?: () => void
+  width?: `${number}%` | number
 }) {
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} style={[styles.item, active && styles.itemOn]}>
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={[styles.item, active && styles.itemOn, width != null ? { width, minWidth: 0 } : null]}
+    >
       <View style={{ flex: 1 }}>
         <Text style={styles.itemName} numberOfLines={1}>
           {name}
@@ -122,17 +141,22 @@ export function filterLibrary<T extends SoundItem | StyleItem>(
   })
 }
 
+export function libraryItemWidth(windowWidth: number): `${number}%` {
+  if (windowWidth < 520) return "100%"
+  if (windowWidth < 900) return "48%"
+  return "31%"
+}
+
 const styles = StyleSheet.create({
   sheet: {
     ...StyleSheet.absoluteFill,
     backgroundColor: Pa.bg,
-    padding: 12,
     gap: 8,
     zIndex: 20,
   },
-  head: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  title: { color: Pa.orange, fontWeight: "900", fontSize: 16, letterSpacing: 1.4 },
-  close: { height: 40, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: Pa.stroke, justifyContent: "center" },
+  head: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  title: { color: Pa.orange, fontWeight: "900", fontSize: 16, letterSpacing: 1.4, flex: 1 },
+  close: { height: 44, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: Pa.stroke, justifyContent: "center" },
   closeLabel: { color: Pa.text, fontWeight: "800" },
   search: {
     height: 42,
