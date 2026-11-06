@@ -5,6 +5,7 @@ export type SoundItem = {
   name: string
   category: string
   bank?: string
+  source?: string
 }
 
 export type StyleItem = {
@@ -12,6 +13,8 @@ export type StyleItem = {
   name: string
   category: string
   tempo: number
+  bank?: string
+  source?: string
 }
 
 export type MixerState = {
@@ -55,6 +58,9 @@ export type ArrangerUiState = {
   latencyMs: number
   nativeReady: boolean
   importMessage: string
+  importing: boolean
+  importProgress: number
+  setFiles: string[]
   sts: number
   showKeyboard: boolean
   favorites: number[]

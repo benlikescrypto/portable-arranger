@@ -15,6 +15,8 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": ["audio"],
+        "LSSupportsOpeningDocumentsInPlace": true,
+        "UIFileSharingEnabled": true,
         "UISupportedInterfaceOrientations": [
           "UIInterfaceOrientationLandscapeLeft",
           "UIInterfaceOrientationLandscapeRight"
@@ -61,6 +63,13 @@
         "expo-screen-orientation",
         {
           "initialOrientation": "LANDSCAPE"
+        }
+      ],
+      [
+        "expo-file-system",
+        {
+          "enableFileSharing": true,
+          "supportsOpeningDocumentsInPlace": true
         }
       ],
       [

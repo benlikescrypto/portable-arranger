@@ -47,7 +47,7 @@ export function ArrangerScreen() {
         </View>
         <Led on={s.midiConnected} color={Pa.green} label={s.midiName.slice(0, 10)} />
         <Led on={s.nativeReady} color={Pa.blue} label={`${Math.round(s.latencyMs)} ms`} />
-        <PaButton label="LOAD SET" accent={Pa.blue} onPress={vm.importSamples} style={styles.wide} />
+        <PaButton label="LOAD SET" accent={Pa.blue} onPress={vm.importSet} style={styles.wide} />
         <PaButton label="KEYS" active={s.showKeyboard} onPress={vm.toggleKeyboard} style={styles.narrow} />
       </View>
 
@@ -201,13 +201,25 @@ function Browser({
   }
   if (s.mode === "SET") {
     return (
-      <View>
+      <View style={{ flex: 1 }}>
         <Text style={styles.orangeLabel}>SET LIBRARY</Text>
         <Text style={styles.bodyText}>
-          Load WAV / KSF / PCM files here. Full Korg PA4X .SET folder import is preserved in legacy-android until the
-          SAF directory picker is ported.
+          Load a Korg PA4X .SET folder from USB or Files. Names, styles and WAV/KSF/PCM samples are imported without
+          converting the SET.
         </Text>
-        <Text style={styles.bodyText}>{s.importMessage || "No samples loaded yet. Tap LOAD SET."}</Text>
+        <Text style={styles.bodyText}>{s.importMessage || "No SET loaded yet. Tap LOAD SET."}</Text>
+        {s.importing || s.importProgress > 0 ? (
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${Math.round(s.importProgress * 100)}%` }]} />
+          </View>
+        ) : null}
+        <ScrollView style={{ marginTop: 10 }}>
+          {s.setFiles.map((line) => (
+            <Text key={line} style={styles.fileLine}>
+              {line}
+            </Text>
+          ))}
+        </ScrollView>
       </View>
     )
   }
@@ -298,4 +310,7 @@ const styles = StyleSheet.create({
   bodyText: { color: Pa.muted, fontSize: 13, marginTop: 8 },
   faderTrack: { flex: 1, height: 18, borderRadius: 9, backgroundColor: Pa.panelAlt, overflow: "hidden" },
   faderFill: { height: "100%", backgroundColor: Pa.orange },
+  progressTrack: { height: 8, borderRadius: 4, backgroundColor: Pa.stroke, overflow: "hidden", marginTop: 10 },
+  progressFill: { height: "100%", backgroundColor: Pa.orange },
+  fileLine: { color: Pa.dim, fontSize: 11, marginTop: 4 },
 })

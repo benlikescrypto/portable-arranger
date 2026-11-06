@@ -1,8 +1,8 @@
 import { audio, isAudioNativeAvailable } from "arrangerbox-audio"
 import { midi } from "arrangerbox-midi"
-import * as DocumentPicker from "expo-document-picker"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
+import { importPa4xSet } from "@/lib/library/setImporter"
 import type { ArrangerUiState, Mode } from "@/lib/types"
 
 const initial: ArrangerUiState = {
@@ -37,6 +37,9 @@ const initial: ArrangerUiState = {
   latencyMs: 8,
   nativeReady: false,
   importMessage: "",
+  importing: false,
+  importProgress: 0,
+  setFiles: [],
   sts: 1,
   showKeyboard: true,
   favorites: [],
@@ -94,13 +97,20 @@ export function useArranger() {
   const setCategory = useCallback((category: string) => setState((s) => ({ ...s, category })), [])
 
   const selectSound = useCallback((id: number, part = 0) => {
-    audio.setPartProgram(part, id)
-    if (part > 0) audio.setPartEnable(part, true)
     setState((s) => {
-      if (part === 1) return { ...s, upper2: id, upper2On: true }
-      if (part === 2) return { ...s, upper3: id, upper3On: true }
-      if (part === 3) return { ...s, lower: id }
-      return { ...s, upper1: id }
+      const picked = s.sounds.find((item) => item.id === id)
+      const engineId =
+        id < 10_000
+          ? id
+          : (s.sounds.find((item) => item.source !== "PA4X SET" && item.name === picked?.name)?.id ?? id)
+      if (engineId < 10_000) {
+        audio.setPartProgram(part, engineId)
+        if (part > 0) audio.setPartEnable(part, true)
+      }
+      if (part === 1) return { ...s, upper2: engineId, upper2On: true }
+      if (part === 2) return { ...s, upper3: engineId, upper3On: true }
+      if (part === 3) return { ...s, lower: engineId }
+      return { ...s, upper1: engineId }
     })
   }, [])
 
@@ -116,11 +126,16 @@ export function useArranger() {
   }, [])
 
   const selectStyle = useCallback((id: number) => {
-    audio.setStyle(id)
-    const style = audio.listStyles().find((item) => item.id === id)
-    const tempo = style?.tempo ?? 100
-    audio.setTempo(tempo)
-    setState((s) => ({ ...s, styleId: id, tempo }))
+    setState((s) => {
+      const style = s.styles.find((item) => item.id === id)
+      if (id < 10_000) {
+        audio.setStyle(id)
+        const tempo = style?.tempo ?? audio.listStyles().find((item) => item.id === id)?.tempo ?? 100
+        audio.setTempo(tempo)
+        return { ...s, styleId: id, tempo }
+      }
+      return { ...s, styleId: id, tempo: style?.tempo ?? s.tempo }
+    })
   }, [])
 
   const book = useCallback((section: number) => {
@@ -142,32 +157,44 @@ export function useArranger() {
     })
   }, [])
 
-  const importSamples = useCallback(async () => {
-    const picked = await DocumentPicker.getDocumentAsync({
-      multiple: true,
-      copyToCacheDirectory: true,
-      type: "*/*",
-    })
-    if (picked.canceled) return
-    let loaded = 0
-    for (const file of picked.assets) {
-      const path = file.uri.replace("file://", "")
-      const name = file.name.replace(/\.[^.]+$/, "")
-      const upper = file.name.toUpperCase()
-      if (upper.endsWith(".WAV")) {
-        if ((await audio.loadWav(path, name, "Imported")) >= 0) loaded++
-      } else if (upper.endsWith(".KSF")) {
-        if ((await audio.loadKsf(path, name, "Imported")) >= 0) loaded++
-      } else if (upper.endsWith(".PCM")) {
-        loaded += await audio.scanPcmBank(path)
-      }
-    }
+  const importSet = useCallback(async () => {
     setState((s) => ({
       ...s,
-      sounds: audio.listSounds().map((item) => ({ ...item, bank: "FACTORY" })),
-      importMessage: `Loaded ${loaded} sample file(s). Full PA4X SET folders still use the legacy Android importer.`,
-      mode: "SOUND",
+      importing: true,
+      importProgress: 0,
+      importMessage: "Choose a PA4X .SET folder…",
+      mode: "SET",
     }))
+    try {
+      const lib = await importPa4xSet((progress) => {
+        setState((s) => ({ ...s, importMessage: progress.message, importProgress: progress.fraction }))
+      })
+      if (!lib) {
+        setState((s) => ({ ...s, importing: false, importMessage: "SET import cancelled." }))
+        return
+      }
+      const engineSounds = audio.listSounds().map((item) => ({ ...item, bank: "FACTORY", source: "Engine" }))
+      const namedSounds = lib.sounds.filter((sound) => !engineSounds.some((item) => item.name === sound.name))
+      const engineStyles = audio.listStyles().map((item) => ({ ...item, source: "Engine" }))
+      setState((s) => ({
+        ...s,
+        importing: false,
+        importProgress: 1,
+        setName: lib.setName,
+        adapterName: lib.adapterName,
+        sounds: [...engineSounds, ...namedSounds],
+        styles: [...engineStyles, ...lib.styles],
+        setFiles: lib.files.slice(0, 40).map((file) => `${file.kind}  ${file.relativePath}`),
+        importMessage: `Loaded ${lib.sounds.length} names, ${lib.styles.length} styles, ${lib.samplesLoaded} samples from ${lib.setName}`,
+        mode: "SOUND",
+      }))
+    } catch (error) {
+      setState((s) => ({
+        ...s,
+        importing: false,
+        importMessage: error instanceof Error ? error.message : "SET import failed",
+      }))
+    }
   }, [])
 
   const actions = useMemo(
@@ -180,7 +207,7 @@ export function useArranger() {
       selectStyle,
       book,
       setMixer,
-      importSamples,
+      importSet,
       toggleStart: () => {
         if (isAudioNativeAvailable) audio.arrangerToggle()
       },
@@ -217,7 +244,7 @@ export function useArranger() {
           favorites: s.favorites.includes(id) ? s.favorites.filter((x) => x !== id) : [...s.favorites, id],
         })),
     }),
-    [book, importSamples, selectSound, selectStyle, setCategory, setMixer, setMode, setQuery, togglePart]
+    [book, importSet, selectSound, selectStyle, setCategory, setMixer, setMode, setQuery, togglePart]
   )
 
   return { state, ...actions }

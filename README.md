@@ -24,7 +24,7 @@ Real-time MIDI is parsed on the native side and pushed into a lock-free C++ queu
 - `app/` — Expo Router screens
 - `components/`, `hooks/`, `lib/`, `constants/` — TypeScript UI (same shape as the Epohk mobile app)
 - `modules/audio|midi|device` — local Expo modules
-- `legacy-android/` — original Kotlin/Compose/NDK app, preserved (PA4X SET folder importer, Play Internal scripts)
+- `legacy-android/` — original Kotlin/Compose/NDK app, preserved for Play Internal scripts and reference
 
 ## Development builds
 
@@ -82,11 +82,20 @@ eas update --channel development --message "ui tweak"
 
 Do **not** ship Oboe, CoreMIDI, Kotlin, Swift, or C++ changes through EAS Update. Rebuild natively.
 
-## Remaining work (preserved, not deleted)
+## PA4X SET folders
 
-- Full Korg PA4X `.SET` folder import (SAF tree copy, PCG/STY/PCM/KMP) still lives in `legacy-android/`
+Tap **LOAD SET** and pick the `.SET` folder (or the USB folder that contains it).
+
+- Android uses the system folder picker (`ACTION_OPEN_DOCUMENT_TREE`), including USB-C sticks and hubs.
+- iOS/iPad uses the Files folder picker, including USB-C storage on supported iPads.
+- SOUND/STYLE/PCM/KMP names are read from PCG/STY/PRF/PAD. WAV, KSF, and PCM samples are copied into the app and loaded into the C++ engine.
+
+This still needs a real PA4X SET on physical hardware to confirm.
+
+## Remaining work
+
 - Play Internal / Gradle Play Publisher scripts remain in `legacy-android/scripts/`
-- Hardware verification: USB-MIDI keyboard, USB hub, speaker output, long sessions
+- Hardware verification: USB-MIDI keyboard, USB hub, speaker output, long sessions, SET import
 
 ## Package
 
