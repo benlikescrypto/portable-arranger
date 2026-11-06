@@ -327,13 +327,13 @@ struct Chorus {
         const float mod = 0.5f + 0.5f * std::sin(kTwoPi * ph);
         const float t = (7.5f + 5.5f * mod) * 0.001f * sr;
         dL.write(x);
-        return x * 0.7f + dL.read(t) * 0.45f;
+        return dL.read(t);
     }
     float processR(float x, float sr) {
         const float mod = 0.5f + 0.5f * std::sin(kTwoPi * ph + 1.7f);
         const float t = (8.2f + 6.0f * mod) * 0.001f * sr;
         dR.write(x);
-        return x * 0.7f + dR.read(t) * 0.45f;
+        return dR.read(t);
     }
 };
 
@@ -359,9 +359,9 @@ struct Reverb {
     OnePole damp[kCombs];
     DelayLine ap[4];
     float combZ[kCombs]{};
-    float room = 0.78f;
-    float dampAmt = 0.28f;
-    float mix = 0.08f;
+    float room = 0.62f;
+    float dampAmt = 0.38f;
+    float mix = 0.16f;
     const float combMs[kCombs] = {29.7f, 37.1f, 41.1f, 43.7f, 31.3f, 33.9f, 39.5f, 44.9f};
     const float apMs[4] = {5.0f, 1.7f, 6.3f, 12.6f};
 
@@ -386,12 +386,10 @@ struct Reverb {
         }
         return acc;
     }
-    void process(float inL, float inR, float& outL, float& outR, float sr) {
+    void processSend(float inL, float inR, float& outL, float& outR, float sr) {
         const float mono = (inL + inR) * 0.5f;
-        const float wetL = tank(mono, sr, 0);
-        const float wetR = tank(mono, sr, 1);
-        outL = inL * (1.0f - mix) + wetL * mix;
-        outR = inR * (1.0f - mix) + wetR * mix;
+        outL = tank(mono, sr, 0);
+        outR = tank(mono, sr, 1);
     }
 };
 
@@ -476,7 +474,12 @@ inline bool isKit(Model m) {
 inline bool isPluckModel(Model m) {
     return m == Model::Oud || m == Model::NylonGuitar || m == Model::Bouzouki || m == Model::Kanun || m == Model::Saz ||
            m == Model::SteelGuitar || m == Model::CleanGuitar || m == Model::DistGuitar || m == Model::MuteGuitar ||
-           m == Model::Harp || m == Model::Pizzicato;
+           m == Model::Harp || m == Model::Pizzicato || m == Model::Pluck;
+}
+
+inline bool isPianoFamily(Model m) {
+    return m == Model::Piano || m == Model::BrightPiano || m == Model::SoftPiano || m == Model::UprightPiano ||
+           m == Model::DigitalPiano || m == Model::Harpsichord;
 }
 
 }  // namespace pa

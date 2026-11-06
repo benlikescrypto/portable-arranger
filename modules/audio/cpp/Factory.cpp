@@ -40,10 +40,10 @@ void buildFactory(std::vector<Patch>& patches, std::vector<std::string>&, std::v
     patches.clear();
     patches.reserve(160);
     // Keep the original 34 IDs stable for existing UI/part defaults.
-    patches.push_back(mk("Concert Grand", "Piano", Model::Piano, BusKeyboard, 0.8f, 1800, 0.62f, 420, 9200, 0.08f, 0.18f, 0.62f, 0.08f, 0.24f));
-    patches.push_back(mk("Bright Grand", "Piano", Model::BrightPiano, BusKeyboard, 0.6f, 1400, 0.55f, 360, 11000, 0.1f, 0.28f, 0.82f, 0.06f, 0.18f));
-    patches.push_back(mk("Pop Piano", "Piano", Model::BrightPiano, BusKeyboard, 0.5f, 900, 0.5f, 280, 9800, 0.12f, 0.3f, 0.75f, 0.12f, 0.16f));
-    patches.push_back(mk("Soft Piano", "Piano", Model::SoftPiano, BusKeyboard, 2.5f, 2200, 0.7f, 560, 6200, 0.06f, 0.12f, 0.4f, 0.1f, 0.3f));
+    patches.push_back(mk("Concert Grand", "Piano", Model::Piano, BusKeyboard, 1.2f, 2600, 0.42f, 480, 16000, 0.04f, 0.08f, 0.78f, 0.04f, 0.14f));
+    patches.push_back(mk("Bright Grand", "Piano", Model::BrightPiano, BusKeyboard, 0.8f, 1800, 0.38f, 360, 18000, 0.05f, 0.12f, 0.9f, 0.03f, 0.1f));
+    patches.push_back(mk("Pop Piano", "Piano", Model::BrightPiano, BusKeyboard, 0.7f, 1200, 0.4f, 280, 17000, 0.06f, 0.14f, 0.85f, 0.06f, 0.1f));
+    patches.push_back(mk("Soft Piano", "Piano", Model::SoftPiano, BusKeyboard, 3.0f, 3200, 0.5f, 620, 12000, 0.04f, 0.06f, 0.55f, 0.05f, 0.18f));
     patches.push_back(mk("Electric Piano", "Electric", Model::Rhodes, BusKeyboard, 1.2f, 1200, 0.55f, 380, 5400, 0.18f, 0.22f, 0.55f, 0.28f, 0.26f, 0.012f, 4.6f));
     patches.push_back(mk("Wurly", "Electric", Model::Wurly, BusKeyboard, 1.0f, 800, 0.48f, 260, 4200, 0.22f, 0.35f, 0.6f, 0.2f, 0.18f));
     patches.push_back(mk("Clav", "Electric", Model::Clav, BusKeyboard, 0.4f, 280, 0.25f, 120, 3800, 0.28f, 0.45f, 0.7f, 0.08f, 0.1f));
@@ -76,8 +76,8 @@ void buildFactory(std::vector<Patch>& patches, std::vector<std::string>&, std::v
     patches.push_back(mk("Dance Kit", "Percussion", Model::KitDance, BusDrums, 0.3f, 70, 0.0f, 70, 9000, 0.1f, 0.0f, 0.8f, 0.0f, 0.06f));
 
     // Expanded factory ROM — modeled instruments, unique voicings.
-    patches.push_back(mk("Studio Grand", "Piano", Model::Piano, BusKeyboard, 1.0f, 1600, 0.58f, 380, 8600, 0.07f, 0.16f, 0.58f, 0.1f, 0.2f));
-    patches.push_back(mk("Upright Piano", "Piano", Model::UprightPiano, BusKeyboard, 1.4f, 1100, 0.42f, 240, 5400, 0.12f, 0.22f, 0.5f, 0.06f, 0.14f));
+    patches.push_back(mk("Studio Grand", "Piano", Model::Piano, BusKeyboard, 1.1f, 2200, 0.4f, 400, 15000, 0.05f, 0.1f, 0.74f, 0.05f, 0.12f));
+    patches.push_back(mk("Upright Piano", "Piano", Model::UprightPiano, BusKeyboard, 1.6f, 1400, 0.32f, 260, 11000, 0.06f, 0.1f, 0.62f, 0.04f, 0.12f));
     patches.push_back(mk("Honky Piano", "Piano", Model::UprightPiano, BusKeyboard, 0.7f, 900, 0.35f, 180, 4800, 0.18f, 0.3f, 0.7f, 0.22f, 0.12f, 0.008f, 3.8f));
     patches.push_back(mk("Digital Piano", "Piano", Model::DigitalPiano, BusKeyboard, 0.9f, 1400, 0.6f, 300, 7800, 0.08f, 0.14f, 0.66f, 0.18f, 0.2f));
     patches.push_back(mk("Stage EP", "Electric", Model::Rhodes, BusKeyboard, 1.6f, 1500, 0.62f, 420, 4800, 0.16f, 0.18f, 0.5f, 0.38f, 0.28f, 0.01f, 4.2f));

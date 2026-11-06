@@ -35,15 +35,15 @@ const initial: ArrangerUiState = {
   lower: 21,
   upper2On: false,
   upper3On: false,
-  lowerOn: true,
-  split: 60,
+  lowerOn: false,
+  split: 54,
   styleId: 0,
   tempo: 112,
   transpose: 0,
   variation: 1,
   section: 4,
   playing: false,
-  synchro: true,
+  synchro: false,
   autoFill: true,
   chordRoot: 0,
   chordType: 0,
@@ -59,8 +59,8 @@ const initial: ArrangerUiState = {
   sts: 1,
   favorites: [],
   octave: 0,
-  reverb: 0.35,
-  chorus: 0.12,
+  reverb: 0.18,
+  chorus: 0.08,
   delay: 0,
   recentSounds: [],
   recentStyles: [],
@@ -86,8 +86,11 @@ export function useArranger() {
       audio.setPartProgram(1, 7)
       audio.setPartProgram(3, 21)
       audio.setPartEnable(1, false)
-      audio.setFx(0, 0.35)
-      audio.setFx(1, 0.12)
+      audio.setPartEnable(3, false)
+      audio.setSplit(54)
+      audio.setSynchro(false)
+      audio.setFx(0, 0.18)
+      audio.setFx(1, 0.08)
       if (styles.length > 0) {
         audio.setStyle(0)
         audio.setTempo(styles[0].tempo || 112)

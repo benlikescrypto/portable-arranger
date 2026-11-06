@@ -65,15 +65,15 @@ struct Patch {
 inline void prepareSampledPatch(Patch& p, bool drum) {
     p.sampled = true;
     p.model = drum ? Model::KitStandard : Model::Piano;
-    p.attack = 0.12f;
+    p.attack = drum ? 0.2f : 0.4f;
     p.decay = 0.0f;
     p.sustain = 1.0f;
-    p.release = drum ? 35.0f : 18.0f;
+    p.release = drum ? 80.0f : 220.0f;
     p.cutoff = 22000.0f;
     p.reso = 0.0f;
     p.filtEnv = 0.0f;
     p.chorus = 0.0f;
-    p.reverb = 0.0f;
+    p.reverb = drum ? 0.08f : 0.12f;
     p.brightness = 1.0f;
     p.vibDepth = 0.0f;
     p.bus = drum ? BusDrums : BusKeyboard;
@@ -331,8 +331,8 @@ private:
     DcBlock outDcL, outDcR;
 
     int partProg[4] = {0, 7, -1, 21};
-    bool partOn[4] = {true, false, false, true};
-    int splitNote = 60;
+    bool partOn[4] = {true, false, false, false};
+    int splitNote = 54;
     int transpose = 0;
     int octave = 0;
     bool sustainOn = false;

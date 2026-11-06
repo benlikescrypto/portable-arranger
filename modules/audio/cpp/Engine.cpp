@@ -28,8 +28,8 @@ Engine::Engine() {
         eqLowR.setLowShelf(sr, 90.0f, 0.0f);
         eqMidL.setPeaking(sr, 1200.0f, 0.7f, 0.0f);
         eqMidR.setPeaking(sr, 1200.0f, 0.7f, 0.0f);
-        eqHighL.setPeaking(sr, 6500.0f, 0.8f, 0.0f);
-        eqHighR.setPeaking(sr, 6500.0f, 0.8f, 0.0f);
+        eqHighL.setPeaking(sr, 6500.0f, 0.8f, 1.8f);
+        eqHighR.setPeaking(sr, 6500.0f, 0.8f, 1.8f);
     };
     setupEq(48000.0f);
     drumComp.thresh = 0.35f;
@@ -49,8 +49,8 @@ void Engine::prepare(float sr) {
     eqLowR.setLowShelf(sampleRate, 90.0f, 0.0f);
     eqMidL.setPeaking(sampleRate, 1200.0f, 0.7f, 0.0f);
     eqMidR.setPeaking(sampleRate, 1200.0f, 0.7f, 0.0f);
-    eqHighL.setPeaking(sampleRate, 6500.0f, 0.8f, 0.0f);
-    eqHighR.setPeaking(sampleRate, 6500.0f, 0.8f, 0.0f);
+    eqHighL.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f);
+    eqHighR.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f);
 }
 
 void Engine::noteOn(int ch, int note, int vel) {
@@ -86,9 +86,9 @@ void Engine::setTranspose(int semis) { transpose = (int)clampf((float)semis, -24
 void Engine::setOctave(int oct) { octave = (int)clampf((float)oct, -3.0f, 3.0f); }
 void Engine::setFx(int which, float mix) {
     mix = clampf(mix, 0.0f, 1.0f);
-    if (which == 0) reverb.mix = mix * 0.28f;
-    else if (which == 1) chorusMix = mix;
-    else if (which == 2) delayFx.mix = mix;
+    if (which == 0) reverb.mix = mix * 0.42f;
+    else if (which == 1) chorusMix = mix * 0.55f;
+    else if (which == 2) delayFx.mix = mix * 0.45f;
 }
 
 const char* Engine::soundName(int id) const {
@@ -198,9 +198,9 @@ void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note,
     v.model = p.model;
     v.rng = rng += 0x9E3779B9u;
     const float velAmt = clampf((float)vel / 127.0f, 0.0f, 1.0f);
-    const float dyn = p.sampled ? velAmt * (0.35f + 0.65f * p.ampVel) : velCurve(vel);
+    const float dyn = p.sampled ? velAmt * (0.4f + 0.6f * p.ampVel) : velCurve(vel);
     const float expr = chanVol[ch & 15] * chanExpr[ch & 15];
-    v.gain = (p.sampled ? 0.85f : 0.22f) * dyn * expr * z.gain;
+    v.gain = (p.sampled ? 0.95f : 0.48f) * dyn * expr * z.gain;
     v.cutoff = z.cutoff > 0 ? z.cutoff : p.cutoff;
     v.reso = z.resonance >= 0 ? z.resonance : p.reso;
     v.filtEnvAmt = p.filtEnv;
@@ -249,15 +249,17 @@ void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note,
         v.bus = BusDrums;
     }
 
-    if (!p.sampled && isPluckModel(p.model)) {
+    if (!p.sampled && (isPluckModel(p.model) || isPianoFamily(p.model))) {
         const float freq = midiToHz((float)note);
-        v.ksLen = std::max(20, std::min(kKsLen - 1, (int)(sampleRate / freq)));
+        v.ksLen = std::max(24, std::min(kKsLen - 1, (int)(sampleRate / freq)));
         v.ksIdx = 0;
         v.ksFilter = 0;
+        const int burst = std::max(4, v.ksLen / 7);
         for (int i = 0; i < v.ksLen; ++i) {
             float n = white(v.rng);
-            if (i > v.ksLen * 0.85f) n *= 0.2f;
-            v.ks[i] = n;
+            const float tri = i < burst ? 1.0f - (float)i / (float)burst : 0.0f;
+            const float window = i > v.ksLen * 3 / 4 ? 0.25f : 1.0f;
+            v.ks[i] = (n * 0.75f + tri * (0.35f + 0.45f * velAmt)) * window;
         }
     }
 }
@@ -377,16 +379,13 @@ void Engine::handle(const MidiEvent& e) {
             const bool left = raw <= splitNote;
             if (left) detectChord();
             if (left && arrSt.synchro && !arrSt.running) arr.start(arrSt);
-            if (left && !partOn[3]) return;
             const int note = std::max(0, std::min(127, raw + transpose + octave * 12));
-            if (!left || partOn[3]) {
-                if (!left) {
-                    if (partOn[0]) startVoice(partProg[0], note, vel, BusKeyboard, 0);
-                    if (partOn[1] && partProg[1] >= 0) startVoice(partProg[1], note, vel, BusKeyboard, 1);
-                    if (partOn[2] && partProg[2] >= 0) startVoice(partProg[2], note, vel, BusKeyboard, 2);
-                } else {
-                    startVoice(partProg[3], note, vel, BusBass, 3);
-                }
+            if (left && partOn[3]) {
+                startVoice(partProg[3], note, vel, BusBass, 3);
+            } else {
+                if (partOn[0]) startVoice(partProg[0], note, vel, BusKeyboard, 0);
+                if (partOn[1] && partProg[1] >= 0) startVoice(partProg[1], note, vel, BusKeyboard, 1);
+                if (partOn[2] && partProg[2] >= 0) startVoice(partProg[2], note, vel, BusKeyboard, 2);
             }
             break;
         }
@@ -474,21 +473,35 @@ void Engine::renderSynth(Voice& v, float& L, float& R) {
         case Model::Piano:
         case Model::BrightPiano:
         case Model::SoftPiano: {
-            const float inharm = 1.0f + (v.model == Model::BrightPiano ? 0.00035f : 0.00022f);
+            const float t = v.age / sampleRate;
+            const float B = v.model == Model::BrightPiano ? 0.00028f : (v.model == Model::SoftPiano ? 0.00012f : 0.0002f);
+            const int parts = v.model == Model::SoftPiano ? 12 : 18;
+            const float tilt = v.model == Model::BrightPiano ? 0.72f : (v.model == Model::SoftPiano ? 1.05f : 0.88f);
             float acc = 0.0f;
-            float pn = v.phase;
-            float w = f;
-            const int parts = v.model == Model::SoftPiano ? 8 : 12;
+            const float ph = v.phase;
             for (int n = 1; n <= parts; ++n) {
-                const float damp = std::exp(-0.018f * n * n * (0.4f + (1.0f - velB)));
-                acc += std::sin(kTwoPi * pn) * damp / (float)n;
-                pn += w * inharm;
-                if (pn > 1.0f) pn -= (int)pn;
-                w *= inharm;
+                const float stretch = (float)n * std::sqrt(1.0f + B * (float)(n * n));
+                float p = ph * stretch;
+                p -= (float)(int)p;
+                if (p < 0) p += 1.0f;
+                const float decay = std::exp(-t * (2.4f + 0.38f * n * n * tilt) * (1.45f - 0.85f * velB));
+                const float w = n == 1 ? 1.0f : (0.62f / std::pow((float)n, 0.72f));
+                acc += std::sin(kTwoPi * p) * decay * w;
             }
-            osc = acc * 0.55f + white(v.rng) * 0.04f * v.amp.level * (v.amp.stage == Adsr::Attack ? 1.0f : 0.15f);
             v.phase += f;
-            if (v.phase > 1.0f) v.phase -= (int)v.phase;
+            if (v.phase > 1.0f) v.phase -= (float)(int)v.phase;
+            float hammer = 0.0f;
+            if (v.ksLen > 20) {
+                const float a = v.ks[v.ksIdx];
+                const int n1 = (v.ksIdx + 1) % v.ksLen;
+                float mix = 0.5f * (a + v.ks[n1]);
+                mix = v.ksFilter = v.ksFilter * 0.28f + mix * 0.72f;
+                v.ks[v.ksIdx] = mix * 0.9965f;
+                v.ksIdx = n1;
+                hammer = mix;
+            }
+            const float click = white(v.rng) * std::exp(-t * 90.0f) * (0.08f + 0.22f * velB);
+            osc = acc * 0.42f + hammer * 0.38f + click;
             break;
         }
         case Model::Rhodes: {
@@ -647,18 +660,30 @@ void Engine::renderSynth(Voice& v, float& L, float& R) {
         case Model::UprightPiano:
         case Model::DigitalPiano:
         case Model::Harpsichord: {
-            const int parts = v.model == Model::Harpsichord ? 10 : 8;
-            float acc = 0, pn = v.phase, w = f;
-            const float inharm = v.model == Model::UprightPiano ? 0.0004f : 0.00018f;
+            const float t = v.age / sampleRate;
+            const float B = v.model == Model::UprightPiano ? 0.0004f : 0.00016f;
+            float acc = 0.0f;
+            const float ph = v.phase;
+            const int parts = v.model == Model::Harpsichord ? 14 : 12;
             for (int n = 1; n <= parts; ++n) {
-                acc += std::sin(kTwoPi * pn) / (float)n * std::exp(-0.03f * n);
-                pn += w * (1.0f + inharm * n);
-                if (pn > 1.0f) pn -= (int)pn;
+                float p = ph * n * std::sqrt(1.0f + B * (float)(n * n));
+                p -= (float)(int)p;
+                const float decay = std::exp(-t * (3.0f + 0.5f * n * n) * (1.3f - 0.6f * velB));
+                acc += std::sin(kTwoPi * p) * decay / std::pow((float)n, v.model == Model::Harpsichord ? 0.55f : 0.75f);
             }
-            osc = acc * 0.5f;
-            if (v.model == Model::Harpsichord) osc = fastTanh(blepPulse(v.phase, f, 0.12f) * 1.4f) * 0.55f + osc * 0.3f;
             v.phase += f;
-            if (v.phase > 1.0f) v.phase -= (int)v.phase;
+            if (v.phase > 1.0f) v.phase -= (float)(int)v.phase;
+            osc = acc * 0.45f;
+            if (v.model == Model::Harpsichord) {
+                osc = 0.55f * fastTanh(blepPulse(v.phase, f, 0.14f) * 1.5f) + osc * 0.5f;
+            } else if (v.ksLen > 20) {
+                const float a = v.ks[v.ksIdx];
+                const int n1 = (v.ksIdx + 1) % v.ksLen;
+                float mix = 0.5f * (a + v.ks[n1]);
+                v.ks[v.ksIdx] = (v.ksFilter = v.ksFilter * 0.3f + mix * 0.7f) * 0.995f;
+                v.ksIdx = n1;
+                osc += mix * 0.32f;
+            }
             break;
         }
         case Model::ChurchOrgan:
@@ -779,12 +804,22 @@ void Engine::renderSynth(Voice& v, float& L, float& R) {
 
     const float aenv = v.amp.process();
     const float fenv = v.filtEg.process();
-    float cut = v.cutoff * (0.45f + v.brightness * velB + v.filtEnvAmt * fenv);
-    v.filt.set(cut, v.reso, sampleRate);
-    v.filt.tick(osc);
-    float y = v.filt.lp;
-    if (v.model == Model::Clav || v.model == Model::Sax) y = 0.65f * v.filt.bp + 0.35f * v.filt.lp;
-    if (v.model == Model::Ney || v.model == Model::Duduk) y = 0.5f * v.filt.bp + 0.5f * v.filt.lp;
+    float y = osc;
+    if (isPianoFamily(v.model) || v.model == Model::Bells || v.model == Model::Vibraphone ||
+        v.model == Model::Marimba || v.model == Model::Xylophone) {
+        const float toneA = clampf(0.22f + 0.62f * velB * v.brightness, 0.16f, 0.9f);
+        y = v.tone.processLp(y, toneA);
+    } else {
+        const float keyTrack = std::pow(2.0f, ((float)v.note - 60.0f) / 36.0f);
+        float cut = v.cutoff * keyTrack * (0.75f + 0.55f * velB * v.brightness) + v.filtEnvAmt * fenv * 6500.0f;
+        cut = clampf(cut, 280.0f, sampleRate * 0.45f);
+        v.filt.set(cut, v.reso, sampleRate);
+        v.filt.tick(osc);
+        y = v.filt.lp;
+        if (v.model == Model::Clav || v.model == Model::Sax) y = 0.65f * v.filt.bp + 0.35f * v.filt.lp;
+        if (v.model == Model::Ney || v.model == Model::Duduk || v.model == Model::Flute) y = 0.5f * v.filt.bp + 0.5f * v.filt.lp;
+        if (v.model == Model::DistGuitar) y = fastTanh(y * 1.8f);
+    }
     y = v.dc.process(y) * aenv * v.gain;
     L = y * v.panL;
     R = y * v.panR;
@@ -806,48 +841,51 @@ void Engine::renderDrum(Voice& v, float& L, float& R) {
     };
 
     if (n == 36 || n == 35 || (arabic && (n == 41 || n == 43))) {
-        y = body(arabic ? 95.0f : 130.0f, 48.0f, 8.0f) * 1.4f;
-        y += white(v.rng) * std::exp(-t * 90.0f) * 0.35f;
-        y = fastTanh(y * 1.6f);
+        const float pitch = (arabic ? 160.0f : 210.0f) * std::exp(-t * 18.0f) + (arabic ? 42.0f : 52.0f);
+        v.phase += pitch / sampleRate;
+        if (v.phase > 1.0f) v.phase -= 1.0f;
+        const float click = white(v.rng) * std::exp(-t * 140.0f);
+        y = std::sin(kTwoPi * v.phase) * std::exp(-t * 5.5f) * 1.55f + click * 0.55f;
+        y = fastTanh(y);
     } else if (n == 38 || n == 40) {
-        y = body(190.0f, 140.0f, 16.0f) * 0.4f;
-        y += white(v.rng) * std::exp(-t * 18.0f) * 0.85f;
-        v.filt.set(3500.0f, 0.2f, sampleRate);
+        y = body(220.0f, 160.0f, 14.0f) * 0.35f;
+        y += white(v.rng) * std::exp(-t * 12.0f) * 0.95f;
+        v.filt.set(n == 40 ? 5200.0f : 3800.0f, 0.18f, sampleRate);
         v.filt.tick(y);
-        y = v.filt.bp;
+        y = 0.55f * v.filt.bp + 0.45f * v.filt.hp;
     } else if (n == 37 || n == 76 || n == 77) {
-        y = white(v.rng) * std::exp(-t * 55.0f);
-        v.filt.set(6500.0f, 0.3f, sampleRate);
+        y = white(v.rng) * std::exp(-t * 48.0f);
+        v.filt.set(7000.0f, 0.25f, sampleRate);
         v.filt.tick(y);
         y = v.filt.hp;
     } else if (n == 42 || n == 44) {
         y = white(v.rng);
-        v.filt.set(9000.0f, 0.15f, sampleRate);
+        v.filt.set(11000.0f, 0.12f, sampleRate);
         v.filt.tick(y);
-        y = v.filt.hp * std::exp(-t * 55.0f);
+        y = v.filt.hp * std::exp(-t * (n == 44 ? 70.0f : 48.0f));
     } else if (n == 46) {
         y = white(v.rng);
-        v.filt.set(7500.0f, 0.12f, sampleRate);
+        v.filt.set(9000.0f, 0.1f, sampleRate);
         v.filt.tick(y);
-        y = v.filt.hp * std::exp(-t * 8.0f);
+        y = v.filt.hp * std::exp(-t * 6.5f);
     } else if (n == 49 || n == 57) {
         y = white(v.rng);
-        v.filt.set(6000.0f, 0.4f, sampleRate);
+        v.filt.set(7200.0f, 0.35f, sampleRate);
         v.filt.tick(y);
-        y = (v.filt.bp + v.filt.hp) * std::exp(-t * 3.2f) * 0.6f;
+        y = (v.filt.bp + v.filt.hp) * std::exp(-t * 2.6f) * 0.7f;
     } else if (n >= 45 && n <= 50) {
-        const float start = 180.0f - (n - 45) * 18.0f;
-        y = body(start, start * 0.55f, 7.0f);
-        y += white(v.rng) * std::exp(-t * 40.0f) * 0.2f;
+        const float start = 220.0f - (n - 45) * 20.0f;
+        y = body(start, start * 0.6f, 6.5f);
+        y += white(v.rng) * std::exp(-t * 36.0f) * 0.18f;
     } else if (n == 39) {
         float clap = 0;
-        for (float off : {0.0f, 0.011f, 0.023f, 0.038f}) {
+        for (float off : {0.0f, 0.012f, 0.024f, 0.04f}) {
             const float tt = t - off;
-            if (tt > 0) clap += white(v.rng) * std::exp(-tt * 28.0f);
+            if (tt > 0) clap += white(v.rng) * std::exp(-tt * 24.0f);
         }
-        y = clap * 0.6f;
+        y = clap * 0.7f;
     } else {
-        y = body(220.0f, 90.0f, 10.0f) * 0.6f + white(v.rng) * std::exp(-t * 20.0f) * 0.3f;
+        y = body(240.0f, 110.0f, 9.0f) * 0.55f + white(v.rng) * std::exp(-t * 16.0f) * 0.35f;
     }
 
     y = v.dc.process(y) * aenv * v.gain * 1.35f;
@@ -955,9 +993,9 @@ void Engine::render(float* out, int frames) {
         L += choL * chorusMix + dlyL * delayFx.mix;
         R += choR * chorusMix + dlyR * delayFx.mix;
         float revL = 0, revR = 0;
-        reverb.process(sends[0] + L * reverb.mix, sends[1] + R * reverb.mix, revL, revR, sampleRate);
-        L = L * (1.0f - reverb.mix * 0.35f) + revL * 0.85f;
-        R = R * (1.0f - reverb.mix * 0.35f) + revR * 0.85f;
+        reverb.processSend(sends[0], sends[1], revL, revR, sampleRate);
+        L += revL * reverb.mix;
+        R += revR * reverb.mix;
         L = eqHighL.process(eqMidL.process(eqLowL.process(L)));
         R = eqHighR.process(eqMidR.process(eqLowR.process(R)));
         L *= mix.g[BusMaster];
