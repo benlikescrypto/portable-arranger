@@ -121,17 +121,35 @@ func arrangerbox_scan_pcm_bank(_ path: UnsafePointer<CChar>) -> Int32
 func arrangerbox_load_pa4x_set(_ folder: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
 
 @_silgen_name("arrangerbox_load_sfz")
-func arrangerbox_load_sfz(_ path: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32)
+func arrangerbox_load_sfz(_ path: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
 
 @_silgen_name("arrangerbox_load_abstyle")
 func arrangerbox_load_abstyle(_ path: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
 
-private func cString(_ id: Int32, _ fill: (Int32, UnsafeMutablePointer<CChar>, Int32) -> Void) -> String {
-  var buf = [CChar](repeating: 0, count: 64)
-  buf.withUnsafeMutableBufferPointer { ptr in
-    fill(id, ptr.baseAddress!, 64)
+private func stringFromCBuffer(capacity: Int, fill: (UnsafeMutablePointer<CChar>, Int32) -> Void) -> String {
+  let cap = max(1, capacity)
+  let bytes = UnsafeMutablePointer<CChar>.allocate(capacity: cap)
+  bytes.initialize(repeating: 0, count: cap)
+  defer {
+    bytes.deinitialize(count: cap)
+    bytes.deallocate()
   }
-  return String(cString: buf)
+  fill(bytes, Int32(cap))
+  return String(cString: bytes)
+}
+
+private func cString(_ id: Int32, _ fill: (Int32, UnsafeMutablePointer<CChar>, Int32) -> Void) -> String {
+  stringFromCBuffer(capacity: 64) { ptr, len in
+    fill(id, ptr, len)
+  }
+}
+
+private func loadReport(_ path: String, capacity: Int, fill: (UnsafePointer<CChar>, UnsafeMutablePointer<CChar>, Int32) -> Void) -> String {
+  path.withCString { p in
+    stringFromCBuffer(capacity: capacity) { ptr, len in
+      fill(p, ptr, len)
+    }
+  }
 }
 
 public class ArrangerBoxAudioModule: Module {
@@ -245,33 +263,21 @@ public class ArrangerBoxAudioModule: Module {
     }
 
     AsyncFunction("loadPa4xSet") { (path: String) in
-      var buf = [CChar](repeating: 0, count: 2048)
-      path.withCString { p in
-        buf.withUnsafeMutableBufferPointer { ptr in
-          _ = arrangerbox_load_pa4x_set(p, ptr.baseAddress!, Int32(buf.count))
-        }
+      loadReport(path, capacity: 2048) { p, report, len in
+        _ = arrangerbox_load_pa4x_set(p, report, len)
       }
-      return String(cString: buf)
     }
 
     AsyncFunction("loadSfz") { (path: String) in
-      var buf = [CChar](repeating: 0, count: 1024)
-      path.withCString { p in
-        buf.withUnsafeMutableBufferPointer { ptr in
-          _ = arrangerbox_load_sfz(p, ptr.baseAddress!, Int32(buf.count))
-        }
+      loadReport(path, capacity: 1024) { p, report, len in
+        _ = arrangerbox_load_sfz(p, report, len)
       }
-      return String(cString: buf)
     }
 
     AsyncFunction("loadAbStyle") { (path: String) in
-      var buf = [CChar](repeating: 0, count: 1024)
-      path.withCString { p in
-        buf.withUnsafeMutableBufferPointer { ptr in
-          _ = arrangerbox_load_abstyle(p, ptr.baseAddress!, Int32(buf.count))
-        }
+      loadReport(path, capacity: 1024) { p, report, len in
+        _ = arrangerbox_load_abstyle(p, report, len)
       }
-      return String(cString: buf)
     }
   }
 }
