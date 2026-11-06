@@ -207,7 +207,6 @@ export function ArrangerScreen() {
                 vm.selectSound(item.id, 0)
                 closePicker()
               }}
-              onLongPress={() => vm.previewSound(item.id)}
               onFavorite={() => vm.toggleFavorite(item.id)}
             />
           ))}

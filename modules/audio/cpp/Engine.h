@@ -165,7 +165,6 @@ struct ArrangerState {
     float tempo = 100.0f;
     int chordRoot = 0;
     int chordType = 0;  // 0 maj, 1 min, 2 7, 3 min7, 4 maj7, 5 sus4, 6 dim, 7 6, 8 m6, 9 9, 10 sus2, 11 aug
-    bool chordSet = false;
     int split = 60;
     double tickPos = 0;
     int barLenTicks = kPpq * 4;

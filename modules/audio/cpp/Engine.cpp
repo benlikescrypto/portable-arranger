@@ -609,7 +609,6 @@ void Engine::detectChord() {
         if (n < lowest) lowest = n;
     }
     if (count == 0) return;
-    arrSt.chordSet = true;
     int bestRoot = lowest % 12;
     int bestType = 0;
     int bestScore = -1;
