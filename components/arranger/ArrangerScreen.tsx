@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -67,8 +67,14 @@ export function ArrangerScreen() {
   }
   const closePicker = () => {
     vm.setMode("STYLE")
+    vm.setLibraryFilter("all")
     setPicker(null)
   }
+
+  useEffect(() => {
+    if (s.mode === "PAD") setPicker("style")
+    if (s.mode === "SOUND") setPicker("sound")
+  }, [s.mode])
 
   const onPage = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const next = Math.round(event.nativeEvent.contentOffset.x / Math.max(1, slideW))
@@ -203,7 +209,7 @@ export function ArrangerScreen() {
             <LibraryItem
               key={item.id}
               name={item.name}
-              meta={`${item.category} · ${Math.round(item.tempo)} BPM`}
+              meta={`${item.source === "IMPORTED" ? "Imported · " : ""}${item.category} · ${Math.round(item.tempo)} BPM`}
               active={item.id === s.styleId}
               favorite={s.favorites.includes(item.id)}
               width={itemWidth}

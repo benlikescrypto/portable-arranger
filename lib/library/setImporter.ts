@@ -18,6 +18,12 @@ function safeName(name: string) {
   return name.replace(/[\\/:*?"<>|]/g, "_").replace(/\.SET$/i, "") || "Imported"
 }
 
+function copyFileName(name: string) {
+  const trimmed = (name || "style").replace(/[\\/:*?"<>|]/g, "_")
+  if (/\.[A-Za-z0-9]{1,8}$/.test(trimmed)) return trimmed
+  return `${trimmed}.STY`
+}
+
 function parseReport(raw: string) {
   try {
     return JSON.parse(raw) as {
@@ -84,9 +90,10 @@ async function importFiles(onProgress: (progress: ImportProgress) => void): Prom
   dest.create({ intermediates: true, idempotent: true })
   for (let i = 0; i < files.length; i++) {
     const src = files[i]
-    await src.copy(new File(dest, src.name), { overwrite: true })
+    const destName = copyFileName(src.name)
+    await src.copy(new File(dest, destName), { overwrite: true })
     onProgress({
-      message: `Copying ${src.name}`,
+      message: `Copying ${destName}`,
       fraction: 0.08 + 0.5 * ((i + 1) / files.length),
     })
   }

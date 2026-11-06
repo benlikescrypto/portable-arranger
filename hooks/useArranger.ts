@@ -13,12 +13,18 @@ function catalogSounds(): SoundItem[] {
   }))
 }
 
+let factoryStyleCount = 0
+
 function catalogStyles(): StyleItem[] {
-  return audio.listStyles().map((item) => ({
-    ...item,
-    bank: "FACTORY",
-    source: item.id < 1000 ? "FACTORY" : "IMPORTED",
-  }))
+  return audio.listStyles().map((item) => {
+    const imported = factoryStyleCount > 0 && item.id >= factoryStyleCount
+    return {
+      ...item,
+      bank: imported ? "IMPORTED" : "FACTORY",
+      source: imported ? "IMPORTED" : "FACTORY",
+      category: imported && item.category === "Style" ? "Imported" : item.category,
+    }
+  })
 }
 
 const initial: ArrangerUiState = {
@@ -82,6 +88,7 @@ export function useArranger() {
       if (!alive) return
       const sounds = catalogSounds()
       const styles = catalogStyles()
+      factoryStyleCount = styles.length
       audio.setPartProgram(0, 0)
       audio.setPartProgram(1, 7)
       audio.setPartProgram(3, 21)
@@ -210,7 +217,7 @@ export function useArranger() {
       ...s,
       importing: true,
       importProgress: 0,
-      importMessage: "Pick SET files (STY, PCM, KMP, PCG, KSF)…",
+      importMessage: "Pick a PA4X STY, or STY + PCM/KMP from the SET…",
     }))
     try {
       const lib = await importPa4xSet((progress) => {
@@ -222,16 +229,18 @@ export function useArranger() {
       }
       const sounds = catalogSounds()
       const styles = catalogStyles()
-      const next = styles[styles.length - 1]
+      const importedStyles = styles.filter((item) => item.source === "IMPORTED")
+      const next = importedStyles[importedStyles.length - 1]
+      const loaded = next ? 1 : lib.stylesLoaded
       const report = [
-        `${lib.patchesLoaded} instruments`,
-        `${lib.samplesLoaded} samples`,
-        `${lib.stylesLoaded} styles`,
+        loaded ? `${importedStyles.length || lib.stylesLoaded} imported style${importedStyles.length === 1 ? "" : "s"}` : "0 styles imported",
+        lib.patchesLoaded ? `${lib.patchesLoaded} instruments` : "",
+        lib.samplesLoaded ? `${lib.samplesLoaded} samples` : "",
         lib.reason?.trim(),
       ]
         .filter(Boolean)
         .join(" · ")
-      if (lib.stylesLoaded > 0 && next) {
+      if (next) {
         audio.setStyle(next.id)
         if (next.tempo) audio.setTempo(next.tempo)
       }
@@ -243,12 +252,14 @@ export function useArranger() {
         adapterName: lib.adapterName,
         sounds,
         styles,
-        styleId: lib.stylesLoaded > 0 && next ? next.id : s.styleId,
+        styleId: next ? next.id : s.styleId,
         tempo: next?.tempo || s.tempo,
         setFiles: lib.files.map((f) => f.relativePath),
         importReport: report,
         importMessage: report || "Import finished.",
-        mode: "SET",
+        libraryFilter: next ? "imported" : s.libraryFilter,
+        category: "All",
+        mode: next ? "PAD" : "STYLE",
       }))
     } catch (error) {
       setState((s) => ({

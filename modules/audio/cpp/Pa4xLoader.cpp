@@ -268,6 +268,8 @@ bool parseStandardSmf(const uint8_t* b, size_t n, size_t offset, std::vector<Mid
     for (const auto& m : notes) {
         if (m.ch >= 8 && m.ch <= 15) keep.push_back(m);
     }
+    // PA styles use 8–15. Converted / GM STY files often put the band on 0–7.
+    if (keep.empty()) keep = notes;
     notes.swap(keep);
     return !notes.empty();
 }
@@ -391,42 +393,36 @@ void collectStyleSmfs(const uint8_t* b, size_t n, std::vector<ParsedStyleSmf>& f
             if (!blob.empty()) any = true;
         if (any) found.push_back(std::move(smf));
     };
-    if (n >= 8 && std::memcmp(b, "MThd", 4) == 0) {
-        ParsedStyleSmf smf;
-        size_t consumed = 0;
-        if (tryParseSmfAt(b, n, 0, smf, &consumed)) pushIf(std::move(smf));
-        return;
-    }
-    const size_t scan = std::min(n, (size_t)65536);
-    for (size_t i = 0; i + 8 < scan; ++i) {
-        if (std::memcmp(b + i, "MThd", 4) != 0) continue;
-        ParsedStyleSmf smf;
-        size_t consumed = 0;
-        if (tryParseSmfAt(b, n, i, smf, &consumed)) {
-            pushIf(std::move(smf));
-            i += std::max<size_t>(consumed, 8) - 1;
+    auto ingestMthdFrom = [&](const uint8_t* src, size_t srcN) {
+        for (size_t i = 0; i + 8 < srcN; ++i) {
+            if (src[i] != 'M' || src[i + 1] != 'T' || src[i + 2] != 'h' || src[i + 3] != 'd') continue;
+            ParsedStyleSmf smf;
+            size_t consumed = 0;
+            if (tryParseSmfAt(src, srcN, i, smf, &consumed)) {
+                pushIf(std::move(smf));
+                i += std::max<size_t>(consumed, 8) - 1;
+            }
         }
-    }
+    };
+    ingestMthdFrom(b, n);
     if (!found.empty()) return;
     for (size_t i = 0; i + 8 < n; ++i) {
         if (std::memcmp(b + i, "OC31", 4) != 0) continue;
         uint32_t cap = ru32le(b + i + 4);
         if (cap < 64 || cap > 8u * 1024u * 1024u) cap = ru32be(b + i + 4);
         if (cap < 64 || cap > 8u * 1024u * 1024u) cap = 1u * 1024u * 1024u;
-        std::vector<uint8_t> unpacked;
-        if (!lzssInflate(b + i + 8, n - (i + 8), unpacked, cap)) continue;
-        ParsedStyleSmf smf;
-        size_t consumed = 0;
-        size_t off = 0;
-        if (unpacked.size() >= 8 && std::memcmp(unpacked.data(), "MThd", 4) != 0) {
-            for (size_t k = 0; k + 8 < unpacked.size() && k < 4096; ++k) {
-                if (std::memcmp(unpacked.data() + k, "MThd", 4) == 0) {
-                    off = k;
-                    break;
-                }
+        const size_t payloads[] = {8, 10, 12, 16};
+        for (size_t skip : payloads) {
+            if (i + skip >= n) continue;
+            std::vector<uint8_t> unpacked;
+            const uint8_t* payload = b + i + skip;
+            const size_t payloadN = n - (i + skip);
+            if (!lzssInflate(payload, payloadN, unpacked, cap)) {
+                if (!inflateZlibBlock(payload, payloadN, unpacked)) continue;
             }
+            ingestMthdFrom(unpacked.data(), unpacked.size());
+            if (!found.empty()) return;
         }
-        if (tryParseSmfAt(unpacked.data(), unpacked.size(), off, smf, &consumed)) pushIf(std::move(smf));
     }
     if (!found.empty()) return;
     std::vector<uint8_t> inflated;
@@ -442,7 +438,6 @@ void notesToPattern(const std::vector<MidiNote>& notes, Arranger::Pattern& p) {
     int last = 0;
     const int bar = kPpq * 4;
     for (const MidiNote& m : notes) {
-        if (m.ch < 8 || m.ch > 15) continue;
         const int tick = m.tick;
         const int dur = std::max(1, std::min(m.dur, bar * 2));
         last = std::max(last, tick + dur);
@@ -451,12 +446,13 @@ void notesToPattern(const std::vector<MidiNote>& notes, Arranger::Pattern& p) {
         if (m.ch == 9 || m.ch == 10) {
             flags = kEvAbs;
             trk = 0;
-        } else if (m.ch == 8) {
+        } else if (m.ch == 8 || m.ch == 1) {
             flags = kEvTrans;
             trk = 1;
         } else {
             flags = kEvTrans;
-            trk = (uint8_t)std::min(3, 2 + (m.ch - 11));
+            const int accIndex = m.ch >= 11 ? (m.ch - 11) : (m.ch > 1 ? m.ch - 2 : 0);
+            trk = (uint8_t)std::min(3, 2 + accIndex);
         }
         p.evs.push_back({(uint16_t)std::min(tick, 65535), trk, (uint8_t)m.note, (uint8_t)m.vel, (uint16_t)std::min(dur, 65535),
                          flags});
@@ -627,7 +623,12 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         struct stat st {};
         if (stat(folder, &st) == 0 && S_ISREG(st.st_mode)) files.push_back(folder);
     }
-    if (files.empty()) return -1;
+    if (files.empty()) {
+        if (report && reportLen > 0) {
+            std::snprintf(report, (size_t)reportLen, "{\"ok\":0,\"reason\":\"No files in the import folder\"}");
+        }
+        return -1;
+    }
 
     std::vector<LoadedSample> loaded;
     int compressed = 0, skipped = 0, patchesAdded = 0, stylesAdded = 0, kmpFiles = 0;
@@ -784,12 +785,21 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
     int sampledDrum = !drumPatchIds.empty() ? drumPatchIds[0] : -1;
     int sampledBass = -1;
     std::vector<int> sampledAcc;
+    int factoryDrum = -1, factoryBass = -1, factoryAcc1 = -1, factoryAcc2 = -1, factoryAcc3 = -1;
     {
         std::lock_guard<std::mutex> g(loadMu);
         for (int i = 0; i < (int)patches.size(); ++i) {
-            if (!patches[(size_t)i].sampled) continue;
-            const std::string cat = patches[(size_t)i].category;
-            const std::string nm = normName(patches[(size_t)i].name);
+            const Patch& p = patches[(size_t)i];
+            if (!p.sampled) {
+                if (isKit(p.model) && factoryDrum < 0) factoryDrum = i;
+                if (p.bus == BusBass && factoryBass < 0) factoryBass = i;
+                if (p.model == Model::Piano && factoryAcc1 < 0) factoryAcc1 = i;
+                if (p.model == Model::ConcertStrings && factoryAcc2 < 0) factoryAcc2 = i;
+                if (p.model == Model::NylonGuitar && factoryAcc3 < 0) factoryAcc3 = i;
+                continue;
+            }
+            const std::string cat = p.category;
+            const std::string nm = normName(p.name);
             const bool drum = cat == "Percussion" || nm.find("kit") != std::string::npos ||
                               nm.find("drum") != std::string::npos;
             const bool bass = cat == "Bass" || nm.find("bass") != std::string::npos;
@@ -798,11 +808,11 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             else if (!drum) sampledAcc.push_back(i);
         }
     }
-    const int drumProg = sampledDrum;
-    const int bassProg = sampledBass;
-    const int acc1 = !sampledAcc.empty() ? sampledAcc[0] : -1;
-    const int acc2 = sampledAcc.size() > 1 ? sampledAcc[1] : acc1;
-    const int acc3 = sampledAcc.size() > 2 ? sampledAcc[2] : acc1;
+    const int drumProg = sampledDrum >= 0 ? sampledDrum : factoryDrum;
+    const int bassProg = sampledBass >= 0 ? sampledBass : factoryBass;
+    const int acc1 = !sampledAcc.empty() ? sampledAcc[0] : factoryAcc1;
+    const int acc2 = sampledAcc.size() > 1 ? sampledAcc[1] : (sampledAcc.empty() ? factoryAcc2 : acc1);
+    const int acc3 = sampledAcc.size() > 2 ? sampledAcc[2] : (sampledAcc.empty() ? factoryAcc3 : acc1);
 
     auto parseKorfNames = [&](const uint8_t* b, size_t n, std::vector<std::string>& names) {
         if (n < 64) return false;
@@ -865,6 +875,17 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             applyBlobsToStyle(style, smfs[i].blobs);
             bool hasNotes = !style.var[0].evs.empty();
             for (int v = 1; v < 4 && !hasNotes; ++v) hasNotes = !style.var[v].evs.empty();
+            if (!hasNotes) {
+                Arranger::Pattern* cands[] = {&style.intro1, &style.intro2, &style.intro3, &style.fill[0], &style.end1,
+                                              &style.end2};
+                for (Arranger::Pattern* cand : cands) {
+                    if (!cand->evs.empty()) {
+                        style.var[0] = *cand;
+                        hasNotes = true;
+                        break;
+                    }
+                }
+            }
             if (!hasNotes) continue;
             applyPrograms(style, drumProg, bassProg, acc1, acc2, acc3);
             addStyle(completeStyle(std::move(style)));
@@ -877,15 +898,33 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         }
     };
 
+    auto skipStyleExt = [](const std::string& ext) {
+        return ext == ".PCM" || ext == ".KMP" || ext == ".KSF" || ext == ".WAV" || ext == ".AIF" || ext == ".AIFF" ||
+               ext == ".PCG" || ext == ".KST" || ext == ".SFZ" || ext == ".SF2" || ext == ".MP3" || ext == ".PNG" ||
+               ext == ".JPG" || ext == ".JPEG";
+    };
     for (const auto& path : files) {
         const std::string ext = upperExt(path);
-        if (ext == ".STY" || ext == ".STG" || ext == ".MID" || ext == ".SMF") {
+        const bool styleExt = ext == ".STY" || ext == ".STG" || ext == ".MID" || ext == ".SMF";
+        if (styleExt || ext.empty() || !skipStyleExt(ext)) {
+            if (!styleExt && !ext.empty()) {
+                std::vector<uint8_t> peek;
+                if (!readFileBytes(path.c_str(), peek) || peek.size() < 8) continue;
+                bool maybe = std::memcmp(peek.data(), "MThd", 4) == 0 || std::memcmp(peek.data(), "KORF", 4) == 0;
+                if (!maybe) {
+                    const size_t lim = std::min(peek.size(), (size_t)1024);
+                    for (size_t i = 0; i + 4 < lim && !maybe; ++i) {
+                        maybe = std::memcmp(peek.data() + i, "OC31", 4) == 0 || std::memcmp(peek.data() + i, "MThd", 4) == 0;
+                    }
+                }
+                if (!maybe) continue;
+            }
             ingestStyleFile(path, fileStem(path));
         }
     }
 
     if (stylesAdded > 0 && firstSampled < 0 && reason.size() < 180) {
-        reason += "Style notes loaded but no SET PCM/KMP; accompaniment will be silent. ";
+        reason += "No SET PCM; style uses factory GM backing. ";
     }
 
     if (report && reportLen > 0) {
