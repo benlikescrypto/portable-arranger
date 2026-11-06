@@ -4,6 +4,7 @@ export type SoundInfo = {
   id: number
   name: string
   category: string
+  source?: string
 }
 
 export type StyleInfo = {
@@ -43,6 +44,9 @@ type AudioNative = {
   setStyle: (id: number) => void
   setSynchro: (on: boolean) => void
   setAutoFill: (on: boolean) => void
+  setTranspose?: (semis: number) => void
+  setOctave?: (oct: number) => void
+  setFx?: (which: number, mix: number) => void
   snapshot: () => EngineSnapshot
   listSounds: () => SoundInfo[]
   listStyles: () => StyleInfo[]
@@ -50,6 +54,8 @@ type AudioNative = {
   loadKsf: (path: string, name: string, category: string) => Promise<number>
   scanPcmBank: (path: string) => Promise<number>
   loadPa4xSet?: (path: string) => Promise<string>
+  loadSfz?: (path: string) => Promise<string>
+  loadAbStyle?: (path: string) => Promise<string>
 }
 
 const native = requireOptionalNativeModule<AudioNative>("ArrangerBoxAudio")
@@ -111,6 +117,15 @@ export const audio = {
   setAutoFill(on: boolean) {
     native?.setAutoFill(on)
   },
+  setTranspose(semis: number) {
+    native?.setTranspose?.(semis)
+  },
+  setOctave(oct: number) {
+    native?.setOctave?.(oct)
+  },
+  setFx(which: number, mix: number) {
+    native?.setFx?.(which, mix)
+  },
   snapshot(): EngineSnapshot | null {
     return native ? native.snapshot() : null
   },
@@ -131,6 +146,14 @@ export const audio = {
   },
   loadPa4xSet(path: string) {
     const load = native?.loadPa4xSet
+    return load ? load(path) : Promise.resolve('{"ok":0}')
+  },
+  loadSfz(path: string) {
+    const load = native?.loadSfz
+    return load ? load(path) : Promise.resolve('{"ok":0}')
+  },
+  loadAbStyle(path: string) {
+    const load = native?.loadAbStyle
     return load ? load(path) : Promise.resolve('{"ok":0}')
   },
 }

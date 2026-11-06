@@ -42,10 +42,14 @@ void arrangerbox_book_section(int section);
 void arrangerbox_set_style(int id);
 void arrangerbox_set_synchro(int on);
 void arrangerbox_set_auto_fill(int on);
+void arrangerbox_set_transpose(int semis);
+void arrangerbox_set_octave(int oct);
+void arrangerbox_set_fx(int which, float mix);
 
 int arrangerbox_sound_count(void);
 void arrangerbox_sound_name(int id, char* out, int maxLen);
 void arrangerbox_sound_category(int id, char* out, int maxLen);
+void arrangerbox_sound_source(int id, char* out, int maxLen);
 int arrangerbox_style_count(void);
 void arrangerbox_style_name(int id, char* out, int maxLen);
 void arrangerbox_style_category(int id, char* out, int maxLen);
@@ -62,6 +66,8 @@ int arrangerbox_load_wav(const char* path, const char* name, const char* categor
 int arrangerbox_load_ksf(const char* path, const char* name, const char* category);
 int arrangerbox_scan_pcm_bank(const char* path);
 int arrangerbox_load_pa4x_set(const char* folder, char* report, int reportLen);
+int arrangerbox_load_sfz(const char* path, char* report, int reportLen);
+int arrangerbox_load_abstyle(const char* path, char* report, int reportLen);
 
 #ifdef __cplusplus
 }

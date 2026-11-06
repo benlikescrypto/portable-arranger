@@ -27,18 +27,17 @@ export function PaButton({ label, onPress, active, booked, accent = Pa.orange, s
 
 const styles = StyleSheet.create({
   btn: {
-    minHeight: 40,
+    minHeight: 48,
+    minWidth: 48,
     borderRadius: 8,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-    flexGrow: 1,
-    flexBasis: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   label: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0.6,
     textAlign: "center",

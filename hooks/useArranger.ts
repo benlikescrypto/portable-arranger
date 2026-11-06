@@ -3,11 +3,27 @@ import { midi } from "arrangerbox-midi"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { importPa4xSet } from "@/lib/library/setImporter"
-import type { ArrangerUiState, Mode } from "@/lib/types"
+import type { ArrangerUiState, Mode, SoundItem, StyleItem } from "@/lib/types"
+
+function catalogSounds(): SoundItem[] {
+  return audio.listSounds().map((item) => ({
+    ...item,
+    bank: item.source === "FACTORY" || !item.source ? "FACTORY" : item.source,
+    source: item.source ?? "FACTORY",
+  }))
+}
+
+function catalogStyles(): StyleItem[] {
+  return audio.listStyles().map((item) => ({
+    ...item,
+    bank: "FACTORY",
+    source: item.id < 1000 ? "FACTORY" : "IMPORTED",
+  }))
+}
 
 const initial: ArrangerUiState = {
   mode: "STYLE",
-  setName: "Factory Engine",
+  setName: "",
   adapterName: "ArrangerBox",
   sounds: [],
   styles: [],
@@ -15,14 +31,14 @@ const initial: ArrangerUiState = {
   category: "All",
   upper1: 0,
   upper2: 7,
-  upper3: null,
+  upper3: 11,
   lower: 21,
   upper2On: false,
   upper3On: false,
   lowerOn: true,
   split: 60,
-  styleId: 10,
-  tempo: 98,
+  styleId: 0,
+  tempo: 112,
   transpose: 0,
   variation: 1,
   section: 4,
@@ -31,7 +47,7 @@ const initial: ArrangerUiState = {
   autoFill: true,
   chordRoot: 0,
   chordType: 0,
-  mixer: { keyboard: 0.95, drums: 0.92, bass: 0.88, acc: 0.82, pad: 0.75, master: 0.9 },
+  mixer: { keyboard: 1, drums: 1, bass: 1, acc: 1, pad: 1, master: 0.95 },
   midiConnected: false,
   midiName: "MIDI",
   latencyMs: 8,
@@ -41,8 +57,15 @@ const initial: ArrangerUiState = {
   importProgress: 0,
   setFiles: [],
   sts: 1,
-  showKeyboard: true,
   favorites: [],
+  octave: 0,
+  reverb: 0.35,
+  chorus: 0.12,
+  delay: 0,
+  recentSounds: [],
+  recentStyles: [],
+  libraryFilter: "all",
+  importReport: "",
 }
 
 export function useArranger() {
@@ -57,15 +80,29 @@ export function useArranger() {
       }
       const started = await audio.start()
       if (!alive) return
-      const sounds = audio.listSounds().map((item) => ({ ...item, bank: "FACTORY" }))
-      const styles = audio.listStyles()
+      const sounds = catalogSounds()
+      const styles = catalogStyles()
       audio.setPartProgram(0, 0)
       audio.setPartProgram(1, 7)
       audio.setPartProgram(3, 21)
       audio.setPartEnable(1, false)
-      audio.setStyle(10)
-      audio.setTempo(98)
-      setState((s) => ({ ...s, sounds, styles, nativeReady: started }))
+      audio.setFx(0, 0.35)
+      audio.setFx(1, 0.12)
+      if (styles.length > 0) {
+        audio.setStyle(0)
+        audio.setTempo(styles[0].tempo || 112)
+      }
+      setState((s) => ({
+        ...s,
+        sounds,
+        styles,
+        nativeReady: started,
+        styleId: styles[0]?.id ?? 0,
+        tempo: styles[0]?.tempo || 112,
+        importMessage: styles.length
+          ? `${sounds.length} factory sounds, ${styles.length} styles. Connect MIDI and play.`
+          : `${sounds.length} factory sounds ready.`,
+      }))
       await midi.start()
     })()
     const sub = midi.addDeviceListener((event) => {
@@ -95,22 +132,19 @@ export function useArranger() {
   const setMode = useCallback((mode: Mode) => setState((s) => ({ ...s, mode })), [])
   const setQuery = useCallback((query: string) => setState((s) => ({ ...s, query })), [])
   const setCategory = useCallback((category: string) => setState((s) => ({ ...s, category })), [])
+  const setLibraryFilter = useCallback((libraryFilter: ArrangerUiState["libraryFilter"]) => {
+    setState((s) => ({ ...s, libraryFilter }))
+  }, [])
 
   const selectSound = useCallback((id: number, part = 0) => {
     setState((s) => {
-      const picked = s.sounds.find((item) => item.id === id)
-      const engineId =
-        id < 10_000
-          ? id
-          : (s.sounds.find((item) => item.source !== "PA4X SET" && item.name === picked?.name)?.id ?? id)
-      if (engineId < 10_000) {
-        audio.setPartProgram(part, engineId)
-        if (part > 0) audio.setPartEnable(part, true)
-      }
-      if (part === 1) return { ...s, upper2: engineId, upper2On: true }
-      if (part === 2) return { ...s, upper3: engineId, upper3On: true }
-      if (part === 3) return { ...s, lower: engineId }
-      return { ...s, upper1: engineId }
+      audio.setPartProgram(part, id)
+      if (part > 0) audio.setPartEnable(part, true)
+      const recentSounds = [id, ...s.recentSounds.filter((x) => x !== id)].slice(0, 12)
+      if (part === 1) return { ...s, upper2: id, upper2On: true, recentSounds }
+      if (part === 2) return { ...s, upper3: id, upper3On: true, recentSounds }
+      if (part === 3) return { ...s, lower: id, recentSounds }
+      return { ...s, upper1: id, recentSounds }
     })
   }, [])
 
@@ -128,19 +162,21 @@ export function useArranger() {
   const selectStyle = useCallback((id: number) => {
     setState((s) => {
       const style = s.styles.find((item) => item.id === id)
-      if (id < 10_000) {
-        audio.setStyle(id)
-        const tempo = style?.tempo ?? audio.listStyles().find((item) => item.id === id)?.tempo ?? 100
-        audio.setTempo(tempo)
-        return { ...s, styleId: id, tempo }
+      audio.setStyle(id)
+      const tempo = style?.tempo || 100
+      audio.setTempo(tempo)
+      return {
+        ...s,
+        styleId: id,
+        tempo,
+        recentStyles: [id, ...s.recentStyles.filter((x) => x !== id)].slice(0, 12),
       }
-      return { ...s, styleId: id, tempo: style?.tempo ?? s.tempo }
     })
   }, [])
 
   const book = useCallback((section: number) => {
     audio.bookSection(section)
-    if (section >= 4 && section <= 7) setState((s) => ({ ...s, variation: section - 3 }))
+    if (section >= 4 && section <= 7) setState((s) => ({ ...s, variation: section - 3, sts: section - 3 }))
   }, [])
 
   const setMixer = useCallback((bus: number, gain: number) => {
@@ -157,51 +193,61 @@ export function useArranger() {
     })
   }, [])
 
+  const setAccVolume = useCallback((gain: number) => {
+    audio.setMixer(1, gain)
+    audio.setMixer(2, gain)
+    audio.setMixer(3, gain)
+    audio.setMixer(4, gain)
+    setState((s) => ({
+      ...s,
+      mixer: { ...s.mixer, drums: gain, bass: gain, acc: gain, pad: gain },
+    }))
+  }, [])
+
   const importSet = useCallback(async () => {
     setState((s) => ({
       ...s,
       importing: true,
       importProgress: 0,
-      importMessage: "Choose a PA4X .SET folder…",
-      mode: "SET",
+      importMessage: "Pick SET files (STY, PCM, KMP, PCG, KSF)…",
     }))
     try {
       const lib = await importPa4xSet((progress) => {
         setState((s) => ({ ...s, importMessage: progress.message, importProgress: progress.fraction }))
       })
       if (!lib) {
-        setState((s) => ({ ...s, importing: false, importMessage: "SET import cancelled." }))
+        setState((s) => ({ ...s, importing: false, importMessage: "Load cancelled." }))
         return
       }
-      const engineSounds = audio.listSounds().map((item) => ({
-        ...item,
-        bank: item.id < 40 ? "FACTORY" : lib.setName,
-        source: item.id < 40 ? "Engine" : "PA4X SET",
-      }))
-      const namedSounds = lib.sounds.filter((sound) => !engineSounds.some((item) => item.name === sound.name))
-      const engineStyles = audio.listStyles().map((item) => ({
-        ...item,
-        source: item.id < 16 ? "Engine" : "PA4X SET",
-      }))
-      const namedStyles = lib.styles.filter((style) => !engineStyles.some((item) => item.name === style.name))
-      const bits = [
-        `${lib.patchesLoaded} SET sounds`,
-        `${lib.stylesLoaded} SET styles`,
+      const sounds = catalogSounds()
+      const styles = catalogStyles()
+      const next = styles[styles.length - 1]
+      const report = [
+        `${lib.patchesLoaded} instruments`,
         `${lib.samplesLoaded} samples`,
+        `${lib.stylesLoaded} styles`,
+        lib.reason?.trim(),
       ]
-      if (lib.compressedDecoded) bits.push(`${lib.compressedDecoded} compressed samples decoded`)
-      if (lib.skippedSamples) bits.push(`${lib.skippedSamples} files skipped`)
+        .filter(Boolean)
+        .join(" · ")
+      if (lib.stylesLoaded > 0 && next) {
+        audio.setStyle(next.id)
+        if (next.tempo) audio.setTempo(next.tempo)
+      }
       setState((s) => ({
         ...s,
         importing: false,
         importProgress: 1,
         setName: lib.setName,
         adapterName: lib.adapterName,
-        sounds: lib.patchesLoaded > 0 ? engineSounds : [...engineSounds, ...namedSounds],
-        styles: lib.stylesLoaded > 0 ? engineStyles : [...engineStyles, ...namedStyles],
-        setFiles: lib.files.slice(0, 40).map((file) => `${file.kind}  ${file.relativePath}`),
-        importMessage: `Loaded ${bits.join(", ")} from ${lib.setName}`,
-        mode: "SOUND",
+        sounds,
+        styles,
+        styleId: lib.stylesLoaded > 0 && next ? next.id : s.styleId,
+        tempo: next?.tempo || s.tempo,
+        setFiles: lib.files.map((f) => f.relativePath),
+        importReport: report,
+        importMessage: report || "Import finished.",
+        mode: "SET",
       }))
     } catch (error) {
       setState((s) => ({
@@ -217,20 +263,16 @@ export function useArranger() {
       setMode,
       setQuery,
       setCategory,
+      setLibraryFilter,
       selectSound,
       togglePart,
       selectStyle,
       book,
       setMixer,
+      setAccVolume,
       importSet,
       toggleStart: () => {
         if (isAudioNativeAvailable) audio.arrangerToggle()
-      },
-      noteOn: (note: number, vel: number) => {
-        if (isAudioNativeAvailable) audio.noteOn(0, note, vel)
-      },
-      noteOff: (note: number) => {
-        if (isAudioNativeAvailable) audio.noteOff(0, note)
       },
       nudgeTempo: (delta: number) => {
         setState((s) => {
@@ -250,16 +292,49 @@ export function useArranger() {
           return { ...s, autoFill: !s.autoFill }
         }),
       transpose: (delta: number) =>
-        setState((s) => ({ ...s, transpose: Math.min(12, Math.max(-12, s.transpose + delta)) })),
-      setSts: (n: number) => setState((s) => ({ ...s, sts: n })),
-      toggleKeyboard: () => setState((s) => ({ ...s, showKeyboard: !s.showKeyboard })),
+        setState((s) => {
+          const transpose = Math.min(12, Math.max(-12, s.transpose + delta))
+          audio.setTranspose(transpose)
+          return { ...s, transpose }
+        }),
+      setOctave: (delta: number) =>
+        setState((s) => {
+          const octave = Math.min(3, Math.max(-3, s.octave + delta))
+          audio.setOctave(octave)
+          return { ...s, octave }
+        }),
+      setFx: (which: number, mix: number) => {
+        audio.setFx(which, mix)
+        setState((s) => {
+          if (which === 0) return { ...s, reverb: mix }
+          if (which === 1) return { ...s, chorus: mix }
+          return { ...s, delay: mix }
+        })
+      },
+      previewSound: (id: number) => {
+        setState((s) => {
+          const restore = s.upper1
+          audio.setPartProgram(0, id)
+          audio.noteOn(0, 72, 100)
+          setTimeout(() => {
+            audio.noteOff(0, 72)
+            audio.setPartProgram(0, restore)
+          }, 450)
+          return s
+        })
+      },
+      setSts: (n: number) => {
+        const section = 3 + n
+        audio.bookSection(section)
+        setState((s) => ({ ...s, sts: n, variation: n }))
+      },
       toggleFavorite: (id: number) =>
         setState((s) => ({
           ...s,
           favorites: s.favorites.includes(id) ? s.favorites.filter((x) => x !== id) : [...s.favorites, id],
         })),
     }),
-    [book, importSet, selectSound, selectStyle, setCategory, setMixer, setMode, setQuery, togglePart]
+    [book, importSet, selectSound, selectStyle, setAccVolume, setCategory, setLibraryFilter, setMixer, setMode, setQuery, togglePart]
   )
 
   return { state, ...actions }

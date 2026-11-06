@@ -37,7 +37,7 @@ OSStatus renderCb(void*, AudioUnitRenderActionFlags*, const AudioTimeStamp*, UIn
     return noErr;
 }
 
-bool openUnit() {
+bool openUnit(double sampleRate) {
     AudioComponentDescription desc{};
     desc.componentType = kAudioUnitType_Output;
     desc.componentSubType = kAudioUnitSubType_RemoteIO;
@@ -46,7 +46,7 @@ bool openUnit() {
     if (!comp || AudioComponentInstanceNew(comp, &gAu) != noErr) return false;
 
     AudioStreamBasicDescription format{};
-    format.mSampleRate = 48000;
+    format.mSampleRate = sampleRate > 1.0 ? sampleRate : 48000.0;
     format.mFormatID = kAudioFormatLinearPCM;
     format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved;
     format.mBytesPerPacket = sizeof(float);
@@ -96,9 +96,8 @@ int arrangerbox_audio_start(void) {
         AudioComponentInstanceDispose(gAu);
         gAu = nullptr;
     }
-    if (!openUnit()) return 0;
-
     const float sr = static_cast<float>(session.sampleRate > 1 ? session.sampleRate : 48000);
+    if (!openUnit(sr)) return 0;
     engine->prepare(sr);
     engine->setLatencyMs(static_cast<float>(session.IOBufferDuration * 1000.0 * 2.0));
     if (AudioOutputUnitStart(gAu) != noErr) return 0;

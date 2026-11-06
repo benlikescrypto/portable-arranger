@@ -57,6 +57,15 @@ func arrangerbox_set_synchro(_ on: Int32)
 @_silgen_name("arrangerbox_set_auto_fill")
 func arrangerbox_set_auto_fill(_ on: Int32)
 
+@_silgen_name("arrangerbox_set_transpose")
+func arrangerbox_set_transpose(_ semis: Int32)
+
+@_silgen_name("arrangerbox_set_octave")
+func arrangerbox_set_octave(_ oct: Int32)
+
+@_silgen_name("arrangerbox_set_fx")
+func arrangerbox_set_fx(_ which: Int32, _ mix: Float)
+
 @_silgen_name("arrangerbox_sound_count")
 func arrangerbox_sound_count() -> Int32
 
@@ -65,6 +74,9 @@ func arrangerbox_sound_name(_ id: Int32, _ out: UnsafeMutablePointer<CChar>, _ m
 
 @_silgen_name("arrangerbox_sound_category")
 func arrangerbox_sound_category(_ id: Int32, _ out: UnsafeMutablePointer<CChar>, _ maxLen: Int32)
+
+@_silgen_name("arrangerbox_sound_source")
+func arrangerbox_sound_source(_ id: Int32, _ out: UnsafeMutablePointer<CChar>, _ maxLen: Int32)
 
 @_silgen_name("arrangerbox_style_count")
 func arrangerbox_style_count() -> Int32
@@ -107,6 +119,12 @@ func arrangerbox_scan_pcm_bank(_ path: UnsafePointer<CChar>) -> Int32
 
 @_silgen_name("arrangerbox_load_pa4x_set")
 func arrangerbox_load_pa4x_set(_ folder: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
+
+@_silgen_name("arrangerbox_load_sfz")
+func arrangerbox_load_sfz(_ path: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32)
+
+@_silgen_name("arrangerbox_load_abstyle")
+func arrangerbox_load_abstyle(_ path: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
 
 private func cString(_ id: Int32, _ fill: (Int32, UnsafeMutablePointer<CChar>, Int32) -> Void) -> String {
   var buf = [CChar](repeating: 0, count: 64)
@@ -167,6 +185,9 @@ public class ArrangerBoxAudioModule: Module {
     Function("setStyle") { (id: Int) in arrangerbox_set_style(Int32(id)) }
     Function("setSynchro") { (on: Bool) in arrangerbox_set_synchro(on ? 1 : 0) }
     Function("setAutoFill") { (on: Bool) in arrangerbox_set_auto_fill(on ? 1 : 0) }
+    Function("setTranspose") { (semis: Int) in arrangerbox_set_transpose(Int32(semis)) }
+    Function("setOctave") { (oct: Int) in arrangerbox_set_octave(Int32(oct)) }
+    Function("setFx") { (which: Int, mix: Double) in arrangerbox_set_fx(Int32(which), Float(mix)) }
 
     Function("snapshot") {
       [
@@ -186,7 +207,8 @@ public class ArrangerBoxAudioModule: Module {
         [
           "id": id,
           "name": cString(Int32(id), arrangerbox_sound_name),
-          "category": cString(Int32(id), arrangerbox_sound_category)
+          "category": cString(Int32(id), arrangerbox_sound_category),
+          "source": cString(Int32(id), arrangerbox_sound_source)
         ]
       }
     }
@@ -223,10 +245,30 @@ public class ArrangerBoxAudioModule: Module {
     }
 
     AsyncFunction("loadPa4xSet") { (path: String) in
-      var buf = [CChar](repeating: 0, count: 320)
+      var buf = [CChar](repeating: 0, count: 2048)
       path.withCString { p in
         buf.withUnsafeMutableBufferPointer { ptr in
-          _ = arrangerbox_load_pa4x_set(p, ptr.baseAddress!, 320)
+          _ = arrangerbox_load_pa4x_set(p, ptr.baseAddress!, Int32(buf.count))
+        }
+      }
+      return String(cString: buf)
+    }
+
+    AsyncFunction("loadSfz") { (path: String) in
+      var buf = [CChar](repeating: 0, count: 1024)
+      path.withCString { p in
+        buf.withUnsafeMutableBufferPointer { ptr in
+          _ = arrangerbox_load_sfz(p, ptr.baseAddress!, Int32(buf.count))
+        }
+      }
+      return String(cString: buf)
+    }
+
+    AsyncFunction("loadAbStyle") { (path: String) in
+      var buf = [CChar](repeating: 0, count: 1024)
+      path.withCString { p in
+        buf.withUnsafeMutableBufferPointer { ptr in
+          _ = arrangerbox_load_abstyle(p, ptr.baseAddress!, Int32(buf.count))
         }
       }
       return String(cString: buf)

@@ -5,7 +5,25 @@
 #include <cstring>
 #include <fstream>
 #include <vector>
+#ifdef ARRANGERBOX_NO_ZLIB
+struct z_stream {
+    unsigned char* next_in = nullptr;
+    unsigned avail_in = 0;
+    unsigned char* next_out = nullptr;
+    unsigned avail_out = 0;
+    unsigned long total_out = 0;
+};
+using Bytef = unsigned char;
+using uInt = unsigned;
+constexpr int Z_OK = 0;
+constexpr int Z_STREAM_END = 1;
+constexpr int Z_FINISH = 4;
+inline int inflateInit2(z_stream*, int) { return -1; }
+inline int inflate(z_stream*, int) { return -1; }
+inline int inflateEnd(z_stream*) { return 0; }
+#else
 #include <zlib.h>
+#endif
 
 namespace pa {
 
@@ -37,64 +55,87 @@ int loadWav(const char* path, Sample& out) {
     if (!readAll(path, b) || b.size() < 44) return -1;
     if (std::memcmp(b.data(), "RIFF", 4) != 0 || std::memcmp(b.data() + 8, "WAVE", 4) != 0) return -1;
     size_t i = 12;
-    int channels = 1, bits = 16, sr = 44100;
+    int srcCh = 1, bits = 16, sr = 44100, formatTag = 1, unity = 60;
     const uint8_t* data = nullptr;
     size_t dataLen = 0;
+    int loopS = 0, loopE = 0;
+    bool hasLoop = false;
     while (i + 8 <= b.size()) {
         const char* id = (const char*)b.data() + i;
         const uint32_t sz = ru32le(b.data() + i + 4);
         const uint8_t* payload = b.data() + i + 8;
         if (i + 8 + sz > b.size()) break;
         if (std::memcmp(id, "fmt ", 4) == 0 && sz >= 16) {
-            channels = ru16le(payload + 2);
+            formatTag = ru16le(payload);
+            srcCh = ru16le(payload + 2);
             sr = (int)ru32le(payload + 4);
             bits = ru16le(payload + 14);
         } else if (std::memcmp(id, "data", 4) == 0) {
             data = payload;
             dataLen = sz;
+        } else if (std::memcmp(id, "smpl", 4) == 0 && sz >= 60) {
+            unity = (int)ru32le(payload + 12);
+            const uint32_t nloops = ru32le(payload + 28);
+            if (nloops > 0) {
+                loopS = (int)ru32le(payload + 44);
+                loopE = (int)ru32le(payload + 48);
+                hasLoop = loopE > loopS;
+            }
         }
         i += 8 + sz + (sz & 1);
     }
     if (!data || dataLen == 0) return -1;
+    const int inCh = std::max(1, srcCh);
+    const int outCh = inCh >= 2 ? 2 : 1;
+    const int bytesPerSample = std::max(1, bits / 8);
+    const int frames = (int)(dataLen / (size_t)(bytesPerSample * inCh));
+    if (frames <= 0) return -1;
     out.sampleRate = sr > 0 ? sr : 44100;
-    out.loop = false;
-    if (bits == 16) {
-        const int frames = (int)(dataLen / (2 * std::max(1, channels)));
-        out.data.resize(frames);
-        for (int f = 0; f < frames; ++f) {
-            float acc = 0;
-            for (int c = 0; c < channels; ++c) {
-                const int16_t s = (int16_t)ru16le(data + (size_t)(f * channels + c) * 2);
-                acc += s / 32768.0f;
-            }
-            out.data[f] = acc / (float)std::max(1, channels);
+    out.channels = outCh;
+    out.rootNote = (unity > 0 && unity < 128) ? unity : 60;
+    out.data.assign((size_t)frames * (size_t)outCh, 0.0f);
+    auto writeFrame = [&](int f, float l, float r) {
+        out.data[(size_t)f * (size_t)outCh] = l;
+        if (outCh == 2) out.data[(size_t)f * 2 + 1] = r;
+    };
+    auto sampleAt = [&](int f, int c) -> float {
+        const size_t idx = (size_t)(f * inCh + std::min(c, inCh - 1));
+        if (bits == 8) return (data[idx] - 128) / 128.0f;
+        if (bits == 16) {
+            const int16_t s = (int16_t)ru16le(data + idx * 2);
+            return s / 32768.0f;
         }
-    } else if (bits == 8) {
-        const int frames = (int)(dataLen / std::max(1, channels));
-        out.data.resize(frames);
-        for (int f = 0; f < frames; ++f) {
-            float acc = 0;
-            for (int c = 0; c < channels; ++c) acc += (data[f * channels + c] - 128) / 128.0f;
-            out.data[f] = acc / (float)std::max(1, channels);
+        if (bits == 24) {
+            const size_t o = idx * 3;
+            int32_t v = (int32_t)data[o] | ((int32_t)data[o + 1] << 8) | ((int32_t)data[o + 2] << 16);
+            if (v & 0x800000) v |= ~0xFFFFFF;
+            return v / 8388608.0f;
         }
-    } else if (bits == 32) {
-        const int frames = (int)(dataLen / (4 * std::max(1, channels)));
-        out.data.resize(frames);
-        for (int f = 0; f < frames; ++f) {
-            float acc = 0;
-            for (int c = 0; c < channels; ++c) {
-                float v;
-                std::memcpy(&v, data + (size_t)(f * channels + c) * 4, 4);
-                acc += v;
-            }
-            out.data[f] = acc / (float)std::max(1, channels);
+        if (bits == 32 && formatTag == 3) {
+            float v;
+            std::memcpy(&v, data + idx * 4, 4);
+            return v;
         }
-    } else {
-        return -1;
+        if (bits == 32) {
+            const int32_t s = (int32_t)ru32le(data + idx * 4);
+            return s / 2147483648.0f;
+        }
+        return 0.0f;
+    };
+    if (bits != 8 && bits != 16 && bits != 24 && bits != 32) return -1;
+    for (int f = 0; f < frames; ++f) {
+        if (outCh == 1) {
+            float acc = 0;
+            for (int c = 0; c < inCh; ++c) acc += sampleAt(f, c);
+            writeFrame(f, acc / (float)inCh, 0);
+        } else {
+            writeFrame(f, sampleAt(f, 0), sampleAt(f, 1));
+        }
     }
-    out.loopStart = 0;
-    out.loopEnd = (int)out.data.size();
-    return (int)out.data.size();
+    out.loop = hasLoop;
+    out.loopStart = hasLoop ? std::max(0, std::min(frames - 1, loopS)) : 0;
+    out.loopEnd = hasLoop ? std::max(out.loopStart + 1, std::min(frames, loopE)) : frames;
+    return frames;
 }
 
 static float pcmScore(const std::vector<float>& x) {
@@ -141,6 +182,19 @@ static std::vector<float> decode8s(const uint8_t* p, size_t n, int frames) {
     const int count = std::min(frames > 0 ? frames : (int)n, (int)n);
     std::vector<float> o((size_t)std::max(0, count));
     for (int i = 0; i < count; ++i) o[(size_t)i] = ((int8_t)p[i]) / 128.0f;
+    return o;
+}
+
+static std::vector<float> decode24(const uint8_t* p, size_t n, int frames, bool big) {
+    const int count = std::min(frames > 0 ? frames : (int)(n / 3), (int)(n / 3));
+    std::vector<float> o((size_t)std::max(0, count));
+    for (int i = 0; i < count; ++i) {
+        const uint8_t* q = p + (size_t)i * 3;
+        int32_t v = big ? ((int32_t)q[0] << 16) | ((int32_t)q[1] << 8) | (int32_t)q[2]
+                        : (int32_t)q[0] | ((int32_t)q[1] << 8) | ((int32_t)q[2] << 16);
+        if (v & 0x800000) v |= ~0xFFFFFF;
+        o[(size_t)i] = v / 8388608.0f;
+    }
     return o;
 }
 
@@ -197,40 +251,39 @@ static bool inflateZlib(const uint8_t* p, size_t n, std::vector<uint8_t>& out) {
     return run(15 + 32) || run(15) || run(-15);
 }
 
+static std::vector<float> firstAudible(std::vector<std::vector<float>>&& cands) {
+    for (auto& c : cands) {
+        if (pcmScore(c) > 1e-8f) return std::move(c);
+    }
+    return {};
+}
+
 static std::vector<float> decodeBest(const uint8_t* pcm, size_t pcmLen, int bits, int frames, bool compressed) {
+    if (!compressed) {
+        if (bits == 16 && pcmLen >= 2) {
+            auto be = decode16be(pcm, pcmLen, frames);
+            if (pcmScore(be) > 1e-8f) return be;
+            return decode16le(pcm, pcmLen, frames);
+        }
+        if (bits == 24 && pcmLen >= 3) {
+            auto be = decode24(pcm, pcmLen, frames, true);
+            if (pcmScore(be) > 1e-8f) return be;
+            return decode24(pcm, pcmLen, frames, false);
+        }
+        if (bits == 8 && pcmLen >= 1) return decode8u(pcm, pcmLen, frames);
+        return {};
+    }
     std::vector<std::vector<float>> cands;
-    cands.reserve(10);
-    const bool looksUncompressed16 = pcmLen >= (size_t)std::max(1, frames) * 2;
-    if (!compressed && bits == 16 && pcmLen >= 2) cands.push_back(decode16be(pcm, pcmLen, frames));
-    if (!compressed && bits == 8 && pcmLen >= 1) cands.push_back(decode8u(pcm, pcmLen, frames));
-    if (compressed || !looksUncompressed16) {
-        cands.push_back(decodeDpcm(pcm, pcmLen, frames, 1));
-        cands.push_back(decodeDpcm(pcm, pcmLen, frames, 16));
-        cands.push_back(decodeDpcm(pcm, pcmLen, frames, 256));
-        cands.push_back(decodeDpcm4(pcm, pcmLen, frames));
-        cands.push_back(decode8s(pcm, pcmLen, frames));
-        cands.push_back(decode8u(pcm, pcmLen, frames));
-        std::vector<uint8_t> inflated;
-        if (inflateZlib(pcm, pcmLen, inflated)) {
-            cands.push_back(decode16be(inflated.data(), inflated.size(), frames));
-            cands.push_back(decode16le(inflated.data(), inflated.size(), frames));
-        }
+    cands.push_back(decodeDpcm(pcm, pcmLen, frames, 1));
+    cands.push_back(decodeDpcm(pcm, pcmLen, frames, 16));
+    cands.push_back(decodeDpcm(pcm, pcmLen, frames, 256));
+    cands.push_back(decodeDpcm4(pcm, pcmLen, frames));
+    std::vector<uint8_t> inflated;
+    if (inflateZlib(pcm, pcmLen, inflated)) {
+        cands.push_back(decode16be(inflated.data(), inflated.size(), frames));
+        cands.push_back(decode16le(inflated.data(), inflated.size(), frames));
     }
-    if (!compressed && pcmLen >= 2) {
-        cands.push_back(decode16be(pcm, pcmLen, frames));
-        cands.push_back(decode16le(pcm, pcmLen, frames));
-    }
-    int best = -1;
-    float bestScore = 0;
-    for (int i = 0; i < (int)cands.size(); ++i) {
-        const float s = pcmScore(cands[(size_t)i]);
-        if (s > bestScore) {
-            bestScore = s;
-            best = i;
-        }
-    }
-    if (best < 0) return {};
-    return std::move(cands[(size_t)best]);
+    return firstAudible(std::move(cands));
 }
 
 struct KsfResult {
@@ -290,6 +343,7 @@ static KsfResult parseKorgSample(const uint8_t* b, size_t n, Sample& out) {
     if (!pcm || pcmLen == 0) return r;
     auto decoded = decodeBest(pcm, pcmLen, bits, frames > 0 ? frames : (int)pcmLen, r.compressed);
     if (decoded.empty()) return r;
+    out.channels = 1;
     out.sampleRate = sr > 0 ? sr : 44100;
     out.loop = loop && loopE > loopS;
     out.loopStart = std::max(0, loopS);

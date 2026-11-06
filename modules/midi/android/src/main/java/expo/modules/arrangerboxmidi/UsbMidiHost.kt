@@ -142,7 +142,12 @@ internal class UsbMidiHost(
               MidiNative.nativeProgramChange(ch, msg[i + 1].toInt() and 0x7F)
               i += 2
             }
-            0xD0 -> i += 2
+            0xA0 -> i += 3
+            0xD0 -> {
+              if (i + 1 >= end) break
+              MidiNative.nativeCc(ch, 1, msg[i + 1].toInt() and 0x7F)
+              i += 2
+            }
             else -> i++
           }
         }

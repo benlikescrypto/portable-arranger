@@ -1,0 +1,57 @@
+# ArrangerBox sound / arranger status
+
+This is the honest record of what is implemented, what was tested, and what is still incomplete. It is not a claim of PA4X, Genos, or EDS-X equivalence.
+
+## Architecture (done)
+
+One C++ engine in `modules/audio/cpp` owns voices, samples, effects, chord detection, and accompaniment. Factory modeled patches, SFZ instruments, and imported Korg KMP/KSF/WAV instruments all become `Patch` + `Zone` + `Sample`. React Native never renders audio. Kotlin `MidiManager` and Swift CoreMIDI parse MIDI and push a lock-free queue.
+
+See `docs/SOUND_ENGINE.md`, `docs/STYLE_FORMAT.md`, and `assets/factory/LICENSE_MANIFEST.md`.
+
+## What ships
+
+| Area | Status |
+| --- | --- |
+| Unified sample + modeled synth, 96 voices, hermite interpolation, loops, ADSR, SVF, reverb/chorus/delay | Implemented |
+| Factory modeled ROM | **111** patches (original IDs 0–33 kept stable) |
+| Factory styles | **31** original `.abstyle` arrangements with intro/var/fill/break/ending, chord bass/comp |
+| SFZ subset loader | Implemented (see opcode list in SOUND_ENGINE.md) |
+| PA4X SET walk, WAV, KSF, PCM, KMP zones, STY/SMF, PCG names + missing refs | Implemented as a compatibility layer |
+| UI: instrument/style browsers, favorites, recent, import progress, transport, transpose/octave, FX | Implemented |
+| Android + iOS native audio/MIDI modules | Compiled architecture; **not hardware-verified** |
+
+Factory sounds are **original modeled instruments**, not recorded Steinway/PA4X PCM. That is a licensing choice, not a finished multisample ROM. CC0 libraries (VCSL / VSCO 2 CE) may be ingested through the SFZ loader; they are not bundled.
+
+## Verified in this workspace
+
+- NDK clang (`x86_64-linux-android26`) compiled Engine, Factory, FactoryStyles, Arranger, Sampler, Pa4xLoader, SfzParser, StyleFormat, PcgParser, engine_c_api, and `tests/test_parsers.cpp`.
+- `npx tsc --noEmit` passed.
+
+Host `test_engine` playback tests (polyphony, sustain, pitch bend, SFZ zones, arranger audio, KSF, PCG names) are in `modules/audio/cpp/tests`. They require a host C++ toolchain. They were **not executed on this Windows agent** when zlib/MSVC were unavailable.
+
+## Not verified (do not claim)
+
+1. USB-MIDI latency or stability on a physical Android tablet or iPhone/iPad.
+2. Oboe / RemoteIO glitch-free long sessions or 96-voice CPU cost on device.
+3. Import of a real user PA4X `.SET` compared against a PA4X.
+4. Bluetooth MIDI (Android `MidiManager` and iOS CoreMIDI will see system Bluetooth MIDI endpoints if the OS exposes them; untested).
+5. iOS build on this Windows machine (needs Xcode).
+
+## Known gaps
+
+- **PCG is names + missing-file reporting only.** EDS-X oscillator/filter/FX parameters are unpublished (ConvertWithMoss / PCG Tools agree). Playable Korg instruments come from KMP + PCM/KSF/WAV.
+- **SET import UI** is multi-file pick, not a folder-tree picker. Nested SET relative paths can be lost if the user does not select the whole tree.
+- **PAD objects** are not playable pads.
+- **OC31** is best-effort; uncompressed / zlib SMF is the reliable STY path.
+- **SFZ 2.0**, `trigger=release`, `lorand`/`hirand`, CC opcode maps: not supported.
+- **Sample streaming**: samples load fully into RAM. No disk streamer yet.
+- **No manufacturer ROM.** Do not expect Korg/Yamaha/Roland factory PCM or styles inside the app.
+- Some factory style *titles* share a rhythmic template (tempo/category still differ). They are original MIDI arrangements, not audio loops, but they are not 31 fully unique scores.
+
+## Next hardware pass
+
+1. `npx expo run:android` on a tablet with a class-compliant USB-MIDI keyboard.
+2. Play factory Concert Grand across the keyboard; check sustain, pitch bend, mod wheel.
+3. Start a style, play left-hand chords, change variations and fills.
+4. Import a real PA4X SET that contains KMP + PCM; confirm zones and missing-factory-PCM reporting.
+5. Repeat on iPad with a USB-C / Camera Adapter host cable.

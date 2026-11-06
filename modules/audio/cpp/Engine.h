@@ -13,34 +13,71 @@ namespace pa {
 
 struct Sample {
     std::vector<float> data;
+    int channels = 1;
     int sampleRate = 44100;
     int loopStart = 0;
     int loopEnd = 0;
     bool loop = false;
+    int rootNote = 60;
     char name[32]{};
+    int frames() const {
+        const int ch = std::max(1, channels);
+        return (int)data.size() / ch;
+    }
 };
 
 struct Zone {
     int keyLow = 0, keyHigh = 127, velLow = 0, velHigh = 127, root = 60;
     float tuneCents = 0.0f;
     float gain = 1.0f;
+    float pan = 0.0f;
     int sampleIndex = -1;
+    int seqLength = 1;
+    int seqPosition = 1;
+    int offset = 0;
+    int end = 0;
+    int loopStart = -1;
+    int loopEnd = -1;
+    int loopMode = -1;
+    float cutoff = -1.0f;
+    float resonance = -1.0f;
 };
 
+enum class PatchSource : uint8_t { Factory = 0, Sfz = 1, Korg = 2, User = 3 };
+
 struct Patch {
-    char name[40]{};
+    char name[48]{};
     char category[24]{};
     Model model = Model::Piano;
     bool sampled = false;
+    PatchSource source = PatchSource::Factory;
     float attack = 3, decay = 400, sustain = 0.72f, release = 280;
     float cutoff = 8000, reso = 0.15f, filtEnv = 0.25f;
-    float chorus = 0.15f, reverb = 0.22f;
+    float chorus = 0.15f, reverb = 0.22f, delay = 0.0f;
     float brightness = 0.55f;
     float vibRate = 5.0f, vibDepth = 0.0f, vibDelay = 0.35f;
     float pan = 0.0f;
+    float ampVel = 1.0f;
     int bus = BusKeyboard;
     std::vector<Zone> zones;
 };
+
+inline void prepareSampledPatch(Patch& p, bool drum) {
+    p.sampled = true;
+    p.model = drum ? Model::KitStandard : Model::Piano;
+    p.attack = 0.12f;
+    p.decay = 0.0f;
+    p.sustain = 1.0f;
+    p.release = drum ? 35.0f : 18.0f;
+    p.cutoff = 22000.0f;
+    p.reso = 0.0f;
+    p.filtEnv = 0.0f;
+    p.chorus = 0.0f;
+    p.reverb = 0.0f;
+    p.brightness = 1.0f;
+    p.vibDepth = 0.0f;
+    p.bus = drum ? BusDrums : BusKeyboard;
+}
 
 struct Voice {
     bool active = false;
@@ -57,9 +94,12 @@ struct Voice {
     float gain = 0.2f;
     float cutoff = 8000, reso = 0.1f, filtEnvAmt = 0;
     float vibRate = 5, vibDepth = 0, brightness = 0.5f;
-    float reverbSend = 0.2f, chorusSend = 0.1f;
+    float reverbSend = 0.2f, chorusSend = 0.1f, delaySend = 0.0f;
     double samplePos = 0, sampleInc = 1;
     int sampleIndex = -1;
+    int sampleEnd = 0, loopStart = 0, loopEnd = 0;
+    bool sampleLoop = false;
+    Svf filtR;
     float ks[kKsLen]{};
     int ksLen = 200, ksIdx = 0;
     float ksFilter = 0;
@@ -67,6 +107,7 @@ struct Voice {
     float drumT = 0, drumPitch = 0, drumNoise = 0;
     int drumKind = 0;
     bool releasing = false;
+    bool oneShot = false;
 };
 
 enum class MidiKind : uint8_t { NoteOn, NoteOff, Cc, Pb, Style, LoadInst, Pc, Clock };
@@ -98,7 +139,7 @@ struct MidiQueue {
 };
 
 struct Mixer {
-    float g[kBusCount] = {0.95f, 0.92f, 0.88f, 0.82f, 0.75f, 0.90f};
+    float g[kBusCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.95f};
     float pan[kBusCount] = {0, 0, 0, 0, 0, 0};
 };
 
@@ -121,7 +162,7 @@ struct ArrangerState {
     Section booked = Section::None;
     float tempo = 100.0f;
     int chordRoot = 0;
-    int chordType = 0;  // 0 maj, 1 min, 2 7, 3 min7, 4 maj7, 5 sus4, 6 dim
+    int chordType = 0;  // 0 maj, 1 min, 2 7, 3 min7, 4 maj7, 5 sus4, 6 dim, 7 6, 8 m6, 9 9, 10 sus2, 11 aug
     int split = 60;
     double tickPos = 0;
     int barLenTicks = kPpq * 4;
@@ -143,6 +184,8 @@ int loadKsf(const char* path, Sample& out);
 int scanPcmBank(const char* path, std::vector<Sample>& out);
 bool readFileBytes(const char* path, std::vector<uint8_t>& bytes);
 int loadKsfBytes(const uint8_t* bytes, size_t n, Sample& out, bool* compressed = nullptr);
+bool parseSfzFile(const char* path, std::vector<Sample>& samples, Patch& patch, std::string& error);
+int parsePcgNames(const uint8_t* bytes, size_t n, std::vector<std::string>& names, std::vector<std::string>& missing);
 
 class Arranger {
 public:
@@ -167,7 +210,7 @@ public:
     struct Pattern {
         std::vector<Ev> evs;
         int lengthTicks = kPpq * 16;
-        int drumProg = 32, bassProg = 21, acc1 = 0, acc2 = 9, acc3 = 10;
+        int drumProg = -1, bassProg = -1, acc1 = -1, acc2 = -1, acc3 = -1;
     };
     struct Style {
         char name[40]{};
@@ -189,6 +232,9 @@ public:
 
 Arranger::Style completeStyle(Arranger::Style s);
 Arranger::Style fallbackStyle(const char* name, const char* cat, float tempo);
+bool parseAbStyleFile(const char* path, Arranger::Style& style, std::string& error);
+bool writeAbStyleFile(const char* path, const Arranger::Style& style);
+void applyStylePrograms(Arranger::Style& style, int drum, int bass, int acc1, int acc2, int acc3);
 
 class Engine {
 public:
@@ -221,10 +267,14 @@ public:
     void setSynchro(bool on);
     void setAutoFill(bool on);
     void sustain(bool on);
+    void setTranspose(int semis);
+    void setOctave(int oct);
+    void setFx(int which, float mix);
 
     int soundCount() const { return (int)patches.size(); }
     const char* soundName(int id) const;
     const char* soundCategory(int id) const;
+    const char* soundSource(int id) const;
     int styleCount() const { return arr.styleCount(); }
     const char* styleName(int id) const { return arr.styleName(id); }
     const char* styleCategory(int id) const { return arr.styleCategory(id); }
@@ -234,6 +284,8 @@ public:
     int addSample(Sample&& s);
     int addStyle(Arranger::Style style);
     int loadPa4xSet(const char* folder, char* report, int reportLen);
+    int loadSfz(const char* path, char* report, int reportLen);
+    int loadAbStyle(const char* path, char* report, int reportLen);
 
     float latencyMs() const { return latency.load(); }
     int currentChordRoot() const { return arrSt.displayRoot.load(); }
@@ -252,13 +304,15 @@ public:
 private:
     void handle(const MidiEvent& e);
     void startVoice(int instId, int note, int vel, int bus, int ch);
+    void startVoiceZone(int instId, const Patch& p, const Zone& z, int note, int vel, int bus, int ch);
     void stopVoices(int note, int ch, bool matchInst, int instId);
     int stealVoice();
-    void renderVoice(Voice& v, float* buses, int frames);
+    void renderVoice(Voice& v, float* buses, float* sends, int frames);
     void renderSynth(Voice& v, float& L, float& R);
     void renderDrum(Voice& v, float& L, float& R);
     void renderSample(Voice& v, float& L, float& R);
     void detectChord();
+    void wireFactoryStylePrograms();
 
     MidiQueue<1024> midi;
     Voice voices[kMaxVoices];
@@ -269,6 +323,8 @@ private:
     Mixer mix;
     Reverb reverb;
     Chorus chorus;
+    StereoDelay delayFx;
+    float chorusMix = 0.12f;
     PeakEq eqLowL, eqMidL, eqHighL, eqLowR, eqMidR, eqHighR;
     Compressor drumComp, masterComp;
     Limiter limiter;
@@ -277,10 +333,15 @@ private:
     int partProg[4] = {0, 7, -1, 21};
     bool partOn[4] = {true, false, false, true};
     int splitNote = 60;
+    int transpose = 0;
+    int octave = 0;
     bool sustainOn = false;
     uint8_t held[16][128]{};
     float chanBend[16]{};
     float chanBendRatio[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    float chanVol[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    float chanExpr[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    std::vector<uint8_t> rrPhase;
     uint32_t rng = 0xA341316Cu;
     std::atomic<float> latency{8.0f};
     std::atomic<uint32_t> clockTicks{0};

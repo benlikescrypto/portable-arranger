@@ -68,19 +68,41 @@ inline float blepPulse(float t, float dt, float pw) {
     return y;
 }
 
-inline float hermite(const float* s, int n, double pos) {
-    if (n <= 1) return 0.0f;
+inline float hermiteAt(const float* s, int frames, int stride, int ch, double pos, int loopStart, int loopEnd,
+                       bool loop) {
+    if (!s || frames <= 1) return 0.0f;
     const int i = (int)pos;
-    const float x = (float)(pos - i);
-    const float y0 = s[i < 1 ? 0 : i - 1];
-    const float y1 = s[std::min(i, n - 1)];
-    const float y2 = s[std::min(i + 1, n - 1)];
-    const float y3 = s[std::min(i + 2, n - 1)];
+    const float x = (float)(pos - (double)i);
+    const int ls = std::max(0, loopStart);
+    const int le = loop && loopEnd > ls + 1 ? std::min(loopEnd, frames) : frames;
+    auto at = [&](int idx) -> float {
+        if (loop && le > ls + 1) {
+            const int len = le - ls;
+            if (idx >= le) {
+                idx = ls + ((idx - ls) % len + len) % len;
+            } else if (idx < ls && i >= ls) {
+                int rel = (idx - ls) % len;
+                if (rel < 0) rel += len;
+                idx = ls + rel;
+            }
+        }
+        if (idx < 0) idx = 0;
+        if (idx >= frames) idx = frames - 1;
+        return s[idx * stride + ch];
+    };
+    const float y0 = at(i - 1);
+    const float y1 = at(i);
+    const float y2 = at(i + 1);
+    const float y3 = at(i + 2);
     const float c0 = y1;
     const float c1 = 0.5f * (y2 - y0);
     const float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
     const float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
     return ((c3 * x + c2) * x + c1) * x + c0;
+}
+
+inline float hermite(const float* s, int n, double pos) {
+    return hermiteAt(s, n, 1, 0, pos, 0, n, false);
 }
 
 struct OnePole {
@@ -271,7 +293,7 @@ struct Limiter {
         const float absx = std::fabs(x);
         env = absx > env ? absx : env * 0.9994f + absx * 0.0006f;
         const float g = env > 0.98f ? 0.98f / env : 1.0f;
-        return fastTanh(x * g * 1.02f);
+        return x * g;
     }
 };
 
@@ -315,6 +337,22 @@ struct Chorus {
     }
 };
 
+struct StereoDelay {
+    DelayLine l, r;
+    float timeMs = 320.0f;
+    float fb = 0.34f;
+    float mix = 0.0f;
+    void processSend(float inL, float inR, float& wetL, float& wetR, float sr) {
+        const float t = clampf(timeMs, 40.0f, 900.0f) * 0.001f * sr;
+        const float dl = l.read(t);
+        const float dr = r.read(t * 1.07f);
+        l.write(inL + dr * fb);
+        r.write(inR + dl * fb);
+        wetL = dl;
+        wetR = dr;
+    }
+};
+
 struct Reverb {
     static constexpr int kCombs = 8;
     DelayLine comb[kCombs];
@@ -323,7 +361,7 @@ struct Reverb {
     float combZ[kCombs]{};
     float room = 0.78f;
     float dampAmt = 0.28f;
-    float mix = 0.22f;
+    float mix = 0.08f;
     const float combMs[kCombs] = {29.7f, 37.1f, 41.1f, 43.7f, 31.3f, 33.9f, 39.5f, 44.9f};
     const float apMs[4] = {5.0f, 1.7f, 6.3f, 12.6f};
 
@@ -389,11 +427,56 @@ enum class Model : int {
     KitStandard,
     KitArabic,
     KitDance,
+    UprightPiano,
+    DigitalPiano,
+    Harpsichord,
+    ChurchOrgan,
+    PipeOrgan,
+    DrawbarOrgan,
+    SoloCello,
+    Pizzicato,
+    CinematicStrings,
+    Trombone,
+    FrenchHorn,
+    Tuba,
+    SynthBrass,
+    Flute,
+    Piccolo,
+    Clarinet,
+    Oboe,
+    Bassoon,
+    SteelGuitar,
+    CleanGuitar,
+    DistGuitar,
+    MuteGuitar,
+    PickedBass,
+    UprightBass,
+    Saz,
+    AnalogLead,
+    DigitalLead,
+    Pluck,
+    Choir,
+    Harp,
+    Vibraphone,
+    Marimba,
+    Xylophone,
+    Bells,
+    Timpani,
+    KitLatin,
+    KitWorld,
+    KitOrchestral,
     Count
 };
 
 inline bool isKit(Model m) {
-    return m == Model::KitStandard || m == Model::KitArabic || m == Model::KitDance;
+    return m == Model::KitStandard || m == Model::KitArabic || m == Model::KitDance || m == Model::KitLatin ||
+           m == Model::KitWorld || m == Model::KitOrchestral;
+}
+
+inline bool isPluckModel(Model m) {
+    return m == Model::Oud || m == Model::NylonGuitar || m == Model::Bouzouki || m == Model::Kanun || m == Model::Saz ||
+           m == Model::SteelGuitar || m == Model::CleanGuitar || m == Model::DistGuitar || m == Model::MuteGuitar ||
+           m == Model::Harp || m == Model::Pizzicato;
 }
 
 }  // namespace pa

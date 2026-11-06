@@ -1,13 +1,7 @@
 import { audio } from "arrangerbox-audio"
 import { Directory, File, Paths } from "expo-file-system"
 
-import {
-  findSetFolder,
-  inspectPa4x,
-  isDirectory,
-  matchesPa4x,
-  type ImportedLibrary,
-} from "@/lib/library/pa4x"
+import { inspectPa4x, type ImportedLibrary } from "@/lib/library/pa4x"
 
 export type ImportProgress = {
   message: string
@@ -20,28 +14,8 @@ function nativePath(file: File | Directory): string {
   return uri
 }
 
-function isCancel(error: unknown): boolean {
-  const text = `${(error as { code?: string; message?: string })?.code ?? ""} ${(error as { message?: string })?.message ?? error}`
-  return /cancel/i.test(text)
-}
-
-async function copyTree(src: Directory, dest: Directory, onCopied: (copied: number, name: string) => void) {
-  dest.create({ intermediates: true, idempotent: true })
-  let copied = 0
-  const walkCopy = async (from: Directory, to: Directory) => {
-    to.create({ intermediates: true, idempotent: true })
-    for (const child of from.list()) {
-      if (isDirectory(child)) {
-        await walkCopy(child, new Directory(to, child.name))
-      } else {
-        const out = new File(to, child.name)
-        await child.copy(out, { overwrite: true })
-        copied++
-        onCopied(copied, child.name)
-      }
-    }
-  }
-  await walkCopy(src, dest)
+function safeName(name: string) {
+  return name.replace(/[\\/:*?"<>|]/g, "_").replace(/\.SET$/i, "") || "Imported"
 }
 
 function parseReport(raw: string) {
@@ -53,51 +27,21 @@ function parseReport(raw: string) {
       styles?: number
       compressed?: number
       skipped?: number
+      pcgFiles?: number
+      pcgNames?: number
+      missing?: number
+      reason?: string
     }
   } catch {
     return {}
   }
 }
 
-export async function importPa4xSet(onProgress: (progress: ImportProgress) => void): Promise<ImportedLibrary | null> {
-  let picked: Directory
-  try {
-    picked = await Directory.pickDirectoryAsync()
-  } catch (error) {
-    if (isCancel(error)) return null
-    throw error
-  }
-
-  const setFolder = findSetFolder(picked)
-  if (!matchesPa4x(setFolder) && !setFolder.name.toUpperCase().endsWith(".SET")) {
-    onProgress({
-      message: "That folder does not look like a Korg PA4X SET. Importing the selected folder anyway.",
-      fraction: 0.04,
-    })
-  }
-
-  const setName = setFolder.name.replace(/\.SET$/i, "") || "Imported SET"
-  onProgress({ message: `Copying ${setFolder.name}…`, fraction: 0.06 })
-
-  const dest = new Directory(Paths.document, "sets", setName)
-  if (dest.exists) dest.delete()
-  dest.create({ intermediates: true, idempotent: true })
-  await copyTree(setFolder, dest, (copied, name) => {
-    if (copied % 8 === 0) {
-      onProgress({
-        message: `Copying ${name}`,
-        fraction: 0.06 + 0.52 * Math.min(1, copied / 400),
-      })
-    }
-  })
-
-  onProgress({ message: "Reading SET names…", fraction: 0.62 })
-  const inspected = await inspectPa4x(dest)
-
-  onProgress({ message: "Loading PCM, KMP, PCG and STY into the engine…", fraction: 0.72 })
-  const report = parseReport(await audio.loadPa4xSet(nativePath(dest)))
-
-  onProgress({ message: "Ready", fraction: 1 })
+function finishImport(
+  inspected: ImportedLibrary,
+  setName: string,
+  report: ReturnType<typeof parseReport>
+): ImportedLibrary {
   return {
     ...inspected,
     setName: inspected.setName || setName,
@@ -106,5 +50,49 @@ export async function importPa4xSet(onProgress: (progress: ImportProgress) => vo
     patchesLoaded: report.patches ?? 0,
     stylesLoaded: report.styles ?? 0,
     compressedDecoded: report.compressed ?? 0,
+    reason: report.reason ?? "",
   }
+}
+
+async function loadCopiedFolder(
+  dest: Directory,
+  setName: string,
+  onProgress: (progress: ImportProgress) => void
+): Promise<ImportedLibrary> {
+  onProgress({ message: "Reading PA4X names…", fraction: 0.62 })
+  const inspected = await inspectPa4x(dest)
+  onProgress({ message: "Loading STY, PCM, KMP and PCG into the engine…", fraction: 0.72 })
+  const report = parseReport(await audio.loadPa4xSet(nativePath(dest)))
+  onProgress({ message: "Ready", fraction: 1 })
+  return finishImport(inspected, setName, report)
+}
+
+async function importFiles(onProgress: (progress: ImportProgress) => void): Promise<ImportedLibrary | null> {
+  const picked = await File.pickFileAsync({
+    multipleFiles: true,
+    mimeTypes: ["*/*"],
+  })
+  if (picked.canceled || !picked.result.length) return null
+
+  const files = picked.result
+  const first = files[0].name.replace(/\.[^.]+$/, "")
+  const setName = safeName(files.length === 1 ? first : `${first} +${files.length - 1}`)
+  onProgress({ message: `Copying ${files.length} file${files.length === 1 ? "" : "s"}…`, fraction: 0.08 })
+
+  const dest = new Directory(Paths.document, "sets", setName)
+  if (dest.exists) dest.delete()
+  dest.create({ intermediates: true, idempotent: true })
+  for (let i = 0; i < files.length; i++) {
+    const src = files[i]
+    await src.copy(new File(dest, src.name), { overwrite: true })
+    onProgress({
+      message: `Copying ${src.name}`,
+      fraction: 0.08 + 0.5 * ((i + 1) / files.length),
+    })
+  }
+  return loadCopiedFolder(dest, setName, onProgress)
+}
+
+export async function importPa4xSet(onProgress: (progress: ImportProgress) => void): Promise<ImportedLibrary | null> {
+  return importFiles(onProgress)
 }

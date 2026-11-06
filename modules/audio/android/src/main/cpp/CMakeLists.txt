@@ -12,9 +12,13 @@ add_library(arranger_engine SHARED
         ${PA_CPP}/engine_c_api.cpp
         ${PA_CPP}/Engine.cpp
         ${PA_CPP}/Factory.cpp
+        ${PA_CPP}/FactoryStyles.cpp
         ${PA_CPP}/Arranger.cpp
         ${PA_CPP}/Sampler.cpp
-        ${PA_CPP}/Pa4xLoader.cpp)
+        ${PA_CPP}/Pa4xLoader.cpp
+        ${PA_CPP}/SfzParser.cpp
+        ${PA_CPP}/StyleFormat.cpp
+        ${PA_CPP}/PcgParser.cpp)
 
 find_library(log-lib log)
 find_library(android-lib android)

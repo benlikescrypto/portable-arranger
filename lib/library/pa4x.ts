@@ -1,6 +1,5 @@
 import { Directory, File } from "expo-file-system"
 
-import { extractKorgNames } from "@/lib/library/binaryNames"
 import type { SoundItem, StyleItem } from "@/lib/types"
 
 export type SetFile = {
@@ -20,6 +19,7 @@ export type ImportedLibrary = {
   patchesLoaded: number
   stylesLoaded: number
   compressedDecoded: number
+  reason: string
   files: SetFile[]
 }
 
@@ -101,33 +101,15 @@ export async function inspectPa4x(root: Directory): Promise<ImportedLibrary> {
     const kind = fileKind(name)
     const size = "size" in item && typeof item.size === "number" ? item.size : 0
     files.push({ relativePath: rel, size, kind })
-    if (!isDirectory(item) && [".PCG", ".STY", ".PRF", ".PAD"].some((ext) => name.toUpperCase().endsWith(ext))) {
-      const raw = await item.bytes()
-      const slice = raw.subarray(0, Math.min(raw.length, 4_000_000))
-      const names = extractKorgNames(slice)
-      const bank = name.replace(/\.[^.]+$/, "")
-      if (name.toUpperCase().endsWith(".STY")) {
-        for (const n of names) {
-          styles.push({
-            id: 10_000 + styles.length,
-            name: n,
-            category: categoryGuess(n, "Style"),
-            tempo: 100,
-            bank,
-            source: "PA4X SET",
-          })
-        }
-      } else {
-        for (const n of names) {
-          sounds.push({
-            id: 10_000 + sounds.length,
-            name: n,
-            category: categoryGuess(n, name.toUpperCase().endsWith(".PAD") ? "Pad" : "Imported"),
-            bank,
-            source: "PA4X SET",
-          })
-        }
-      }
+    if (!isDirectory(item) && name.toUpperCase().endsWith(".STY")) {
+      styles.push({
+        id: styles.length,
+        name: name.replace(/\.[^.]+$/, ""),
+        category: "Style",
+        tempo: 0,
+        bank: name,
+        source: "PA4X SET",
+      })
     }
   })
 
@@ -142,6 +124,7 @@ export async function inspectPa4x(root: Directory): Promise<ImportedLibrary> {
     patchesLoaded: 0,
     stylesLoaded: 0,
     compressedDecoded: 0,
+    reason: "",
     files,
   }
 }

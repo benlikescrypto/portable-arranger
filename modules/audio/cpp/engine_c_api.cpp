@@ -25,19 +25,15 @@ int loadSampled(const char* path, const char* name, const char* category, bool k
     pa::Sample s;
     const int n = ksf ? pa::loadKsf(path, s) : pa::loadWav(path, s);
     if (n <= 0) return -1;
+    const int root = s.rootNote > 0 ? s.rootNote : 60;
     const int si = e->addSample(std::move(s));
     pa::Patch p;
     std::strncpy(p.name, name ? name : "Imported", sizeof(p.name) - 1);
     std::strncpy(p.category, category ? category : "Imported", sizeof(p.category) - 1);
-    p.sampled = true;
-    p.model = pa::Model::Piano;
-    p.attack = 0.8f;
-    p.decay = 400;
-    p.sustain = 0.7f;
-    p.release = 250;
+    pa::prepareSampledPatch(p, false);
     pa::Zone z;
     z.sampleIndex = si;
-    z.root = 60;
+    z.root = root;
     p.zones.push_back(z);
     return e->addSampledInstrument(p);
 }
@@ -140,6 +136,15 @@ void arrangerbox_set_synchro(int on) {
 void arrangerbox_set_auto_fill(int on) {
     if (auto* e = live()) e->setAutoFill(on != 0);
 }
+void arrangerbox_set_transpose(int semis) {
+    if (auto* e = live()) e->setTranspose(semis);
+}
+void arrangerbox_set_octave(int oct) {
+    if (auto* e = live()) e->setOctave(oct);
+}
+void arrangerbox_set_fx(int which, float mix) {
+    if (auto* e = live()) e->setFx(which, mix);
+}
 
 int arrangerbox_sound_count(void) { return live() ? live()->soundCount() : 0; }
 void arrangerbox_sound_name(int id, char* out, int maxLen) {
@@ -147,6 +152,9 @@ void arrangerbox_sound_name(int id, char* out, int maxLen) {
 }
 void arrangerbox_sound_category(int id, char* out, int maxLen) {
     copyName(live() ? live()->soundCategory(id) : "", out, maxLen);
+}
+void arrangerbox_sound_source(int id, char* out, int maxLen) {
+    copyName(live() ? live()->soundSource(id) : "", out, maxLen);
 }
 int arrangerbox_style_count(void) { return live() ? live()->styleCount() : 0; }
 void arrangerbox_style_name(int id, char* out, int maxLen) {
@@ -180,14 +188,12 @@ int arrangerbox_scan_pcm_bank(const char* path) {
         pa::Patch p;
         std::strncpy(p.name, s.name[0] ? s.name : "PCM Sample", sizeof(p.name) - 1);
         std::strncpy(p.category, "Imported", sizeof(p.category) - 1);
-        p.sampled = true;
-        p.attack = 0.6f;
-        p.decay = 400;
-        p.sustain = 0.75f;
-        p.release = 240;
+        pa::prepareSampledPatch(p, false);
+        const int root = s.rootNote > 0 ? s.rootNote : 60;
         const int si = e->addSample(std::move(s));
         pa::Zone z;
         z.sampleIndex = si;
+        z.root = root;
         p.zones.push_back(z);
         e->addSampledInstrument(p);
         added++;
@@ -205,6 +211,30 @@ int arrangerbox_load_pa4x_set(const char* folder, char* report, int reportLen) {
         return -1;
     }
     return e->loadPa4xSet(folder, report, reportLen);
+}
+
+int arrangerbox_load_sfz(const char* path, char* report, int reportLen) {
+    auto* e = live();
+    if (!e || !path) {
+        if (report && reportLen > 0) {
+            std::strncpy(report, "{\"ok\":0}", static_cast<size_t>(reportLen - 1));
+            report[reportLen - 1] = 0;
+        }
+        return -1;
+    }
+    return e->loadSfz(path, report, reportLen);
+}
+
+int arrangerbox_load_abstyle(const char* path, char* report, int reportLen) {
+    auto* e = live();
+    if (!e || !path) {
+        if (report && reportLen > 0) {
+            std::strncpy(report, "{\"ok\":0}", static_cast<size_t>(reportLen - 1));
+            report[reportLen - 1] = 0;
+        }
+        return -1;
+    }
+    return e->loadAbStyle(path, report, reportLen);
 }
 
 }  // extern "C"

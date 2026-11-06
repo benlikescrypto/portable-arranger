@@ -23,9 +23,13 @@ internal object EngineNative {
   @JvmStatic external fun nativeSetStyle(id: Int)
   @JvmStatic external fun nativeSetSynchro(on: Boolean)
   @JvmStatic external fun nativeSetAutoFill(on: Boolean)
+  @JvmStatic external fun nativeSetTranspose(semis: Int)
+  @JvmStatic external fun nativeSetOctave(oct: Int)
+  @JvmStatic external fun nativeSetFx(which: Int, mix: Float)
   @JvmStatic external fun nativeSoundCount(): Int
   @JvmStatic external fun nativeSoundName(id: Int): String
   @JvmStatic external fun nativeSoundCategory(id: Int): String
+  @JvmStatic external fun nativeSoundSource(id: Int): String
   @JvmStatic external fun nativeStyleCount(): Int
   @JvmStatic external fun nativeStyleName(id: Int): String
   @JvmStatic external fun nativeStyleCategory(id: Int): String
@@ -40,4 +44,6 @@ internal object EngineNative {
   @JvmStatic external fun nativeLoadKsf(path: String, name: String, category: String): Int
   @JvmStatic external fun nativeScanPcm(path: String): Int
   @JvmStatic external fun nativeLoadPa4xSet(path: String): String
+  @JvmStatic external fun nativeLoadSfz(path: String): String
+  @JvmStatic external fun nativeLoadAbStyle(path: String): String
 }

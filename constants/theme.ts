@@ -14,12 +14,10 @@ export const Pa = {
   gold: "#FFC857",
   purple: "#C77DFF",
   meter: "#7CDB9B",
-  keyWhite: "#EDE7DC",
-  keyBlack: "#16181C",
 } as const
 
 export const NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"] as const
-export const CHORD_TYPES = ["", "m", "7", "m7", "M7", "sus4", "dim"] as const
+export const CHORD_TYPES = ["", "m", "7", "m7", "M7", "sus4", "dim", "6", "m6", "9", "sus2", "aug"] as const
 
 export function noteName(n: number) {
   const pc = ((n % 12) + 12) % 12

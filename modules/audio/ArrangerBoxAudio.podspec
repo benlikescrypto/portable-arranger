@@ -26,6 +26,7 @@ Pod::Spec.new do |s|
   s.user_target_xcconfig = {
     'OTHER_LDFLAGS' => '$(inherited) -lz'
   }
-  s.source_files = 'ios/**/*.{h,m,mm,swift}', 'cpp/**/*.{h,hpp,c,cpp}'
-  s.private_header_files = 'cpp/**/*.{h,hpp}'
+  s.source_files = 'ios/**/*.{h,m,mm,swift}', 'cpp/*.{h,hpp,c,cpp}'
+  s.private_header_files = 'cpp/*.{h,hpp}'
+  s.exclude_files = 'cpp/tests/**/*'
 end

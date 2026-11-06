@@ -90,18 +90,24 @@ Do **not** ship Oboe, CoreMIDI, Kotlin, Swift, or C++ changes through EAS Update
 
 ## PA4X SET folders
 
-Tap **LOAD SET** and pick the `.SET` folder (or the USB folder that contains it).
+Tap **MEDIA** and pick the SET files (STY, PCM, KMP, PCG, KSF, WAV). Multi-select the contents of a `.SET` folder from USB storage or Files.
+The SET files are copied into the app. Native code then:
 
-- Android uses the system folder picker (`ACTION_OPEN_DOCUMENT_TREE`), including USB-C sticks and hubs.
-- iOS/iPad uses the Files folder picker, including USB-C storage on supported iPads.
-The whole `.SET` folder is copied into the app. Names are read from PCG/STY/PRF/PAD. Uncompressed WAV, KSF, and PCM sample data is loaded into the engine.
+- Loads WAV, KSF, and PCM sample data (including best-effort compressed KSF)
+- Applies KMP key maps (zones, roots, tune, level, pan)
+- Imports STY/SMF accompaniment into the arranger
+- Extracts PCG program names and reports missing sample references
 
-This is **not** a full PA4X SET player. PCG programs are not rebuilt as PA programs, STY files are not turned into playable arranger patterns, KMP keymaps are not applied, and compressed Korg samples are skipped. Confirm with a real SET on hardware.
+This is **not** a full EDS-X recreation. PCG oscillator/filter programs are unpublished; playable instruments come from KMP + samples. Confirm with a real SET on hardware.
+
+The app also ships an original modeled factory sound ROM (111 patches) and original factory styles (31). See `docs/SOUND_ENGINE.md`, `docs/STATUS.md`, and `assets/factory/LICENSE_MANIFEST.md`.
 
 ## Remaining work
 
 - Play Internal / Gradle Play Publisher scripts remain in `legacy-android/scripts/`
 - Hardware verification: USB-MIDI keyboard, USB hub, speaker output, long sessions, SET import
+- Host engine tests: `cmake -S modules/audio/cpp/tests -B build/engine-tests && cmake --build build/engine-tests && ./build/engine-tests/test_engine`
+- Full status of verified vs incomplete features: `docs/STATUS.md`
 
 ## Package
 

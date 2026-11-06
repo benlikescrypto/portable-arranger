@@ -62,6 +62,13 @@ export type ArrangerUiState = {
   importProgress: number
   setFiles: string[]
   sts: number
-  showKeyboard: boolean
   favorites: number[]
+  octave: number
+  reverb: number
+  chorus: number
+  delay: number
+  recentSounds: number[]
+  recentStyles: number[]
+  libraryFilter: "all" | "factory" | "imported"
+  importReport: string
 }

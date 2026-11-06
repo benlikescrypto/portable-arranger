@@ -59,7 +59,7 @@ private:
         b.setFormat(oboe::AudioFormat::Float);
         b.setChannelCount(2);
         b.setSampleRate(48000);
-        b.setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium);
+        b.setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Best);
         b.setDataCallback(this);
         b.setErrorCallback(this);
         return b.openStream(stream) == oboe::Result::OK && stream != nullptr;

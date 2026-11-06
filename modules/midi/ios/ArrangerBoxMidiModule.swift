@@ -78,7 +78,11 @@ private func parse(_ packet: MIDIPacket) {
           guard i + 1 < length else { return }
           midi_program_change(ch, Int32(bytes[i + 1] & 0x7F))
           i += 2
+        case 0xA0:
+          i += 3
         case 0xD0:
+          guard i + 1 < length else { return }
+          midi_cc(ch, 1, Int32(bytes[i + 1] & 0x7F))
           i += 2
         default:
           i += 1

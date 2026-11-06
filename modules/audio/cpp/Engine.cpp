@@ -1,6 +1,10 @@
 #include "Engine.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
 
 namespace pa {
 
@@ -11,13 +15,21 @@ Engine::Engine() {
     buildFactory(patches, gNames, gCats, gTempos);
     arr.setup();
     buildArranger(arr);
+    wireFactoryStylePrograms();
+    rrPhase.assign(patches.size(), 0);
+    if (!arr.styles.empty()) {
+        arrSt.styleId = 0;
+        arrSt.tempo = arr.styles[0].tempo;
+        arrSt.current = Section::Var1;
+        arrSt.variation = 1;
+    }
     auto setupEq = [&](float sr) {
-        eqLowL.setLowShelf(sr, 90.0f, 1.6f);
-        eqLowR.setLowShelf(sr, 90.0f, 1.6f);
-        eqMidL.setPeaking(sr, 1200.0f, 0.7f, 0.6f);
-        eqMidR.setPeaking(sr, 1200.0f, 0.7f, 0.6f);
-        eqHighL.setPeaking(sr, 6500.0f, 0.8f, 1.8f);
-        eqHighR.setPeaking(sr, 6500.0f, 0.8f, 1.8f);
+        eqLowL.setLowShelf(sr, 90.0f, 0.0f);
+        eqLowR.setLowShelf(sr, 90.0f, 0.0f);
+        eqMidL.setPeaking(sr, 1200.0f, 0.7f, 0.0f);
+        eqMidR.setPeaking(sr, 1200.0f, 0.7f, 0.0f);
+        eqHighL.setPeaking(sr, 6500.0f, 0.8f, 0.0f);
+        eqHighR.setPeaking(sr, 6500.0f, 0.8f, 0.0f);
     };
     setupEq(48000.0f);
     drumComp.thresh = 0.35f;
@@ -33,12 +45,12 @@ Engine::~Engine() = default;
 
 void Engine::prepare(float sr) {
     sampleRate = sr > 1.0f ? sr : 48000.0f;
-    eqLowL.setLowShelf(sampleRate, 90.0f, 1.6f);
-    eqLowR.setLowShelf(sampleRate, 90.0f, 1.6f);
-    eqMidL.setPeaking(sampleRate, 1200.0f, 0.7f, 0.6f);
-    eqMidR.setPeaking(sampleRate, 1200.0f, 0.7f, 0.6f);
-    eqHighL.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f);
-    eqHighR.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f);
+    eqLowL.setLowShelf(sampleRate, 90.0f, 0.0f);
+    eqLowR.setLowShelf(sampleRate, 90.0f, 0.0f);
+    eqMidL.setPeaking(sampleRate, 1200.0f, 0.7f, 0.0f);
+    eqMidR.setPeaking(sampleRate, 1200.0f, 0.7f, 0.0f);
+    eqHighL.setPeaking(sampleRate, 6500.0f, 0.8f, 0.0f);
+    eqHighR.setPeaking(sampleRate, 6500.0f, 0.8f, 0.0f);
 }
 
 void Engine::noteOn(int ch, int note, int vel) {
@@ -70,6 +82,14 @@ void Engine::setStyle(int id) { midi.push({MidiKind::Style, 4, id, 0, 0}); }
 void Engine::setSynchro(bool on) { arrSt.synchro = on; }
 void Engine::setAutoFill(bool on) { arrSt.autoFill = on; }
 void Engine::sustain(bool on) { midi.push({MidiKind::Cc, 0, 64, on ? 127 : 0, 0}); }
+void Engine::setTranspose(int semis) { transpose = (int)clampf((float)semis, -24.0f, 24.0f); }
+void Engine::setOctave(int oct) { octave = (int)clampf((float)oct, -3.0f, 3.0f); }
+void Engine::setFx(int which, float mix) {
+    mix = clampf(mix, 0.0f, 1.0f);
+    if (which == 0) reverb.mix = mix * 0.28f;
+    else if (which == 1) chorusMix = mix;
+    else if (which == 2) delayFx.mix = mix;
+}
 
 const char* Engine::soundName(int id) const {
     if (id < 0 || id >= (int)patches.size()) return "";
@@ -79,10 +99,49 @@ const char* Engine::soundCategory(int id) const {
     if (id < 0 || id >= (int)patches.size()) return "";
     return patches[id].category;
 }
+const char* Engine::soundSource(int id) const {
+    if (id < 0 || id >= (int)patches.size()) return "";
+    switch (patches[id].source) {
+        case PatchSource::Sfz: return "SFZ";
+        case PatchSource::Korg: return "PA4X SET";
+        case PatchSource::User: return "USER";
+        default: return "FACTORY";
+    }
+}
+
+void Engine::wireFactoryStylePrograms() {
+    int drum = -1, arabic = -1, dance = -1, latin = -1, world = -1, bass = -1, acc1 = -1, acc2 = -1, acc3 = -1;
+    for (int i = 0; i < (int)patches.size(); ++i) {
+        const Model m = patches[(size_t)i].model;
+        if (m == Model::KitStandard && drum < 0) drum = i;
+        if (m == Model::KitArabic && arabic < 0) arabic = i;
+        if (m == Model::KitDance && dance < 0) dance = i;
+        if (m == Model::KitLatin && latin < 0) latin = i;
+        if (m == Model::KitWorld && world < 0) world = i;
+        if (patches[(size_t)i].bus == BusBass && bass < 0) bass = i;
+        if (m == Model::Piano && acc1 < 0) acc1 = i;
+        if (m == Model::ConcertStrings && acc2 < 0) acc2 = i;
+        if (m == Model::NylonGuitar && acc3 < 0) acc3 = i;
+    }
+    if (arabic < 0) arabic = drum;
+    if (dance < 0) dance = drum;
+    if (latin < 0) latin = drum;
+    if (world < 0) world = arabic;
+    for (auto& s : arr.styles) {
+        const std::string cat = s.category;
+        int d = drum;
+        if (cat == "Oriental") d = arabic;
+        else if (cat == "Dance" || cat == "Disco") d = dance;
+        else if (cat == "Latin") d = latin >= 0 ? latin : drum;
+        else if (cat == "World") d = world;
+        applyStylePrograms(s, d, bass, acc1, acc2, acc3);
+    }
+}
 
 int Engine::addSampledInstrument(const Patch& p) {
     std::lock_guard<std::mutex> g(loadMu);
     patches.push_back(p);
+    rrPhase.push_back(0);
     return (int)patches.size() - 1;
 }
 int Engine::addSample(Sample&& s) {
@@ -119,9 +178,7 @@ int Engine::stealVoice() {
     return best;
 }
 
-void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
-    if (instId < 0 || instId >= (int)patches.size() || vel <= 0) return;
-    const Patch& p = patches[instId];
+void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note, int vel, int bus, int ch) {
     int slot = -1;
     for (int i = 0; i < kMaxVoices; ++i) {
         if (!voices[i].active && voices[i].amp.idle()) {
@@ -140,16 +197,20 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
     v.bus = bus >= 0 ? bus : p.bus;
     v.model = p.model;
     v.rng = rng += 0x9E3779B9u;
-    v.gain = velCurve(vel) * 0.22f;
-    v.cutoff = p.cutoff;
-    v.reso = p.reso;
+    const float velAmt = clampf((float)vel / 127.0f, 0.0f, 1.0f);
+    const float dyn = p.sampled ? velAmt * (0.35f + 0.65f * p.ampVel) : velCurve(vel);
+    const float expr = chanVol[ch & 15] * chanExpr[ch & 15];
+    v.gain = (p.sampled ? 0.85f : 0.22f) * dyn * expr * z.gain;
+    v.cutoff = z.cutoff > 0 ? z.cutoff : p.cutoff;
+    v.reso = z.resonance >= 0 ? z.resonance : p.reso;
     v.filtEnvAmt = p.filtEnv;
     v.brightness = p.brightness;
     v.vibRate = p.vibRate;
     v.vibDepth = p.vibDepth;
     v.reverbSend = p.reverb;
     v.chorusSend = p.chorus;
-    const float pan = clampf(p.pan, -1.0f, 1.0f);
+    v.delaySend = p.delay;
+    float pan = clampf(p.pan + z.pan, -1.0f, 1.0f);
     v.panL = std::sqrt((1.0f - pan) * 0.5f);
     v.panR = std::sqrt((1.0f + pan) * 0.5f);
     v.amp.setTimes(sampleRate, p.attack, p.decay, p.sustain, p.release);
@@ -157,27 +218,28 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
     v.amp.noteOn();
     v.filtEg.noteOn();
     v.filt.reset();
+    v.filtR.reset();
     v.phase = 0.02f * (rng & 255);
     v.sampleIndex = -1;
-    v.samplePos = 0;
+    v.samplePos = z.offset;
+    v.oneShot = p.sampled && (isKit(p.model) || v.bus == BusDrums);
 
-    if (p.sampled && !p.zones.empty()) {
-        for (const Zone& z : p.zones) {
-            if (note >= z.keyLow && note <= z.keyHigh && vel >= z.velLow && vel <= z.velHigh) {
-                v.sampleIndex = z.sampleIndex;
-                v.gain *= z.gain;
-                if (z.sampleIndex >= 0 && z.sampleIndex < (int)samples.size()) {
-                    const Sample& sm = samples[z.sampleIndex];
-                    const float target = midiToHz((float)note + z.tuneCents / 100.0f);
-                    const float rootHz = midiToHz((float)z.root);
-                    v.sampleInc = (target / rootHz) * ((double)sm.sampleRate / (double)sampleRate);
-                }
-                break;
-            }
-        }
+    if (p.sampled && z.sampleIndex >= 0 && z.sampleIndex < (int)samples.size()) {
+        const Sample& sm = samples[z.sampleIndex];
+        v.sampleIndex = z.sampleIndex;
+        const int root = z.root > 0 ? z.root : (sm.rootNote > 0 ? sm.rootNote : 60);
+        const float target = midiToHz((float)note + z.tuneCents / 100.0f);
+        const float rootHz = midiToHz((float)root);
+        v.sampleInc = (target / rootHz) * ((double)sm.sampleRate / (double)sampleRate);
+        v.sampleEnd = z.end > 0 ? std::min(z.end, sm.frames()) : sm.frames();
+        const bool loop = z.loopMode == 0 ? false : (z.loopMode == 1 ? true : sm.loop);
+        v.sampleLoop = loop && !v.oneShot;
+        v.loopStart = z.loopStart >= 0 ? z.loopStart : sm.loopStart;
+        v.loopEnd = z.loopEnd > v.loopStart ? z.loopEnd : sm.loopEnd;
+        if (v.loopEnd <= v.loopStart) v.loopEnd = v.sampleEnd;
     }
 
-    if (isKit(p.model)) {
+    if (!p.sampled && isKit(p.model)) {
         v.drumT = 0;
         v.drumKind = note;
         v.amp.setTimes(sampleRate, 0.4f, 80.0f, 0.0f, 120.0f);
@@ -187,8 +249,7 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
         v.bus = BusDrums;
     }
 
-    if (p.model == Model::Oud || p.model == Model::NylonGuitar || p.model == Model::Bouzouki ||
-        p.model == Model::Kanun) {
+    if (!p.sampled && isPluckModel(p.model)) {
         const float freq = midiToHz((float)note);
         v.ksLen = std::max(20, std::min(kKsLen - 1, (int)(sampleRate / freq)));
         v.ksIdx = 0;
@@ -201,6 +262,43 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
     }
 }
 
+void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
+    if (instId < 0 || instId >= (int)patches.size() || vel <= 0) return;
+    const Patch& p = patches[instId];
+    if (!p.sampled || p.zones.empty()) {
+        Zone dummy;
+        startVoiceZone(instId, p, dummy, note, vel, bus, ch);
+        return;
+    }
+    const Zone* hits[8]{};
+    int nh = 0;
+    int seqLen = 1;
+    for (const Zone& z : p.zones) {
+        if (z.seqLength > seqLen) seqLen = z.seqLength;
+        if (note >= z.keyLow && note <= z.keyHigh && vel >= z.velLow && vel <= z.velHigh) {
+            if (nh < 8) hits[nh++] = &z;
+        }
+    }
+    if (nh == 0) {
+        startVoiceZone(instId, p, p.zones[0], note, vel, bus, ch);
+        return;
+    }
+    uint8_t phase = 0;
+    if (instId >= 0 && instId < (int)rrPhase.size()) {
+        phase = rrPhase[(size_t)instId];
+        rrPhase[(size_t)instId] = (uint8_t)((phase + 1) % std::max(1, seqLen));
+    }
+    int started = 0;
+    for (int i = 0; i < nh; ++i) {
+        const Zone* z = hits[i];
+        if (z->seqLength > 1 && z->seqPosition != (int)(phase % z->seqLength) + 1) continue;
+        startVoiceZone(instId, p, *z, note, vel, bus, ch);
+        started++;
+        if (started >= 4) break;
+    }
+    if (!started) startVoiceZone(instId, p, *hits[0], note, vel, bus, ch);
+}
+
 void Engine::stopVoices(int note, int ch, bool matchInst, int instId) {
     for (int i = 0; i < kMaxVoices; ++i) {
         Voice& v = voices[i];
@@ -209,6 +307,7 @@ void Engine::stopVoices(int note, int ch, bool matchInst, int instId) {
         if (ch >= 0 && v.chan != ch && ch != 0x7f) continue;
         if (matchInst && v.inst != instId) continue;
         if (sustainOn && v.chan < 4) continue;
+        if (v.oneShot) continue;
         v.amp.noteOff();
         v.filtEg.noteOff();
         v.releasing = true;
@@ -241,9 +340,15 @@ void Engine::detectChord() {
             {1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1},  // maj7
             {1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0},  // sus4
             {1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0},  // dim
+            {1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0},  // 6
+            {1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0},  // m6
+            {1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0},  // 9
+            {1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0},  // sus2
+            {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0},  // aug
     };
+    constexpr int kTypes = 12;
     for (int root = 0; root < 12; ++root) {
-        for (int t = 0; t < 7; ++t) {
+        for (int t = 0; t < kTypes; ++t) {
             int score = 0, extra = 0;
             for (int i = 0; i < 12; ++i) {
                 const int pc = (i + root) % 12;
@@ -266,13 +371,14 @@ void Engine::detectChord() {
 void Engine::handle(const MidiEvent& e) {
     switch (e.kind) {
         case MidiKind::NoteOn: {
-            const int ch = e.a, note = e.b, vel = e.c;
-            if (note < 0 || note > 127) return;
-            held[ch & 15][note] = 1;
-            const bool left = note <= splitNote;
+            const int ch = e.a, raw = e.b, vel = e.c;
+            if (raw < 0 || raw > 127) return;
+            held[ch & 15][raw] = 1;
+            const bool left = raw <= splitNote;
             if (left) detectChord();
             if (left && arrSt.synchro && !arrSt.running) arr.start(arrSt);
             if (left && !partOn[3]) return;
+            const int note = std::max(0, std::min(127, raw + transpose + octave * 12));
             if (!left || partOn[3]) {
                 if (!left) {
                     if (partOn[0]) startVoice(partProg[0], note, vel, BusKeyboard, 0);
@@ -285,10 +391,12 @@ void Engine::handle(const MidiEvent& e) {
             break;
         }
         case MidiKind::NoteOff: {
-            const int ch = e.a, note = e.b;
-            if (note < 0 || note > 127) return;
-            held[ch & 15][note] = 0;
+            const int ch = e.a, raw = e.b;
+            if (raw < 0 || raw > 127) return;
+            held[ch & 15][raw] = 0;
+            const int note = std::max(0, std::min(127, raw + transpose + octave * 12));
             stopVoices(note, -1, false, 0);
+            if (note != raw) stopVoices(raw, -1, false, 0);
             detectChord();
             break;
         }
@@ -307,6 +415,14 @@ void Engine::handle(const MidiEvent& e) {
                 }
             } else if (e.b == 1) {
                 for (auto& v : voices) v.vibDepth = (e.c / 127.0f) * 0.12f;
+            } else if (e.b == 7) {
+                chanVol[e.a & 15] = clampf(e.c / 127.0f, 0.0f, 1.0f);
+            } else if (e.b == 11) {
+                chanExpr[e.a & 15] = clampf(e.c / 127.0f, 0.0f, 1.0f);
+            } else if (e.b == 91) {
+                setFx(0, e.c / 127.0f);
+            } else if (e.b == 93) {
+                setFx(1, e.c / 127.0f);
             }
             break;
         case MidiKind::Pb: {
@@ -511,15 +627,149 @@ void Engine::renderSynth(Voice& v, float& L, float& R) {
             break;
         }
         case Model::SquareLead:
+        case Model::DigitalLead:
             v.phase += f;
             if (v.phase > 1.0f) v.phase -= 1.0f;
-            osc = blepPulse(v.phase, f, 0.5f);
+            osc = blepPulse(v.phase, f, v.model == Model::DigitalLead ? 0.28f : 0.5f);
+            if (v.model == Model::DigitalLead) osc += std::sin(kTwoPi * v.phase * 2.0f) * 0.12f;
             break;
         case Model::SawLead:
+        case Model::AnalogLead:
+        case Model::SynthBrass:
+            v.phase += f;
+            v.phase2 += f * 1.007f;
+            if (v.phase > 1.0f) v.phase -= 1.0f;
+            if (v.phase2 > 1.0f) v.phase2 -= 1.0f;
+            osc = blepSaw(v.phase, f);
+            if (v.model != Model::SawLead) osc = 0.6f * osc + 0.4f * blepSaw(v.phase2, f);
+            if (v.model == Model::SynthBrass) osc = fastTanh(osc * 1.5f);
+            break;
+        case Model::UprightPiano:
+        case Model::DigitalPiano:
+        case Model::Harpsichord: {
+            const int parts = v.model == Model::Harpsichord ? 10 : 8;
+            float acc = 0, pn = v.phase, w = f;
+            const float inharm = v.model == Model::UprightPiano ? 0.0004f : 0.00018f;
+            for (int n = 1; n <= parts; ++n) {
+                acc += std::sin(kTwoPi * pn) / (float)n * std::exp(-0.03f * n);
+                pn += w * (1.0f + inharm * n);
+                if (pn > 1.0f) pn -= (int)pn;
+            }
+            osc = acc * 0.5f;
+            if (v.model == Model::Harpsichord) osc = fastTanh(blepPulse(v.phase, f, 0.12f) * 1.4f) * 0.55f + osc * 0.3f;
+            v.phase += f;
+            if (v.phase > 1.0f) v.phase -= (int)v.phase;
+            break;
+        }
+        case Model::ChurchOrgan:
+        case Model::PipeOrgan:
+        case Model::DrawbarOrgan: {
             v.phase += f;
             if (v.phase > 1.0f) v.phase -= 1.0f;
-            osc = blepSaw(v.phase, f);
+            const float p = v.phase;
+            osc = std::sin(kTwoPi * p) + 0.5f * std::sin(kTwoPi * p * 2) + 0.35f * std::sin(kTwoPi * p * 3) +
+                  0.2f * std::sin(kTwoPi * p * 4) + 0.12f * std::sin(kTwoPi * p * 5) + 0.08f * std::sin(kTwoPi * p * 8);
+            if (v.model == Model::PipeOrgan) osc += 0.25f * std::sin(kTwoPi * p * 6);
+            osc *= 0.28f;
             break;
+        }
+        case Model::SoloCello:
+        case Model::CinematicStrings: {
+            v.phase += f;
+            v.phase2 += f * 1.003f;
+            if (v.phase > 1.0f) v.phase -= 1.0f;
+            if (v.phase2 > 1.0f) v.phase2 -= 1.0f;
+            osc = 0.7f * blepSaw(v.phase, f) + 0.3f * std::sin(kTwoPi * v.phase2);
+            break;
+        }
+        case Model::Trombone:
+        case Model::FrenchHorn:
+        case Model::Tuba: {
+            v.phase += f;
+            if (v.phase > 1.0f) v.phase -= 1.0f;
+            osc = 0.55f * std::sin(kTwoPi * v.phase) + 0.45f * blepSaw(v.phase, f);
+            if (v.model == Model::Tuba) osc = 0.7f * std::sin(kTwoPi * v.phase) + 0.3f * blepSaw(v.phase, f);
+            osc = fastTanh(osc * 1.25f);
+            break;
+        }
+        case Model::Flute:
+        case Model::Piccolo: {
+            v.phase += f;
+            if (v.phase > 1.0f) v.phase -= 1.0f;
+            osc = std::sin(kTwoPi * v.phase) + 0.12f * std::sin(kTwoPi * v.phase * 2) + white(v.rng) * 0.06f * velB;
+            osc *= 0.7f;
+            break;
+        }
+        case Model::Clarinet:
+        case Model::Oboe:
+        case Model::Bassoon: {
+            v.phase += f;
+            if (v.phase > 1.0f) v.phase -= 1.0f;
+            osc = blepPulse(v.phase, f, v.model == Model::Oboe ? 0.22f : 0.33f);
+            osc += 0.15f * std::sin(kTwoPi * v.phase * 3);
+            osc = fastTanh(osc * 1.3f);
+            break;
+        }
+        case Model::SteelGuitar:
+        case Model::CleanGuitar:
+        case Model::DistGuitar:
+        case Model::MuteGuitar:
+        case Model::Saz:
+        case Model::Harp:
+        case Model::Pizzicato:
+        case Model::Pluck: {
+            const float a = v.ks[v.ksIdx];
+            const int n1 = (v.ksIdx + 1) % v.ksLen;
+            float mix = 0.5f * (a + v.ks[n1]);
+            float damp = 0.992f;
+            if (v.model == Model::MuteGuitar || v.model == Model::Pizzicato || v.model == Model::Pluck) damp = 0.975f;
+            if (v.model == Model::DistGuitar) damp = 0.989f;
+            mix = v.ksFilter = v.ksFilter * 0.32f + mix * 0.68f;
+            v.ks[v.ksIdx] = mix * damp;
+            v.ksIdx = n1;
+            osc = mix * 1.7f;
+            if (v.model == Model::DistGuitar) osc = fastTanh(osc * 3.2f);
+            break;
+        }
+        case Model::PickedBass:
+        case Model::UprightBass: {
+            v.phase += f;
+            if (v.phase > 1.0f) v.phase -= 1.0f;
+            osc = std::sin(kTwoPi * v.phase) * 0.65f + blepSaw(v.phase, f) * (v.model == Model::PickedBass ? 0.4f : 0.2f);
+            if (v.amp.stage == Adsr::Attack) osc += white(v.rng) * (v.model == Model::PickedBass ? 0.14f : 0.06f);
+            break;
+        }
+        case Model::Choir: {
+            v.phase += f * 0.5f;
+            v.phase2 += f * 0.5012f;
+            v.phase3 += f * 0.4984f;
+            auto wrap = [](float& p) { if (p > 1.0f) p -= (int)p; };
+            wrap(v.phase);
+            wrap(v.phase2);
+            wrap(v.phase3);
+            osc = (std::sin(kTwoPi * v.phase) + std::sin(kTwoPi * v.phase2) + blepSaw(v.phase3, f * 0.5f) * 0.3f) / 2.3f;
+            break;
+        }
+        case Model::Vibraphone:
+        case Model::Marimba:
+        case Model::Xylophone:
+        case Model::Bells: {
+            v.phase += f;
+            v.fm += f * (v.model == Model::Bells ? 3.5f : 1.4f);
+            if (v.phase > 1.0f) v.phase -= 1.0f;
+            if (v.fm > 1.0f) v.fm -= 1.0f;
+            const float mod = std::sin(kTwoPi * v.fm) * (v.model == Model::Bells ? 2.2f : 0.8f);
+            osc = std::sin(kTwoPi * v.phase + mod);
+            osc += 0.15f * std::sin(kTwoPi * v.phase * 2.0f);
+            break;
+        }
+        case Model::Timpani: {
+            const float drop = std::exp(-v.age / (sampleRate * 0.4f));
+            v.phase += f * (0.7f + 0.3f * drop);
+            if (v.phase > 1.0f) v.phase -= 1.0f;
+            osc = std::sin(kTwoPi * v.phase) * drop + white(v.rng) * 0.08f * drop;
+            break;
+        }
         default:
             v.phase += f;
             if (v.phase > 1.0f) v.phase -= 1.0f;
@@ -612,25 +862,43 @@ void Engine::renderSample(Voice& v, float& L, float& R) {
         return;
     }
     const Sample& sm = samples[v.sampleIndex];
-    if (sm.data.empty()) {
+    const int frames = sm.frames();
+    const int ch = sm.channels >= 2 ? 2 : 1;
+    const int end = v.sampleEnd > 1 ? v.sampleEnd : frames;
+    if (sm.data.empty() || frames <= 1) {
         L = R = 0;
         return;
     }
-    float s = hermite(sm.data.data(), (int)sm.data.size(), v.samplePos);
+    const bool looping = v.sampleLoop;
+    const int ls = v.loopStart;
+    const int le = v.loopEnd > ls ? v.loopEnd : end;
+    const float sL = hermiteAt(sm.data.data(), frames, ch, 0, v.samplePos, ls, le, looping);
+    const float sR =
+            ch == 2 ? hermiteAt(sm.data.data(), frames, ch, 1, v.samplePos, ls, le, looping) : sL;
     v.samplePos += v.sampleInc * chanBendRatio[v.chan & 15];
-    if (sm.loop && v.samplePos >= sm.loopEnd && sm.loopEnd > sm.loopStart) {
-        v.samplePos = sm.loopStart + std::fmod(v.samplePos - sm.loopStart, (double)(sm.loopEnd - sm.loopStart));
-    } else if (v.samplePos >= (double)sm.data.size() - 2) {
+    if (looping && v.samplePos >= le && le > ls) {
+        v.samplePos = ls + std::fmod(v.samplePos - ls, (double)(le - ls));
+    } else if (v.samplePos >= (double)end - 2) {
         v.amp.noteOff();
         v.active = false;
     }
     const float aenv = v.amp.process();
-    s = v.dc.process(s) * aenv * v.gain;
-    L = s * v.panL;
-    R = s * v.panR;
+    const float fenv = v.filtEg.process();
+    float yL = sL, yR = sR;
+    if (v.cutoff < 18000.0f || v.filtEnvAmt > 0.01f) {
+        float cut = v.cutoff * (0.55f + v.brightness * (v.vel / 127.0f) + v.filtEnvAmt * fenv);
+        v.filt.set(cut, std::max(0.0f, v.reso), sampleRate);
+        v.filtR.set(cut, std::max(0.0f, v.reso), sampleRate);
+        v.filt.tick(yL);
+        v.filtR.tick(yR);
+        yL = v.filt.lp;
+        yR = v.filtR.lp;
+    }
+    L = yL * aenv * v.gain * v.panL;
+    R = yR * aenv * v.gain * v.panR;
 }
 
-void Engine::renderVoice(Voice& v, float* buses, int) {
+void Engine::renderVoice(Voice& v, float* buses, float* sends, int) {
     float L = 0, R = 0;
     if (v.sampleIndex >= 0)
         renderSample(v, L, R);
@@ -641,6 +909,14 @@ void Engine::renderVoice(Voice& v, float* buses, int) {
     const int b = std::max(0, std::min(kBusCount - 2, v.bus));
     buses[b * 2] += L;
     buses[b * 2 + 1] += R;
+    if (sends) {
+        sends[0] += L * v.reverbSend;
+        sends[1] += R * v.reverbSend;
+        sends[2] += L * v.chorusSend;
+        sends[3] += R * v.chorusSend;
+        sends[4] += L * v.delaySend;
+        sends[5] += R * v.delaySend;
+    }
     v.age += 1.0f;
     if (v.amp.idle()) v.active = false;
 }
@@ -661,23 +937,31 @@ void Engine::render(float* out, int frames) {
         }
 
         float buses[kBusCount * 2]{};
+        float sends[6]{};
         for (int v = 0; v < kMaxVoices; ++v) {
-            if (voices[v].active || !voices[v].amp.idle()) renderVoice(voices[v], buses, 1);
+            if (voices[v].active || !voices[v].amp.idle()) renderVoice(voices[v], buses, sends, 1);
         }
 
         float dL = drumComp.process(buses[BusDrums * 2] * mix.g[BusDrums], sampleRate);
         float dR = drumComp.process(buses[BusDrums * 2 + 1] * mix.g[BusDrums], sampleRate);
         float accL = buses[BusAcc * 2] * mix.g[BusAcc] + buses[BusPad * 2] * mix.g[BusPad];
         float accR = buses[BusAcc * 2 + 1] * mix.g[BusAcc] + buses[BusPad * 2 + 1] * mix.g[BusPad];
-        const float cL = chorus.processL(accL, sampleRate);
-        const float cR = chorus.processR(accR, sampleRate);
-        float L = buses[BusKeyboard * 2] * mix.g[BusKeyboard] + buses[BusBass * 2] * mix.g[BusBass] + dL + cL;
-        float R = buses[BusKeyboard * 2 + 1] * mix.g[BusKeyboard] + buses[BusBass * 2 + 1] * mix.g[BusBass] + dR + cR;
-        reverb.process(L, R, L, R, sampleRate);
+        float L = buses[BusKeyboard * 2] * mix.g[BusKeyboard] + buses[BusBass * 2] * mix.g[BusBass] + dL + accL;
+        float R = buses[BusKeyboard * 2 + 1] * mix.g[BusKeyboard] + buses[BusBass * 2 + 1] * mix.g[BusBass] + dR + accR;
+        const float choL = chorus.processL(sends[2], sampleRate);
+        const float choR = chorus.processR(sends[3], sampleRate);
+        float dlyL = 0, dlyR = 0;
+        delayFx.processSend(sends[4], sends[5], dlyL, dlyR, sampleRate);
+        L += choL * chorusMix + dlyL * delayFx.mix;
+        R += choR * chorusMix + dlyR * delayFx.mix;
+        float revL = 0, revR = 0;
+        reverb.process(sends[0] + L * reverb.mix, sends[1] + R * reverb.mix, revL, revR, sampleRate);
+        L = L * (1.0f - reverb.mix * 0.35f) + revL * 0.85f;
+        R = R * (1.0f - reverb.mix * 0.35f) + revR * 0.85f;
         L = eqHighL.process(eqMidL.process(eqLowL.process(L)));
         R = eqHighR.process(eqMidR.process(eqLowR.process(R)));
-        L = masterComp.process(L, sampleRate) * mix.g[BusMaster];
-        R = masterComp.process(R, sampleRate) * mix.g[BusMaster];
+        L *= mix.g[BusMaster];
+        R *= mix.g[BusMaster];
         L = limiter.process(outDcL.process(L));
         R = limiter.process(outDcR.process(R));
         out[i * 2] = clampf(L, -1.0f, 1.0f);
@@ -685,4 +969,54 @@ void Engine::render(float* out, int frames) {
     }
 }
 
+int Engine::loadSfz(const char* path, char* report, int reportLen) {
+    if (report && reportLen > 0) report[0] = 0;
+    std::vector<Sample> loaded;
+    Patch patch;
+    std::string error;
+    if (!parseSfzFile(path, loaded, patch, error)) {
+        if (report && reportLen > 0) {
+            std::snprintf(report, (size_t)reportLen, "{\"ok\":0,\"reason\":\"%s\"}", error.c_str());
+        }
+        return -1;
+    }
+    std::vector<int> remap(loaded.size(), -1);
+    for (auto& z : patch.zones) {
+        if (z.sampleIndex < 0 || z.sampleIndex >= (int)loaded.size()) continue;
+        if (remap[(size_t)z.sampleIndex] < 0) remap[(size_t)z.sampleIndex] = addSample(std::move(loaded[(size_t)z.sampleIndex]));
+        z.sampleIndex = remap[(size_t)z.sampleIndex];
+    }
+    const int id = addSampledInstrument(patch);
+    if (report && reportLen > 0) {
+        std::snprintf(report, (size_t)reportLen, "{\"ok\":1,\"id\":%d,\"zones\":%d}", id, (int)patch.zones.size());
+    }
+    return id;
+}
+
+int Engine::loadAbStyle(const char* path, char* report, int reportLen) {
+    Arranger::Style style;
+    std::string error;
+    if (!parseAbStyleFile(path, style, error)) {
+        if (report && reportLen > 0) {
+            std::snprintf(report, (size_t)reportLen, "{\"ok\":0,\"reason\":\"%s\"}", error.c_str());
+        }
+        return -1;
+    }
+    int drum = -1, bass = -1, acc1 = -1, acc2 = -1, acc3 = -1;
+    for (int i = 0; i < (int)patches.size(); ++i) {
+        if (isKit(patches[(size_t)i].model) && drum < 0) drum = i;
+        if (patches[(size_t)i].bus == BusBass && bass < 0) bass = i;
+        if (patches[(size_t)i].model == Model::Piano && acc1 < 0) acc1 = i;
+        if (patches[(size_t)i].model == Model::ConcertStrings && acc2 < 0) acc2 = i;
+        if (patches[(size_t)i].model == Model::NylonGuitar && acc3 < 0) acc3 = i;
+    }
+    applyStylePrograms(style, drum, bass, acc1, acc2, acc3);
+    const int id = addStyle(std::move(style));
+    if (report && reportLen > 0) {
+        std::snprintf(report, (size_t)reportLen, "{\"ok\":1,\"id\":%d}", id);
+    }
+    return id;
+}
+
 }  // namespace pa
+

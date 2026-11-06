@@ -61,6 +61,9 @@ class ArrangerBoxAudioModule : Module() {
     Function("setStyle") { id: Int -> EngineNative.nativeSetStyle(id) }
     Function("setSynchro") { on: Boolean -> EngineNative.nativeSetSynchro(on) }
     Function("setAutoFill") { on: Boolean -> EngineNative.nativeSetAutoFill(on) }
+    Function("setTranspose") { semis: Int -> EngineNative.nativeSetTranspose(semis) }
+    Function("setOctave") { oct: Int -> EngineNative.nativeSetOctave(oct) }
+    Function("setFx") { which: Int, mix: Double -> EngineNative.nativeSetFx(which, mix.toFloat()) }
 
     Function("snapshot") {
       mapOf(
@@ -80,7 +83,8 @@ class ArrangerBoxAudioModule : Module() {
         mapOf(
           "id" to id,
           "name" to EngineNative.nativeSoundName(id),
-          "category" to EngineNative.nativeSoundCategory(id)
+          "category" to EngineNative.nativeSoundCategory(id),
+          "source" to EngineNative.nativeSoundSource(id)
         )
       }
     }
@@ -110,6 +114,14 @@ class ArrangerBoxAudioModule : Module() {
 
     AsyncFunction("loadPa4xSet") { path: String ->
       EngineNative.nativeLoadPa4xSet(path)
+    }
+
+    AsyncFunction("loadSfz") { path: String ->
+      EngineNative.nativeLoadSfz(path)
+    }
+
+    AsyncFunction("loadAbStyle") { path: String ->
+      EngineNative.nativeLoadAbStyle(path)
     }
   }
 }

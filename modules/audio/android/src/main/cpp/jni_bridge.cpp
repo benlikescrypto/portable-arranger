@@ -97,6 +97,18 @@ JNIEXPORT void JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeSetAutoFill(JNIEnv*, jclass, jboolean on) {
     arrangerbox_set_auto_fill(on ? 1 : 0);
 }
+JNIEXPORT void JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeSetTranspose(JNIEnv*, jclass, jint semis) {
+    arrangerbox_set_transpose(semis);
+}
+JNIEXPORT void JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeSetOctave(JNIEnv*, jclass, jint oct) {
+    arrangerbox_set_octave(oct);
+}
+JNIEXPORT void JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeSetFx(JNIEnv*, jclass, jint which, jfloat mix) {
+    arrangerbox_set_fx(which, mix);
+}
 
 JNIEXPORT jint JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeSoundCount(JNIEnv*, jclass) {
@@ -112,6 +124,12 @@ JNIEXPORT jstring JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeSoundCategory(JNIEnv* env, jclass, jint id) {
     char buf[48];
     arrangerbox_sound_category(id, buf, sizeof(buf));
+    return jutf(env, buf);
+}
+JNIEXPORT jstring JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeSoundSource(JNIEnv* env, jclass, jint id) {
+    char buf[24];
+    arrangerbox_sound_source(id, buf, sizeof(buf));
     return jutf(env, buf);
 }
 JNIEXPORT jint JNICALL
@@ -182,8 +200,22 @@ Java_expo_modules_arrangerboxaudio_EngineNative_nativeScanPcm(JNIEnv* env, jclas
 JNIEXPORT jstring JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadPa4xSet(JNIEnv* env, jclass, jstring path) {
     const auto p = jstr(env, path);
-    char buf[320];
+    char buf[2048];
     arrangerbox_load_pa4x_set(p.c_str(), buf, sizeof(buf));
+    return jutf(env, buf);
+}
+JNIEXPORT jstring JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadSfz(JNIEnv* env, jclass, jstring path) {
+    const auto p = jstr(env, path);
+    char buf[1024];
+    arrangerbox_load_sfz(p.c_str(), buf, sizeof(buf));
+    return jutf(env, buf);
+}
+JNIEXPORT jstring JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadAbStyle(JNIEnv* env, jclass, jstring path) {
+    const auto p = jstr(env, path);
+    char buf[1024];
+    arrangerbox_load_abstyle(p.c_str(), buf, sizeof(buf));
     return jutf(env, buf);
 }
 
