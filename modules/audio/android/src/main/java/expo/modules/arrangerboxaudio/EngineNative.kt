@@ -39,4 +39,5 @@ internal object EngineNative {
   @JvmStatic external fun nativeLoadWav(path: String, name: String, category: String): Int
   @JvmStatic external fun nativeLoadKsf(path: String, name: String, category: String): Int
   @JvmStatic external fun nativeScanPcm(path: String): Int
+  @JvmStatic external fun nativeLoadPa4xSet(path: String): String
 }

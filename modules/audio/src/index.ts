@@ -49,6 +49,7 @@ type AudioNative = {
   loadWav: (path: string, name: string, category: string) => Promise<number>
   loadKsf: (path: string, name: string, category: string) => Promise<number>
   scanPcmBank: (path: string) => Promise<number>
+  loadPa4xSet?: (path: string) => Promise<string>
 }
 
 const native = requireOptionalNativeModule<AudioNative>("ArrangerBoxAudio")
@@ -127,6 +128,10 @@ export const audio = {
   },
   scanPcmBank(path: string) {
     return native ? native.scanPcmBank(path) : Promise.resolve(0)
+  },
+  loadPa4xSet(path: string) {
+    const load = native?.loadPa4xSet
+    return load ? load(path) : Promise.resolve('{"ok":0}')
   },
 }
 

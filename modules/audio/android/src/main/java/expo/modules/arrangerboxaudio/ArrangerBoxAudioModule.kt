@@ -107,5 +107,9 @@ class ArrangerBoxAudioModule : Module() {
     AsyncFunction("scanPcmBank") { path: String ->
       EngineNative.nativeScanPcm(path)
     }
+
+    AsyncFunction("loadPa4xSet") { path: String ->
+      EngineNative.nativeLoadPa4xSet(path)
+    }
   }
 }

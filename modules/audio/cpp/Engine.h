@@ -141,6 +141,10 @@ void buildArranger(Arranger& arr);
 int loadWav(const char* path, Sample& out);
 int loadKsf(const char* path, Sample& out);
 int scanPcmBank(const char* path, std::vector<Sample>& out);
+bool readFileBytes(const char* path, std::vector<uint8_t>& bytes);
+int loadKsfBytes(const uint8_t* bytes, size_t n, Sample& out, bool* compressed = nullptr);
+Arranger::Style completeStyle(Arranger::Style s);
+Arranger::Style fallbackStyle(const char* name, const char* cat, float tempo);
 
 class Arranger {
 public:
@@ -158,7 +162,9 @@ public:
 
     struct Ev {
         uint16_t tick;
-        uint8_t trk, note, vel, dur, flags;
+        uint8_t trk, note, vel;
+        uint16_t dur;
+        uint8_t flags;
     };
     struct Pattern {
         std::vector<Ev> evs;
@@ -175,6 +181,12 @@ public:
         Pattern brk, end1, end2, end3;
     };
     std::vector<Style> styles;
+
+    struct Hold {
+        int remain = 0, inst = 0, note = 0, ch = 0;
+    };
+    Hold holds[64]{};
+    int holdn = 0;
 };
 
 class Engine {
@@ -219,6 +231,8 @@ public:
 
     int addSampledInstrument(const Patch& p);
     int addSample(Sample&& s);
+    int addStyle(Arranger::Style style);
+    int loadPa4xSet(const char* folder, char* report, int reportLen);
 
     float latencyMs() const { return latency.load(); }
     int currentChordRoot() const { return arrSt.displayRoot.load(); }

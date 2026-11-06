@@ -14,7 +14,7 @@ export type ImportProgress = {
   fraction: number
 }
 
-function nativePath(file: File): string {
+function nativePath(file: File | Directory): string {
   const uri = file.uri
   if (uri.startsWith("file://")) return decodeURIComponent(uri.replace(/^file:\/\//, ""))
   return uri
@@ -44,16 +44,19 @@ async function copyTree(src: Directory, dest: Directory, onCopied: (copied: numb
   await walkCopy(src, dest)
 }
 
-function collectLoadable(dir: Directory, out: File[] = []): File[] {
-  for (const child of dir.list()) {
-    if (isDirectory(child)) {
-      collectLoadable(child, out)
-      continue
+function parseReport(raw: string) {
+  try {
+    return JSON.parse(raw) as {
+      ok?: number
+      samples?: number
+      patches?: number
+      styles?: number
+      compressed?: number
+      skipped?: number
     }
-    const upper = child.name.toUpperCase()
-    if (upper.endsWith(".WAV") || upper.endsWith(".KSF") || upper.endsWith(".PCM")) out.push(child)
+  } catch {
+    return {}
   }
-  return out
 }
 
 export async function importPa4xSet(onProgress: (progress: ImportProgress) => void): Promise<ImportedLibrary | null> {
@@ -91,36 +94,17 @@ export async function importPa4xSet(onProgress: (progress: ImportProgress) => vo
   onProgress({ message: "Reading SET names…", fraction: 0.62 })
   const inspected = await inspectPa4x(dest)
 
-  const loadable = collectLoadable(dest)
-  let samples = 0
-  let skipped = 0
-  for (let i = 0; i < loadable.length; i++) {
-    const file = loadable[i]
-    onProgress({
-      message: `Loading ${file.name}`,
-      fraction: 0.64 + 0.34 * ((i + 1) / Math.max(loadable.length, 1)),
-    })
-    const path = nativePath(file)
-    const name = file.name.replace(/\.[^.]+$/, "")
-    const upper = file.name.toUpperCase()
-    if (upper.endsWith(".WAV")) {
-      if ((await audio.loadWav(path, name, "Imported")) >= 0) samples++
-      else skipped++
-    } else if (upper.endsWith(".KSF")) {
-      if ((await audio.loadKsf(path, name, "Imported")) >= 0) samples++
-      else skipped++
-    } else if (upper.endsWith(".PCM")) {
-      const added = await audio.scanPcmBank(path)
-      if (added > 0) samples += added
-      else skipped++
-    }
-  }
+  onProgress({ message: "Loading PCM, KMP, PCG and STY into the engine…", fraction: 0.72 })
+  const report = parseReport(await audio.loadPa4xSet(nativePath(dest)))
 
   onProgress({ message: "Ready", fraction: 1 })
   return {
     ...inspected,
     setName: inspected.setName || setName,
-    samplesLoaded: samples,
-    skippedSamples: skipped,
+    samplesLoaded: report.samples ?? 0,
+    skippedSamples: report.skipped ?? 0,
+    patchesLoaded: report.patches ?? 0,
+    stylesLoaded: report.styles ?? 0,
+    compressedDecoded: report.compressed ?? 0,
   }
 }

@@ -173,21 +173,34 @@ export function useArranger() {
         setState((s) => ({ ...s, importing: false, importMessage: "SET import cancelled." }))
         return
       }
-      const engineSounds = audio.listSounds().map((item) => ({ ...item, bank: "FACTORY", source: "Engine" }))
+      const engineSounds = audio.listSounds().map((item) => ({
+        ...item,
+        bank: item.id < 40 ? "FACTORY" : lib.setName,
+        source: item.id < 40 ? "Engine" : "PA4X SET",
+      }))
       const namedSounds = lib.sounds.filter((sound) => !engineSounds.some((item) => item.name === sound.name))
-      const engineStyles = audio.listStyles().map((item) => ({ ...item, source: "Engine" }))
+      const engineStyles = audio.listStyles().map((item) => ({
+        ...item,
+        source: item.id < 16 ? "Engine" : "PA4X SET",
+      }))
+      const namedStyles = lib.styles.filter((style) => !engineStyles.some((item) => item.name === style.name))
+      const bits = [
+        `${lib.patchesLoaded} SET sounds`,
+        `${lib.stylesLoaded} SET styles`,
+        `${lib.samplesLoaded} samples`,
+      ]
+      if (lib.compressedDecoded) bits.push(`${lib.compressedDecoded} compressed samples decoded`)
+      if (lib.skippedSamples) bits.push(`${lib.skippedSamples} files skipped`)
       setState((s) => ({
         ...s,
         importing: false,
         importProgress: 1,
         setName: lib.setName,
         adapterName: lib.adapterName,
-        sounds: [...engineSounds, ...namedSounds],
-        styles: [...engineStyles, ...lib.styles],
+        sounds: lib.patchesLoaded > 0 ? engineSounds : [...engineSounds, ...namedSounds],
+        styles: lib.stylesLoaded > 0 ? engineStyles : [...engineStyles, ...namedStyles],
         setFiles: lib.files.slice(0, 40).map((file) => `${file.kind}  ${file.relativePath}`),
-        importMessage: lib.skippedSamples
-          ? `Loaded ${lib.sounds.length} names, ${lib.styles.length} styles, ${lib.samplesLoaded} samples from ${lib.setName}. ${lib.skippedSamples} sample files could not be decoded (often compressed Korg KSF).`
-          : `Loaded ${lib.sounds.length} names, ${lib.styles.length} styles, ${lib.samplesLoaded} samples from ${lib.setName}`,
+        importMessage: `Loaded ${bits.join(", ")} from ${lib.setName}`,
         mode: "SOUND",
       }))
     } catch (error) {

@@ -12,8 +12,12 @@ constexpr float kTwoPi = 6.28318530717958647692f;
 constexpr int kMaxVoices = 96;
 constexpr int kMaxParts = 8;
 constexpr int kBusCount = 6;
-constexpr int kMaxSamples = 1024;
-constexpr int kMaxInstruments = 2048;
+constexpr int kMaxSamples = 8192;
+constexpr int kMaxInstruments = 4096;
+constexpr uint8_t kEvAbs = 0;
+constexpr uint8_t kEvBass = 1;
+constexpr uint8_t kEvComp = 2;
+constexpr uint8_t kEvTrans = 3;
 constexpr int kPpq = 96;
 constexpr int kKsLen = 1024;
 

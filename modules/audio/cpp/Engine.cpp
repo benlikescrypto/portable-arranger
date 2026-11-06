@@ -90,6 +90,11 @@ int Engine::addSample(Sample&& s) {
     samples.push_back(std::move(s));
     return (int)samples.size() - 1;
 }
+int Engine::addStyle(Arranger::Style style) {
+    std::lock_guard<std::mutex> g(loadMu);
+    arr.styles.push_back(std::move(style));
+    return (int)arr.styles.size() - 1;
+}
 
 void Engine::playInternal(int instId, int note, int vel, int bus, int ch) {
     startVoice(instId, note, vel, bus, ch);
@@ -318,6 +323,12 @@ void Engine::handle(const MidiEvent& e) {
             if (e.a >= 0 && e.a < 4) partProg[e.a] = e.b;
             break;
         case MidiKind::Style:
+            if (e.a == 0 || (e.a == 2 && arrSt.running)) {
+                for (int i = 0; i < arr.holdn; ++i) {
+                    stopInternal(arr.holds[i].inst, arr.holds[i].note, arr.holds[i].ch);
+                }
+                arr.holdn = 0;
+            }
             if (e.a == 0) arr.stop(arrSt);
             else if (e.a == 1) arr.start(arrSt);
             else if (e.a == 2) {

@@ -195,4 +195,16 @@ int arrangerbox_scan_pcm_bank(const char* path) {
     return added;
 }
 
+int arrangerbox_load_pa4x_set(const char* folder, char* report, int reportLen) {
+    auto* e = live();
+    if (!e || !folder) {
+        if (report && reportLen > 0) {
+            std::strncpy(report, "{\"ok\":0}", static_cast<size_t>(reportLen - 1));
+            report[reportLen - 1] = 0;
+        }
+        return -1;
+    }
+    return e->loadPa4xSet(folder, report, reportLen);
+}
+
 }  // extern "C"

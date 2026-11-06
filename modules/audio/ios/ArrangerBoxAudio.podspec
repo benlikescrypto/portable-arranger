@@ -16,7 +16,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
   s.frameworks     = 'AudioToolbox', 'AVFoundation', 'Accelerate'
-  s.library        = 'c++'
+  s.libraries      = 'c++', 'z'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',

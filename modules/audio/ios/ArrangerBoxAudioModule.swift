@@ -105,6 +105,9 @@ func arrangerbox_load_ksf(_ path: UnsafePointer<CChar>, _ name: UnsafePointer<CC
 @_silgen_name("arrangerbox_scan_pcm_bank")
 func arrangerbox_scan_pcm_bank(_ path: UnsafePointer<CChar>) -> Int32
 
+@_silgen_name("arrangerbox_load_pa4x_set")
+func arrangerbox_load_pa4x_set(_ folder: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
+
 private func cString(_ id: Int32, _ fill: (Int32, UnsafeMutablePointer<CChar>, Int32) -> Void) -> String {
   var buf = [CChar](repeating: 0, count: 64)
   buf.withUnsafeMutableBufferPointer { ptr in
@@ -217,6 +220,16 @@ public class ArrangerBoxAudioModule: Module {
 
     AsyncFunction("scanPcmBank") { (path: String) in
       path.withCString { arrangerbox_scan_pcm_bank($0) }
+    }
+
+    AsyncFunction("loadPa4xSet") { (path: String) in
+      var buf = [CChar](repeating: 0, count: 320)
+      path.withCString { p in
+        buf.withUnsafeMutableBufferPointer { ptr in
+          _ = arrangerbox_load_pa4x_set(p, ptr.baseAddress!, 320)
+        }
+      }
+      return String(cString: buf)
     }
   }
 }

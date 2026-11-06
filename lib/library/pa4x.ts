@@ -17,6 +17,9 @@ export type ImportedLibrary = {
   styles: StyleItem[]
   samplesLoaded: number
   skippedSamples: number
+  patchesLoaded: number
+  stylesLoaded: number
+  compressedDecoded: number
   files: SetFile[]
 }
 
@@ -81,6 +84,9 @@ export function fileKind(name: string): string {
   if (upper.endsWith(".PRF")) return "KEYBOARD SET"
   if (upper.endsWith(".PAD")) return "PAD"
   if (upper.endsWith(".WAV")) return "WAV"
+  if (upper.endsWith(".MID") || upper.endsWith(".SMF")) return "MIDI"
+  if (upper.endsWith(".STG")) return "STYLE"
+  if (upper.endsWith(".KST")) return "SET"
   return "FILE"
 }
 
@@ -133,6 +139,9 @@ export async function inspectPa4x(root: Directory): Promise<ImportedLibrary> {
     styles,
     samplesLoaded: 0,
     skippedSamples: 0,
+    patchesLoaded: 0,
+    stylesLoaded: 0,
+    compressedDecoded: 0,
     files,
   }
 }

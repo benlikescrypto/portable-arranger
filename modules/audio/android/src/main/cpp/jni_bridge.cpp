@@ -179,6 +179,13 @@ Java_expo_modules_arrangerboxaudio_EngineNative_nativeScanPcm(JNIEnv* env, jclas
     const auto p = jstr(env, path);
     return arrangerbox_scan_pcm_bank(p.c_str());
 }
+JNIEXPORT jstring JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadPa4xSet(JNIEnv* env, jclass, jstring path) {
+    const auto p = jstr(env, path);
+    char buf[320];
+    arrangerbox_load_pa4x_set(p.c_str(), buf, sizeof(buf));
+    return jutf(env, buf);
+}
 
 JNIEXPORT void JNICALL
 Java_expo_modules_arrangerboxmidi_MidiNative_nativeNoteOn(JNIEnv*, jclass, jint ch, jint note, jint vel) {

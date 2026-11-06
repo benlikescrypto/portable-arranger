@@ -5,14 +5,40 @@
 namespace pa {
 
 namespace {
-constexpr uint8_t F_ABS = 0;
-constexpr uint8_t F_BASS = 1;
-constexpr uint8_t F_COMP = 2;
+constexpr uint8_t F_ABS = kEvAbs;
+constexpr uint8_t F_BASS = kEvBass;
+constexpr uint8_t F_COMP = kEvComp;
 constexpr int BAR = kPpq * 4;
 
-void add(Arranger::Pattern& p, int tick, uint8_t trk, uint8_t note, uint8_t vel, uint8_t dur, uint8_t flags) {
+void add(Arranger::Pattern& p, int tick, uint8_t trk, uint8_t note, uint8_t vel, uint16_t dur, uint8_t flags) {
     if (tick < 0) return;
     p.evs.push_back({(uint16_t)tick, trk, note, vel, dur, flags});
+}
+
+void releaseHolds(Engine& eng, Arranger& arr) {
+    for (int i = 0; i < arr.holdn; ++i) {
+        eng.stopInternal(arr.holds[i].inst, arr.holds[i].note, arr.holds[i].ch);
+    }
+    arr.holdn = 0;
+}
+
+void tickHolds(Engine& eng, Arranger& arr) {
+    int w = 0;
+    for (int i = 0; i < arr.holdn; ++i) {
+        Arranger::Hold h = arr.holds[i];
+        h.remain--;
+        if (h.remain <= 0) {
+            eng.stopInternal(h.inst, h.note, h.ch);
+        } else {
+            arr.holds[w++] = h;
+        }
+    }
+    arr.holdn = w;
+}
+
+void captureHold(Arranger& arr, int inst, int note, int ch, int dur) {
+    if (dur <= 0 || arr.holdn >= 64) return;
+    arr.holds[arr.holdn++] = {dur, inst, note, ch};
 }
 
 void drums8(Arranger::Pattern& p, int bars, int kickVel, int snareVel, int hatVel, bool sixteenth) {
@@ -164,6 +190,7 @@ void Arranger::stop(ArrangerState& st) {
     st.running = false;
     st.playing.store(0);
     st.booked = Section::None;
+    holdn = 0;
 }
 void Arranger::book(ArrangerState& st, Section s) {
     if (s == Section::Break || s == Section::Ending3) {
@@ -216,27 +243,49 @@ void Arranger::renderTicks(Engine& eng, ArrangerState& st, int ticks, float) {
             if ((int)ev.tick != at) continue;
             int note = ev.note;
             int bus = BusDrums;
-            int inst = 32;
+            int inst = pat->drumProg >= 0 ? pat->drumProg : 32;
             int ch = 10 + ev.trk;
             if (ev.flags == F_ABS) {
                 bus = BusDrums;
-                inst = (sty.var[0].drumProg >= 0) ? sty.var[0].drumProg : 32;
+                inst = pat->drumProg >= 0 ? pat->drumProg : 32;
             } else if (ev.flags == F_BASS) {
                 note = bassNote(st.chordRoot, st.chordType, ev.note);
                 bus = BusBass;
-                inst = 21;
+                inst = pat->bassProg >= 0 ? pat->bassProg : 21;
                 ch = 9;
+            } else if (ev.flags == kEvTrans) {
+                note = (int)ev.note + st.chordRoot;
+                while (note > 96) note -= 12;
+                while (note < 24) note += 12;
+                note = std::max(0, std::min(127, note));
+                if (ev.trk == 0 || ((ev.note >= 35 && ev.note <= 81) && ev.trk == 9)) {
+                    bus = BusDrums;
+                    inst = pat->drumProg >= 0 ? pat->drumProg : 32;
+                    ch = 10;
+                    note = ev.note;
+                } else if (ev.trk == 1) {
+                    bus = BusBass;
+                    inst = pat->bassProg >= 0 ? pat->bassProg : 21;
+                    ch = 9;
+                } else {
+                    bus = ev.trk >= 4 ? BusPad : BusAcc;
+                    inst = ev.trk == 2 ? pat->acc1 : (ev.trk == 3 ? pat->acc2 : pat->acc3);
+                    ch = 8;
+                }
             } else {
                 note = compNote(st.chordRoot, st.chordType, ev.note);
                 bus = (ev.trk >= 4) ? BusPad : BusAcc;
-                inst = (ev.trk == 2) ? 0 : (ev.trk == 3 ? 9 : 11);
+                inst = (ev.trk == 2) ? pat->acc1 : (ev.trk == 3 ? pat->acc2 : pat->acc3);
                 ch = 8;
             }
             eng.playInternal(inst, note, ev.vel, bus, ch);
+            if (ev.flags == kEvTrans) captureHold(*this, inst, note, ch, ev.dur);
         }
+        tickHolds(eng, *this);
         ph++;
         if (ph >= len) {
             ph = 0;
+            releaseHolds(eng, *this);
             if (isFill(st.current) || isIntro(st.current)) {
                 const Section next = st.booked != Section::None
                                              ? st.booked
@@ -427,6 +476,18 @@ static Arranger::Style finish(Arranger::Style s) {
         add(s.end3, 0, 2, 0, 100, 72, F_COMP);
     }
     return s;
+}
+
+Arranger::Style completeStyle(Arranger::Style s) { return finish(std::move(s)); }
+
+Arranger::Style fallbackStyle(const char* name, const char* cat, float tempo) {
+    Arranger::Style s;
+    nameStyle(s, name, cat ? cat : "Style", tempo);
+    s.var[0] = makePop(1);
+    s.var[1] = makePop(2);
+    s.var[2] = makePop(2);
+    s.var[3] = makePop(3);
+    return finish(std::move(s));
 }
 
 void buildArranger(Arranger& arr) {
