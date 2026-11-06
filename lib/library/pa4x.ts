@@ -16,6 +16,7 @@ export type ImportedLibrary = {
   sounds: SoundItem[]
   styles: StyleItem[]
   samplesLoaded: number
+  skippedSamples: number
   files: SetFile[]
 }
 
@@ -30,12 +31,16 @@ export function looksLikeSet(dir: Directory): boolean {
   return ["SOUND", "STYLE", "PCM", "KEYBOARDSET"].filter((name) => names.has(name)).length >= 2
 }
 
-export function findSetFolder(root: Directory): Directory {
-  if (root.name.toUpperCase().endsWith(".SET")) return root
+export function findSetFolder(root: Directory, depth = 0): Directory {
+  if (root.name.toUpperCase().endsWith(".SET") || looksLikeSet(root)) return root
+  if (depth >= 4) return root
   for (const child of root.list()) {
-    if (isDirectory(child) && child.name.toUpperCase().endsWith(".SET")) return child
+    if (!isDirectory(child)) continue
+    if (child.name.toUpperCase().endsWith(".SET") || looksLikeSet(child)) return child
+    const nested = findSetFolder(child, depth + 1)
+    if (nested !== child && (nested.name.toUpperCase().endsWith(".SET") || looksLikeSet(nested))) return nested
   }
-  return looksLikeSet(root) ? root : root
+  return root
 }
 
 export function matchesPa4x(root: Directory): boolean {
@@ -127,6 +132,7 @@ export async function inspectPa4x(root: Directory): Promise<ImportedLibrary> {
     sounds,
     styles,
     samplesLoaded: 0,
+    skippedSamples: 0,
     files,
   }
 }

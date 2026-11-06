@@ -25,21 +25,35 @@ function isCancel(error: unknown): boolean {
   return /cancel/i.test(text)
 }
 
-async function copyTree(
-  src: Directory,
-  dest: Directory,
-  onFile: (file: File, rel: string) => void
-) {
+async function copyTree(src: Directory, dest: Directory, onCopied: (copied: number, name: string) => void) {
   dest.create({ intermediates: true, idempotent: true })
-  for (const child of src.list()) {
-    if (isDirectory(child)) {
-      await copyTree(child, new Directory(dest, child.name), onFile)
-    } else {
-      const out = new File(dest, child.name)
-      await child.copy(out, { overwrite: true })
-      onFile(out, child.name)
+  let copied = 0
+  const walkCopy = async (from: Directory, to: Directory) => {
+    to.create({ intermediates: true, idempotent: true })
+    for (const child of from.list()) {
+      if (isDirectory(child)) {
+        await walkCopy(child, new Directory(to, child.name))
+      } else {
+        const out = new File(to, child.name)
+        await child.copy(out, { overwrite: true })
+        copied++
+        onCopied(copied, child.name)
+      }
     }
   }
+  await walkCopy(src, dest)
+}
+
+function collectLoadable(dir: Directory, out: File[] = []): File[] {
+  for (const child of dir.list()) {
+    if (isDirectory(child)) {
+      collectLoadable(child, out)
+      continue
+    }
+    const upper = child.name.toUpperCase()
+    if (upper.endsWith(".WAV") || upper.endsWith(".KSF") || upper.endsWith(".PCM")) out.push(child)
+  }
+  return out
 }
 
 export async function importPa4xSet(onProgress: (progress: ImportProgress) => void): Promise<ImportedLibrary | null> {
@@ -53,53 +67,60 @@ export async function importPa4xSet(onProgress: (progress: ImportProgress) => vo
 
   const setFolder = findSetFolder(picked)
   if (!matchesPa4x(setFolder) && !setFolder.name.toUpperCase().endsWith(".SET")) {
-    onProgress({ message: "That folder does not look like a Korg PA4X SET. Importing it anyway.", fraction: 0.04 })
+    onProgress({
+      message: "That folder does not look like a Korg PA4X SET. Importing the selected folder anyway.",
+      fraction: 0.04,
+    })
   }
 
-  onProgress({ message: `Reading ${setFolder.name}…`, fraction: 0.05 })
-  const inspected = await inspectPa4x(setFolder)
-  onProgress({
-    message: `Found ${inspected.sounds.length} sounds, ${inspected.styles.length} styles`,
-    fraction: 0.18,
-  })
+  const setName = setFolder.name.replace(/\.SET$/i, "") || "Imported SET"
+  onProgress({ message: `Copying ${setFolder.name}…`, fraction: 0.06 })
 
-  const dest = new Directory(Paths.document, "sets", inspected.setName)
+  const dest = new Directory(Paths.document, "sets", setName)
   if (dest.exists) dest.delete()
   dest.create({ intermediates: true, idempotent: true })
-
-  const loadable: File[] = []
-  let copied = 0
-  await copyTree(setFolder, dest, (file) => {
-    copied++
-    const upper = file.name.toUpperCase()
-    if (upper.endsWith(".WAV") || upper.endsWith(".KSF") || upper.endsWith(".PCM")) loadable.push(file)
+  await copyTree(setFolder, dest, (copied, name) => {
     if (copied % 8 === 0) {
       onProgress({
-        message: `Copying ${file.name}`,
-        fraction: 0.18 + 0.5 * Math.min(1, copied / 400),
+        message: `Copying ${name}`,
+        fraction: 0.06 + 0.52 * Math.min(1, copied / 400),
       })
     }
   })
 
+  onProgress({ message: "Reading SET names…", fraction: 0.62 })
+  const inspected = await inspectPa4x(dest)
+
+  const loadable = collectLoadable(dest)
   let samples = 0
+  let skipped = 0
   for (let i = 0; i < loadable.length; i++) {
     const file = loadable[i]
     onProgress({
       message: `Loading ${file.name}`,
-      fraction: 0.7 + 0.28 * ((i + 1) / Math.max(loadable.length, 1)),
+      fraction: 0.64 + 0.34 * ((i + 1) / Math.max(loadable.length, 1)),
     })
     const path = nativePath(file)
     const name = file.name.replace(/\.[^.]+$/, "")
     const upper = file.name.toUpperCase()
     if (upper.endsWith(".WAV")) {
       if ((await audio.loadWav(path, name, "Imported")) >= 0) samples++
+      else skipped++
     } else if (upper.endsWith(".KSF")) {
       if ((await audio.loadKsf(path, name, "Imported")) >= 0) samples++
+      else skipped++
     } else if (upper.endsWith(".PCM")) {
-      samples += await audio.scanPcmBank(path)
+      const added = await audio.scanPcmBank(path)
+      if (added > 0) samples += added
+      else skipped++
     }
   }
 
   onProgress({ message: "Ready", fraction: 1 })
-  return { ...inspected, samplesLoaded: samples }
+  return {
+    ...inspected,
+    setName: inspected.setName || setName,
+    samplesLoaded: samples,
+    skippedSamples: skipped,
+  }
 }

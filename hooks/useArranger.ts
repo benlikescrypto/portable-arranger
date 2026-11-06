@@ -185,7 +185,9 @@ export function useArranger() {
         sounds: [...engineSounds, ...namedSounds],
         styles: [...engineStyles, ...lib.styles],
         setFiles: lib.files.slice(0, 40).map((file) => `${file.kind}  ${file.relativePath}`),
-        importMessage: `Loaded ${lib.sounds.length} names, ${lib.styles.length} styles, ${lib.samplesLoaded} samples from ${lib.setName}`,
+        importMessage: lib.skippedSamples
+          ? `Loaded ${lib.sounds.length} names, ${lib.styles.length} styles, ${lib.samplesLoaded} samples from ${lib.setName}. ${lib.skippedSamples} sample files could not be decoded (often compressed Korg KSF).`
+          : `Loaded ${lib.sounds.length} names, ${lib.styles.length} styles, ${lib.samplesLoaded} samples from ${lib.setName}`,
         mode: "SOUND",
       }))
     } catch (error) {

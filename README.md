@@ -88,9 +88,9 @@ Tap **LOAD SET** and pick the `.SET` folder (or the USB folder that contains it)
 
 - Android uses the system folder picker (`ACTION_OPEN_DOCUMENT_TREE`), including USB-C sticks and hubs.
 - iOS/iPad uses the Files folder picker, including USB-C storage on supported iPads.
-- SOUND/STYLE/PCM/KMP names are read from PCG/STY/PRF/PAD. WAV, KSF, and PCM samples are copied into the app and loaded into the C++ engine.
+The whole `.SET` folder is copied into the app. Names are read from PCG/STY/PRF/PAD. Uncompressed WAV, KSF, and PCM sample data is loaded into the engine.
 
-This still needs a real PA4X SET on physical hardware to confirm.
+This is **not** a full PA4X SET player. PCG programs are not rebuilt as PA programs, STY files are not turned into playable arranger patterns, KMP keymaps are not applied, and compressed Korg samples are skipped. Confirm with a real SET on hardware.
 
 ## Remaining work
 
