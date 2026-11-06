@@ -61,7 +61,13 @@ npx expo run:ios --device
 eas build --profile development --platform ios
 ```
 
-Then install via USB / Apple Developer, and start Metro with `npx expo start --dev-client`.
+Then install via USB / Apple Developer / the EAS install link. On this Windows machine start Metro with the same Cloudflare tunnel helper as Epohk:
+
+```bash
+npm run dev:tunnel
+```
+
+That publishes Metro on port 8081 through `trycloudflare.com` so the iPad can load JS without sharing a LAN. `npm run dev:tunnel:node20` is the Expo `--tunnel` fallback.
 
 USB-MIDI on iOS needs a Camera Adapter / USB-C host cable. Bluetooth MIDI is not a V1 requirement.
 

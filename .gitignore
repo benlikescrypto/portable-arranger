@@ -60,3 +60,6 @@ yarn-error.*
 # generated native folders (CNG)
 /ios
 /android
+
+# local tunnel binary (downloaded by npm run dev:tunnel)
+/scripts/bin/
