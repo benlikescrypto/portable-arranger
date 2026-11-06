@@ -102,9 +102,7 @@ export function useArranger() {
         nativeReady: started,
         styleId: styles[0]?.id ?? 0,
         tempo: styles[0]?.tempo || 112,
-        importMessage: styles.length
-          ? `${sounds.length} factory sounds, ${styles.length} styles. Connect MIDI and play.`
-          : `${sounds.length} factory sounds ready.`,
+        importMessage: "",
       }))
       await midi.start()
     })()

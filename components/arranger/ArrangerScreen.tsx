@@ -1,8 +1,16 @@
 import { useMemo, useState } from "react"
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native"
+import {
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
-import { LevelBar } from "@/components/arranger/LevelBar"
 import {
   filterLibrary,
   LibraryItem,
@@ -10,38 +18,8 @@ import {
   libraryItemWidth,
 } from "@/components/arranger/LibrarySheet"
 import { SelectCard } from "@/components/arranger/SelectCard"
-import { Pa, Sections, chordLabel } from "@/constants/theme"
+import { Pa } from "@/constants/theme"
 import { useArranger } from "@/hooks/useArranger"
-
-function Seg({
-  label,
-  active,
-  onPress,
-  wide,
-}: {
-  label: string
-  active?: boolean
-  onPress: () => void
-  wide?: boolean
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={{ selected: !!active }}
-      style={({ pressed }) => [
-        styles.seg,
-        wide && styles.segWide,
-        active && styles.segOn,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={[styles.segLabel, active && styles.segLabelOn]} numberOfLines={1}>
-        {label}
-      </Text>
-    </Pressable>
-  )
-}
 
 export function ArrangerScreen() {
   const vm = useArranger()
@@ -49,12 +27,17 @@ export function ArrangerScreen() {
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
   const landscape = width > height
-  const compact = height < 520 || (landscape && height < 430)
   const [picker, setPicker] = useState<"sound" | "style" | null>(null)
+  const [page, setPage] = useState(0)
+  const [pagerW, setPagerW] = useState(0)
 
   const style = s.styles.find((item) => item.id === s.styleId)
   const sound = s.sounds.find((item) => item.id === s.upper1)
   const itemWidth = libraryItemWidth(width)
+  const padX = Math.max(insets.left, 20)
+  const padYTop = Math.max(insets.top, 12)
+  const padYBot = Math.max(insets.bottom, 14)
+  const slideW = pagerW || Math.max(1, width - padX - Math.max(insets.right, 20))
   const hasImported =
     s.sounds.some((item) => (item.source ?? "FACTORY") !== "FACTORY") ||
     s.styles.some((item) => (item.source ?? "FACTORY") !== "FACTORY")
@@ -69,11 +52,6 @@ export function ArrangerScreen() {
   )
   const shownSounds = filterLibrary(s.sounds, s.query, s.category, s.libraryFilter, s.favorites, s.recentSounds)
   const shownStyles = filterLibrary(s.styles, s.query, s.category, s.libraryFilter, s.favorites, s.recentStyles)
-
-  const varN = s.section >= 4 && s.section <= 7 ? s.section - 3 : s.variation
-  const introOn = s.section >= 1 && s.section <= 3
-  const fillOn = s.section >= 8 && s.section <= 11
-  const endOn = s.section >= 13
 
   const openSound = () => {
     vm.setQuery("")
@@ -92,27 +70,27 @@ export function ArrangerScreen() {
     setPicker(null)
   }
 
+  const onPage = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const next = Math.round(event.nativeEvent.contentOffset.x / Math.max(1, slideW))
+    setPage(next === 1 ? 1 : 0)
+  }
+
   return (
     <View
       style={[
         styles.root,
         {
-          paddingTop: Math.max(insets.top, 10),
-          paddingBottom: Math.max(insets.bottom, 12),
-          paddingLeft: Math.max(insets.left, 16),
-          paddingRight: Math.max(insets.right, 16),
+          paddingTop: padYTop,
+          paddingBottom: padYBot,
+          paddingLeft: padX,
+          paddingRight: Math.max(insets.right, 20),
         },
       ]}
     >
       <View style={styles.top}>
-        <View style={styles.midi}>
-          <View style={[styles.midiDot, s.midiConnected && styles.midiDotOn]} />
-          <Text style={styles.midiLabel} numberOfLines={1}>
-            {s.midiConnected ? s.midiName : "No MIDI"}
-          </Text>
-        </View>
-        <Pressable onPress={vm.importSet} hitSlop={8} style={({ pressed }) => [styles.link, pressed && styles.pressed]}>
-          <Text style={styles.linkLabel}>Import</Text>
+        <Text style={styles.brand}>ArrangerBox</Text>
+        <Pressable onPress={vm.importSet} hitSlop={10} style={({ pressed }) => pressed && styles.pressed}>
+          <Text style={styles.importLabel}>Import</Text>
         </Pressable>
       </View>
 
@@ -126,60 +104,55 @@ export function ArrangerScreen() {
         </Text>
       ) : null}
 
-      <View style={[styles.picks, landscape && styles.picksWide]}>
-        <SelectCard kicker="Sound" title={sound?.name ?? "Concert Grand"} subtitle={sound?.category} onPress={openSound} />
-        <SelectCard
-          kicker="Style"
-          title={style?.name ?? "No Style"}
-          subtitle={style ? `${style.category} · ${Math.round(style.tempo)} BPM` : undefined}
-          onPress={openStyle}
-        />
-      </View>
-
-      <View style={[styles.stage, landscape && styles.stageWide, compact && styles.stageCompact]}>
-        <View style={styles.chordBlock}>
-          <Text style={styles.kicker}>Chord</Text>
-          <Text style={[styles.chord, compact && styles.chordCompact]}>{chordLabel(s.chordRoot, s.chordType)}</Text>
-          <View style={styles.tempoRow}>
-            <Pressable onPress={() => vm.nudgeTempo(-1)} hitSlop={10} style={styles.tempoHit}>
-              <Text style={styles.tempoHitLabel}>−</Text>
-            </Pressable>
-            <Text style={styles.tempo}>{Math.round(s.tempo)}</Text>
-            <Pressable onPress={() => vm.nudgeTempo(1)} hitSlop={10} style={styles.tempoHit}>
-              <Text style={styles.tempoHitLabel}>+</Text>
-            </Pressable>
+      <ScrollView
+        horizontal
+        pagingEnabled
+        bounces={false}
+        decelerationRate="fast"
+        showsHorizontalScrollIndicator={false}
+        onLayout={(event) => setPagerW(event.nativeEvent.layout.width)}
+        onMomentumScrollEnd={onPage}
+        scrollEventThrottle={16}
+        style={styles.pager}
+        contentContainerStyle={styles.pagerContent}
+      >
+        <View style={[styles.slide, { width: slideW }]}>
+          <View style={[styles.picks, landscape && styles.picksWide]}>
+            <SelectCard kicker="Sound" title={sound?.name ?? "Concert Grand"} subtitle={sound?.category} onPress={openSound} />
+            <SelectCard
+              kicker="Style"
+              title={style?.name ?? "No Style"}
+              subtitle={style ? `${style.category} · ${Math.round(style.tempo)} BPM` : undefined}
+              onPress={openStyle}
+            />
           </View>
+          <Text style={styles.hint}>Swipe for Start</Text>
         </View>
 
-        <Pressable
-          onPress={vm.toggleStart}
-          accessibilityRole="button"
-          accessibilityLabel={s.playing ? "Stop" : "Start"}
-          style={({ pressed }) => [
-            styles.start,
-            compact && styles.startCompact,
-            { backgroundColor: s.playing ? Pa.red : Pa.text },
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text style={[styles.startLabel, { color: s.playing ? Pa.text : Pa.bg }]}>
-            {s.playing ? "Stop" : "Start"}
+        <View style={[styles.slide, styles.playSlide, { width: slideW }]}>
+          <Text style={styles.playKicker} numberOfLines={1}>
+            {style?.name ?? "Style"}
           </Text>
-        </Pressable>
-      </View>
+          <Pressable
+            onPress={vm.toggleStart}
+            accessibilityRole="button"
+            accessibilityLabel={s.playing ? "Stop style" : "Start style"}
+            style={({ pressed }) => [
+              styles.start,
+              { backgroundColor: s.playing ? Pa.red : Pa.text },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.startLabel, { color: s.playing ? Pa.text : Pa.bg }]}>
+              {s.playing ? "Stop" : "Start"}
+            </Text>
+          </Pressable>
+        </View>
+      </ScrollView>
 
-      <View style={styles.transport}>
-        <Seg label="Intro" active={introOn} onPress={() => vm.book(Sections.INTRO1)} wide />
-        {[1, 2, 3, 4].map((n) => (
-          <Seg key={n} label={String(n)} active={varN === n && !introOn && !fillOn && !endOn} onPress={() => vm.book(3 + n)} />
-        ))}
-        <Seg label="Fill" active={fillOn} onPress={() => vm.book(7 + Math.max(1, varN))} wide />
-        <Seg label="End" active={endOn} onPress={() => vm.book(Sections.END1)} wide />
-      </View>
-
-      <View style={styles.mix}>
-        <LevelBar label="You" value={s.mixer.keyboard} onChange={(v) => vm.setMixer(0, v)} />
-        <LevelBar label="Band" value={s.mixer.acc} onChange={vm.setAccVolume} />
+      <View style={styles.dots} accessibilityRole="tablist">
+        <View style={[styles.dot, page === 0 && styles.dotOn]} />
+        <View style={[styles.dot, page === 1 && styles.dotOn]} />
       </View>
 
       {picker === "sound" ? (
@@ -265,72 +238,72 @@ export function ArrangerScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Pa.bg, gap: 14 },
-  top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  midi: { flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0, flex: 1 },
-  midiDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Pa.stroke },
-  midiDotOn: { backgroundColor: Pa.green },
-  midiLabel: { color: Pa.muted, fontSize: 13, fontWeight: "600", flexShrink: 1 },
-  link: { paddingVertical: 8, paddingHorizontal: 4 },
-  linkLabel: { color: Pa.text, fontSize: 15, fontWeight: "600" },
-  status: { color: Pa.dim, fontSize: 12 },
-  progressTrack: { height: 4, borderRadius: 2, backgroundColor: Pa.stroke, overflow: "hidden" },
-  progressFill: { height: "100%", backgroundColor: Pa.orange },
-  picks: { flexDirection: "column", gap: 10 },
-  picksWide: { flexDirection: "row" },
-  stage: {
-    flex: 1,
-    minHeight: 140,
+  root: { flex: 1, backgroundColor: Pa.bg },
+  top: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 22,
+    justifyContent: "space-between",
+    marginBottom: 8,
   },
-  stageWide: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8 },
-  stageCompact: { minHeight: 96, gap: 12, flex: 0.8 },
-  chordBlock: { alignItems: "center" },
-  kicker: {
-    color: Pa.muted,
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.6,
-    textTransform: "uppercase",
-  },
-  chord: {
+  brand: {
     color: Pa.text,
-    fontSize: 72,
+    fontSize: 18,
     fontWeight: "700",
-    letterSpacing: -2,
-    lineHeight: 80,
+    letterSpacing: -0.3,
   },
-  chordCompact: { fontSize: 44, lineHeight: 50 },
-  tempoRow: { flexDirection: "row", alignItems: "center", gap: 16, marginTop: 4 },
-  tempo: { color: Pa.muted, fontSize: 22, fontWeight: "600", fontVariant: ["tabular-nums"], minWidth: 44, textAlign: "center" },
-  tempoHit: { width: 36, height: 36, borderRadius: 18, backgroundColor: Pa.panel, alignItems: "center", justifyContent: "center" },
-  tempoHitLabel: { color: Pa.text, fontSize: 22, fontWeight: "600", marginTop: -1 },
+  importLabel: { color: Pa.muted, fontSize: 15, fontWeight: "600" },
+  status: { color: Pa.dim, fontSize: 12, marginBottom: 8 },
+  progressTrack: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: Pa.stroke,
+    overflow: "hidden",
+    marginBottom: 8,
+  },
+  progressFill: { height: "100%", backgroundColor: Pa.orange },
+  pager: { flex: 1 },
+  pagerContent: { flexGrow: 1 },
+  slide: {
+    alignSelf: "stretch",
+    justifyContent: "center",
+    paddingBottom: 8,
+  },
+  playSlide: { alignItems: "center" },
+  picks: { flex: 1, gap: 12, justifyContent: "center" },
+  picksWide: { flexDirection: "row" },
+  hint: {
+    color: Pa.dim,
+    fontSize: 13,
+    fontWeight: "600",
+    textAlign: "center",
+    marginTop: 18,
+  },
+  playKicker: {
+    color: Pa.muted,
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    marginBottom: 22,
+    textAlign: "center",
+    paddingHorizontal: 12,
+  },
   start: {
-    minWidth: 168,
-    height: 64,
-    paddingHorizontal: 36,
-    borderRadius: 32,
+    minWidth: 220,
+    height: 88,
+    paddingHorizontal: 48,
+    borderRadius: 44,
     alignItems: "center",
     justifyContent: "center",
   },
-  startCompact: { height: 52, minWidth: 140 },
-  startLabel: { fontSize: 20, fontWeight: "800", letterSpacing: 0.4 },
-  transport: { flexDirection: "row", gap: 8 },
-  seg: {
-    flex: 1,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: Pa.panel,
-    alignItems: "center",
+  startLabel: { fontSize: 28, fontWeight: "800", letterSpacing: 0.2 },
+  dots: {
+    flexDirection: "row",
     justifyContent: "center",
+    gap: 8,
+    paddingTop: 10,
   },
-  segWide: { flex: 1.35 },
-  segOn: { backgroundColor: Pa.text },
-  segLabel: { color: Pa.text, fontSize: 15, fontWeight: "700" },
-  segLabelOn: { color: Pa.bg },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Pa.stroke },
+  dotOn: { backgroundColor: Pa.text, width: 18 },
   pressed: { opacity: 0.82 },
-  mix: { gap: 10, paddingBottom: 4 },
   empty: { color: Pa.muted, fontSize: 15, padding: 8 },
 })

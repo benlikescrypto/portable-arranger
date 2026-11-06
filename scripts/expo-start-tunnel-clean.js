@@ -149,8 +149,15 @@ async function main() {
 
   const url = await waitForTunnelUrl(tunnel)
   const host = new URL(url).hostname
+  const launchUrl =
+    `exp+arrangerbox://?__expo_url=${encodeURIComponent(url)}` +
+    `&__expo_disable_onboarding=1&__expo_disable_fab=1&__expo_disable_auto_launch=1`
+
   console.log(`\nTunnel ready: ${url}`)
-  console.log(`Using EXPO_PACKAGER_PROXY_URL=${url}\n`)
+  console.log(`Using EXPO_PACKAGER_PROXY_URL=${url}`)
+  console.log("\nOpen ArrangerBox with this link (do not paste the https URL into Expo Home):")
+  console.log(launchUrl)
+  console.log("Scan the Metro QR on the iPad instead of typing a URL.\n")
 
   const expo = spawn(
     "npx",
@@ -164,6 +171,7 @@ async function main() {
         EXPO_TUNNEL_SUBDOMAIN: "",
         EXPO_PACKAGER_PROXY_URL: url,
         REACT_NATIVE_PACKAGER_HOSTNAME: host,
+        EXPO_NO_DEV_MENU: "1",
       },
     },
   )
