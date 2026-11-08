@@ -11,18 +11,13 @@ import {
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
-import {
-  filterLibrary,
-  LibraryItem,
-  LibrarySheet,
-  libraryItemWidth,
-} from "@/components/arranger/LibrarySheet"
+import { LibrarySheet } from "@/components/arranger/LibrarySheet"
+import { SoundSelect } from "@/components/arranger/SoundSelect"
 import { StylePlayHome } from "@/components/arranger/StylePlayHome"
+import { StyleSelect } from "@/components/arranger/StyleSelect"
 import { Lcd, Pa } from "@/constants/theme"
 import { useArranger } from "@/hooks/useArranger"
 import type { SoundItem } from "@/lib/types"
-
-const PART_TITLES = ["UP1", "UP2", "UP3", "LOW"] as const
 
 function soundById(sounds: SoundItem[], id: number | null | undefined) {
   if (id == null) return undefined
@@ -48,25 +43,10 @@ export function ArrangerScreen() {
   const [pagerW, setPagerW] = useState(0)
 
   const style = s.styles.find((item) => item.id === s.styleId)
-  const itemWidth = libraryItemWidth(width)
   const padX = Math.max(insets.left, 10)
   const padYTop = Math.max(insets.top, 8)
   const padYBot = Math.max(insets.bottom, 8)
   const slideW = pagerW || Math.max(1, width - padX - Math.max(insets.right, 10))
-  const hasImported =
-    s.sounds.some((item) => (item.source ?? "FACTORY") !== "FACTORY") ||
-    s.styles.some((item) => (item.source ?? "FACTORY") !== "FACTORY")
-
-  const soundCats = useMemo(
-    () => ["All", "Favorites", ...Array.from(new Set(s.sounds.map((item) => item.category)))],
-    [s.sounds]
-  )
-  const styleCats = useMemo(
-    () => ["All", "Favorites", ...Array.from(new Set(s.styles.map((item) => item.category)))],
-    [s.styles]
-  )
-  const shownSounds = filterLibrary(s.sounds, s.query, s.category, s.libraryFilter, s.favorites, s.recentSounds)
-  const shownStyles = filterLibrary(s.styles, s.query, s.category, s.libraryFilter, s.favorites, s.recentStyles)
   const stsPads = useMemo(
     () => [
       { n: 1, name: soundName(s.sounds, ["Distorted Guitar", "Overdrive Guitar"], "STS 1") },
@@ -204,65 +184,17 @@ export function ArrangerScreen() {
       </View>
 
       {picker === "sound" ? (
-        <LibrarySheet
-          title={PART_TITLES[soundPart]}
-          query={s.query}
-          category={s.category}
-          categories={soundCats}
-          filter={s.libraryFilter}
-          showSourceFilter={hasImported}
-          onQuery={vm.setQuery}
-          onCategory={vm.setCategory}
-          onFilter={vm.setLibraryFilter}
+        <SoundSelect
+          part={soundPart}
+          sounds={s.sounds}
+          activeId={typeof activeSoundId === "number" ? activeSoundId : s.upper1}
+          onSelect={(id) => vm.selectSound(id, soundPart)}
           onClose={closePicker}
-        >
-          {shownSounds.map((item) => (
-            <LibraryItem
-              key={item.id}
-              name={item.name}
-              meta={item.category}
-              active={item.id === activeSoundId}
-              favorite={s.favorites.includes(item.id)}
-              width={itemWidth}
-              onPress={() => {
-                vm.selectSound(item.id, soundPart)
-                closePicker()
-              }}
-              onFavorite={() => vm.toggleFavorite(item.id)}
-            />
-          ))}
-        </LibrarySheet>
+        />
       ) : null}
 
       {picker === "style" ? (
-        <LibrarySheet
-          title="Styles"
-          query={s.query}
-          category={s.category}
-          categories={styleCats}
-          filter={s.libraryFilter}
-          showSourceFilter={hasImported}
-          onQuery={vm.setQuery}
-          onCategory={vm.setCategory}
-          onFilter={vm.setLibraryFilter}
-          onClose={closePicker}
-        >
-          {shownStyles.map((item) => (
-            <LibraryItem
-              key={item.id}
-              name={item.name}
-              meta={`${item.source === "IMPORTED" ? "Imported · " : ""}${item.category} · ${Math.round(item.tempo)} BPM`}
-              active={item.id === s.styleId}
-              favorite={s.favorites.includes(item.id)}
-              width={itemWidth}
-              onPress={() => {
-                vm.selectStyle(item.id)
-                closePicker()
-              }}
-              onFavorite={() => vm.toggleFavorite(item.id)}
-            />
-          ))}
-        </LibrarySheet>
+        <StyleSelect styles={s.styles} activeId={s.styleId} onSelect={vm.selectStyle} onClose={closePicker} />
       ) : null}
 
       {s.mode === "SET" ? (

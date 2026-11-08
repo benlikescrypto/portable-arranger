@@ -376,7 +376,7 @@ int Engine::loadSoundfont(const char* path) {
 }
 
 void Engine::wireFactoryStylePrograms() {
-    int drum = -1, arabic = -1, dance = -1, latin = -1, world = -1, bass = -1, acc1 = -1, acc2 = -1, acc3 = -1;
+    int drum = -1, arabic = -1, dance = -1, latin = -1, world = -1;
     for (int i = 0; i < (int)patches.size(); ++i) {
         const Model m = patches[(size_t)i].model;
         if (m == Model::KitStandard && drum < 0) drum = i;
@@ -384,10 +384,6 @@ void Engine::wireFactoryStylePrograms() {
         if (m == Model::KitDance && dance < 0) dance = i;
         if (m == Model::KitLatin && latin < 0) latin = i;
         if (m == Model::KitWorld && world < 0) world = i;
-        if (patches[(size_t)i].bus == BusBass && bass < 0) bass = i;
-        if (m == Model::Piano && acc1 < 0) acc1 = i;
-        if (m == Model::ConcertStrings && acc2 < 0) acc2 = i;
-        if (m == Model::NylonGuitar && acc3 < 0) acc3 = i;
     }
     if (arabic < 0) arabic = drum;
     if (dance < 0) dance = drum;
@@ -400,7 +396,7 @@ void Engine::wireFactoryStylePrograms() {
         else if (cat == "Dance" || cat == "Disco") d = dance;
         else if (cat == "Latin") d = latin >= 0 ? latin : drum;
         else if (cat == "World") d = world;
-        applyStylePrograms(s, d, bass, acc1, acc2, acc3);
+        applyStylePrograms(s, d, -1, -1, -1, -1);
     }
 }
 

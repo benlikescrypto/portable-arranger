@@ -533,6 +533,36 @@ Arranger::Style finish(Arranger::Style s) {
     return s;
 }
 
+void drumsOnly(Arranger::Pattern& p) {
+    p.evs.erase(std::remove_if(p.evs.begin(), p.evs.end(),
+                               [](const Arranger::Ev& e) { return e.flags == kEvBass || e.flags == kEvComp; }),
+                p.evs.end());
+    p.bassProg = -1;
+    p.acc1 = -1;
+    p.acc2 = -1;
+    p.acc3 = -1;
+}
+
+void drumsOnlyStyle(Arranger::Style& s) {
+    drumsOnly(s.intro1);
+    drumsOnly(s.intro2);
+    drumsOnly(s.intro3);
+    for (int i = 0; i < 4; ++i) {
+        drumsOnly(s.var[i]);
+        drumsOnly(s.fill[i]);
+    }
+    drumsOnly(s.brk);
+    drumsOnly(s.end1);
+    drumsOnly(s.end2);
+    drumsOnly(s.end3);
+}
+
+Arranger::Style factoryDrumStyle(Arranger::Style s) {
+    s = finish(std::move(s));
+    drumsOnlyStyle(s);
+    return s;
+}
+
 using Maker = Arranger::Pattern (*)(int);
 
 void pushVariations(Arranger& arr, const char* name, const char* cat, float tempo, Maker maker) {
@@ -542,7 +572,7 @@ void pushVariations(Arranger& arr, const char* name, const char* cat, float temp
     s.var[1] = maker(1);
     s.var[2] = maker(2);
     s.var[3] = maker(3);
-    arr.styles.push_back(finish(std::move(s)));
+    arr.styles.push_back(factoryDrumStyle(std::move(s)));
 }
 
 }  // namespace
@@ -600,7 +630,7 @@ void buildArranger(Arranger& arr) {
     waltz.var[1] = waltzPat();
     waltz.var[2] = waltzPat();
     waltz.var[3] = waltzPat();
-    arr.styles.push_back(finish(std::move(waltz)));
+    arr.styles.push_back(factoryDrumStyle(std::move(waltz)));
 
     Arranger::Style kar;
     nameStyle(kar, "Turkish 9/8", "World", 126);
@@ -608,7 +638,7 @@ void buildArranger(Arranger& arr) {
     kar.var[1] = karsilamaPat();
     kar.var[2] = karsilamaPat();
     kar.var[3] = karsilamaPat();
-    arr.styles.push_back(finish(std::move(kar)));
+    arr.styles.push_back(factoryDrumStyle(std::move(kar)));
 
     Arranger::Style miz;
     nameStyle(miz, "Mizrahi Pop", "Oriental", 114);
@@ -616,7 +646,7 @@ void buildArranger(Arranger& arr) {
     miz.var[1] = popRock(1, false);
     miz.var[2] = baladiPat(2);
     miz.var[3] = popRock(3, false);
-    arr.styles.push_back(finish(std::move(miz)));
+    arr.styles.push_back(factoryDrumStyle(std::move(miz)));
 
     Arranger::Style bossa;
     nameStyle(bossa, "Bossa Nova", "Latin", 118);
@@ -624,7 +654,7 @@ void buildArranger(Arranger& arr) {
     bossa.var[1] = rumbaPat(1);
     bossa.var[2] = rumbaPat(2);
     bossa.var[3] = rumbaPat(3);
-    arr.styles.push_back(finish(std::move(bossa)));
+    arr.styles.push_back(factoryDrumStyle(std::move(bossa)));
 }
 
 }  // namespace pa

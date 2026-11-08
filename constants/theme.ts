@@ -32,6 +32,10 @@ export const Lcd = {
   red: "#E24A4A",
   orange: "#E39B45",
   mute: "#EDEDED",
+  pad: "#C24747",
+  padOn: "#E25A5A",
+  catOn: "#3BB7C4",
+  tabOn: "#E8C45A",
 } as const
 
 export const NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"] as const
