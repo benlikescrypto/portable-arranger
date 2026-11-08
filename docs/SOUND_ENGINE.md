@@ -47,14 +47,14 @@ Implemented:
 - KSF `SMP1`/`SMD1` (uncompressed and best-effort compressed)
 - PCM banks containing SMP1/SMD1
 - KMP `MSP1`/`RLP1` key maps (root, top key, tune, level, pan)
-- STY/STG/MID/SMF, including SMF inside zlib and best-effort OC31/LZSS
+- STY/STG/MID/SMF: Korg’s documented SMF+`v1cv1` markers and channels 9–16; KORF style-bank walk; OC31 unpack (zlib / LZSS / LZW)
 - Chord-variation CV1 markers (`v1cv1` …)
 - PCG **name extraction** and missing-file reporting
 
 Not implemented (unpublished / not reverse-engineered):
 
 - EDS-X oscillator, filter, and effects program parameters inside PCG
-- Full OC31 when SMF cannot be recovered
+- Full unpublished OC31 when no SMF/`v1cv1` can be recovered; NTT / Guitar Mode / Chord Table
 - PAD performance objects as playable pads
 - Factory PCM that is not in the user’s SET
 

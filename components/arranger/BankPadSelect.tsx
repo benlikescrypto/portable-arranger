@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
 import { Pressable, StyleSheet, Text, View } from "react-native"
-import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { Lcd } from "@/constants/theme"
 import { pageCount, SOUND_BANKS, SOUND_PAGE_SIZE, type SoundBank } from "@/lib/library/soundSelect"
@@ -50,7 +49,6 @@ export function BankPadSelect({
   onSelect,
   onClose,
 }: Props) {
-  const insets = useSafeAreaInsets()
   const current = items.find((item) => item.id === activeId)
   const initialBank: SoundBank = (current?.source ?? "FACTORY").toUpperCase() === "FACTORY" ? "Factory" : "User"
   const initialCategory = current ? categorize(current) : catsLeft[0]
@@ -82,17 +80,7 @@ export function BankPadSelect({
   }
 
   return (
-    <View
-      style={[
-        styles.sheet,
-        {
-          paddingTop: Math.max(insets.top, 8),
-          paddingBottom: Math.max(insets.bottom, 8),
-          paddingLeft: Math.max(insets.left, 10),
-          paddingRight: Math.max(insets.right, 10),
-        },
-      ]}
-    >
+    <View style={styles.sheet}>
       <View style={styles.lcd}>
         <View style={styles.header}>
           <Text style={styles.title}>{title}</Text>
@@ -192,9 +180,7 @@ function CategoryCell({ label, active, onPress }: { label: string; active: boole
 
 const styles = StyleSheet.create({
   sheet: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: Lcd.bezel,
-    zIndex: 20,
+    flex: 1,
   },
   lcd: {
     flex: 1,

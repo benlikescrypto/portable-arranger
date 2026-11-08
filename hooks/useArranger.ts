@@ -301,7 +301,7 @@ export function useArranger() {
   const importSet = useCallback(() => {
     Alert.alert(
       "Import",
-      "A PA4X .SET is a folder. On iPhone open that folder, then tap Open — do not pick one STY from inside it.\n\nA lone STY often has no playable MIDI (Korg OC31).",
+      "A PA4X .SET is a folder (STYLE/USER01.STY is a bank of up to 16 styles).\n\nYou can import that SET folder, a STY bank, a Pa5X .STG, or a Style Edit SMF (.MID with v1cv1 markers, channels 9–16).",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Files", onPress: () => setTimeout(() => void runImport("files"), 400) },

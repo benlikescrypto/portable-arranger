@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ElementRef } from "react"
 import {
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -41,6 +41,7 @@ export function ArrangerScreen() {
   const [soundPart, setSoundPart] = useState<0 | 1 | 2 | 3>(0)
   const [page, setPage] = useState(0)
   const [pagerW, setPagerW] = useState(0)
+  const pagerRef = useRef<ElementRef<typeof ScrollView>>(null)
 
   const style = s.styles.find((item) => item.id === s.styleId)
   const padX = Math.max(insets.left, 10)
@@ -57,18 +58,25 @@ export function ArrangerScreen() {
     [s.sounds]
   )
 
+  const showLeft = () => {
+    pagerRef.current?.scrollTo({ x: 0, animated: true })
+    setPage(0)
+  }
+
   const openSound = (part: 0 | 1 | 2 | 3) => {
     setSoundPart(part)
     vm.setQuery("")
     vm.setCategory("All")
     vm.setMode("SOUND")
     setPicker("sound")
+    showLeft()
   }
   const openStyle = () => {
     vm.setQuery("")
     vm.setCategory("All")
     vm.setMode("PAD")
     setPicker("style")
+    showLeft()
   }
   const closePicker = () => {
     vm.setMode("STYLE")
@@ -118,9 +126,11 @@ export function ArrangerScreen() {
       ) : null}
 
       <ScrollView
+        ref={pagerRef}
         horizontal
         pagingEnabled
         bounces={false}
+        directionalLockEnabled
         decelerationRate="fast"
         showsHorizontalScrollIndicator={false}
         onLayout={(event) => setPagerW(event.nativeEvent.layout.width)}
@@ -130,31 +140,43 @@ export function ArrangerScreen() {
         contentContainerStyle={styles.pagerContent}
       >
         <View style={[styles.slide, { width: slideW }]}>
-          <StylePlayHome
-            style={style}
-            tempo={s.tempo}
-            sts={s.sts}
-            kbdName={s.setName || "My Setting"}
-            kbdIndex={0}
-            upper1={soundById(s.sounds, s.upper1)}
-            upper2={soundById(s.sounds, s.upper2)}
-            upper3={soundById(s.sounds, s.upper3)}
-            lower={soundById(s.sounds, s.lower)}
-            upper2On={s.upper2On}
-            upper3On={s.upper3On}
-            lowerOn={s.lowerOn}
-            split={s.split}
-            mixer={s.mixer}
-            stsPads={stsPads}
-            onOpenStyle={openStyle}
-            onOpenSound={openSound}
-            onTogglePart={vm.togglePart}
-            onSts={vm.setSts}
-            onTempo={vm.nudgeTempo}
-            onSplit={vm.setSplit}
-            onMixer={vm.setMixer}
-            onAccVolume={vm.setAccVolume}
-          />
+          {picker === "sound" ? (
+            <SoundSelect
+              part={soundPart}
+              sounds={s.sounds}
+              activeId={typeof activeSoundId === "number" ? activeSoundId : s.upper1}
+              onSelect={(id) => vm.selectSound(id, soundPart)}
+              onClose={closePicker}
+            />
+          ) : picker === "style" ? (
+            <StyleSelect styles={s.styles} activeId={s.styleId} onSelect={vm.selectStyle} onClose={closePicker} />
+          ) : (
+            <StylePlayHome
+              style={style}
+              tempo={s.tempo}
+              sts={s.sts}
+              kbdName={s.setName || "My Setting"}
+              kbdIndex={0}
+              upper1={soundById(s.sounds, s.upper1)}
+              upper2={soundById(s.sounds, s.upper2)}
+              upper3={soundById(s.sounds, s.upper3)}
+              lower={soundById(s.sounds, s.lower)}
+              upper2On={s.upper2On}
+              upper3On={s.upper3On}
+              lowerOn={s.lowerOn}
+              split={s.split}
+              mixer={s.mixer}
+              stsPads={stsPads}
+              onOpenStyle={openStyle}
+              onOpenSound={openSound}
+              onTogglePart={vm.togglePart}
+              onSts={vm.setSts}
+              onTempo={vm.nudgeTempo}
+              onSplit={vm.setSplit}
+              onMixer={vm.setMixer}
+              onAccVolume={vm.setAccVolume}
+            />
+          )}
         </View>
 
         <View style={[styles.slide, styles.playSlide, { width: slideW }]}>
@@ -182,20 +204,6 @@ export function ArrangerScreen() {
         <View style={[styles.dot, page === 0 && styles.dotOn]} />
         <View style={[styles.dot, page === 1 && styles.dotOn]} />
       </View>
-
-      {picker === "sound" ? (
-        <SoundSelect
-          part={soundPart}
-          sounds={s.sounds}
-          activeId={typeof activeSoundId === "number" ? activeSoundId : s.upper1}
-          onSelect={(id) => vm.selectSound(id, soundPart)}
-          onClose={closePicker}
-        />
-      ) : null}
-
-      {picker === "style" ? (
-        <StyleSelect styles={s.styles} activeId={s.styleId} onSelect={vm.selectStyle} onClose={closePicker} />
-      ) : null}
 
       {s.mode === "SET" ? (
         <LibrarySheet
@@ -247,6 +255,7 @@ const styles = StyleSheet.create({
   pagerContent: { flexGrow: 1 },
   slide: {
     alignSelf: "stretch",
+    flex: 1,
     paddingBottom: 4,
   },
   playSlide: { alignItems: "center", justifyContent: "center" },

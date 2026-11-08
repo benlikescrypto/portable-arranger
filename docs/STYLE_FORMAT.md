@@ -51,4 +51,42 @@ Tracks 0 drums, 1 bass, 2–4 accompaniment. The engine assigns actual factory o
 - Endings stop the arranger
 - Sync Start starts on the first left-hand chord
 
-Factory `.abstyle` content is original ArrangerBox arrangements. Korg STY files are imported through the SMF/marker path, not converted losslessly to every PA4X CAS element.
+Factory `.abstyle` content is original ArrangerBox arrangements.
+
+## Korg Pa4X STY (what the keyboard actually stores)
+
+Korg’s documented, playable style format is a **Standard MIDI File separated by markers** (Pa4X User Manual, Style Record > Import/Export SMF). That is what ArrangerBox plays.
+
+### MIDI channels (Korg’s table, 1-based)
+
+| Style track | MIDI channel |
+| --- | --- |
+| Bass | 9 |
+| Drum | 10 |
+| Percussion | 11 |
+| Acc 1–5 | 12–16 |
+
+Other channels are ignored. Sounds are Program Change + Bank Select at tick 0 of each Chord Variation.
+
+### Markers (`EnCVn`, lowercase only)
+
+Examples: `v1cv1` Variation 1 Chord Variation 1, `i1cv2` Intro 1 CV2, `f4cv1` Fill 4 CV1, `e1cv1` Ending 1 CV1. CV1 is the C-major take; CV2–CV6 are other chord types and must not be mixed into CV1.
+
+Pa Style Edit also writes those names into Korg SysEx (`F0 42 … v1cv1 … F7`). The loader reads both meta markers and SysEx.
+
+### `.STY` on disk (Pa80–Pa4X)
+
+A `.STY` file is a **style bank**, not one style (USER01.STY holds many). RicFreak’s Pa80 map still matches Pa4X banks:
+
+- File tag `KORF` near the start
+- Index length at offset 32; each index row is 24 bytes (16-byte name, type 2 = style, type 7 = performance)
+- Style payloads follow the index; each chunk size is at bytes 5–8 plus 8
+- The MIDI inside each style is **OC31-compressed**. Korg has not published OC31. ArrangerBox walks the KORF chunks and unpacks OC31 with zlib, LZSS, and LZW, then looks for `MThd` / `v1cv1`.
+
+If unpacking fails, export the style from the Pa: **Style Record > Import/Export > Export SMF**, then import that `.MID`.
+
+### Pa5X `.STG`
+
+One style per file, uncompressed bundle. The loader scans for the same SMF + `v1cv1` payload.
+
+Korg NTT / Guitar Mode / Chord Table are not reconstructed. CV1 notes are transposed from C by the recognized chord root (`trans` events).
