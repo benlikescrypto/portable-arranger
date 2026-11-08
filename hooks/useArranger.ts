@@ -239,7 +239,7 @@ export function useArranger() {
       ...s,
       importing: true,
       importProgress: 0,
-      importMessage: mode === "folder" ? "Pick a PA4X .SET folder, then tap Open…" : "Pick STY / MID / WAV files…",
+      importMessage: mode === "folder" ? "Pick the PA4X .SET folder, then tap Open…" : "Pick PA4X STY / Style Record SMF / WAV…",
     }))
     try {
       const lib = await importPa4xSet(mode, (progress) => {
@@ -285,7 +285,7 @@ export function useArranger() {
         importReport: report,
         importMessage: report || "Import finished.",
         libraryFilter: next ? "imported" : s.libraryFilter,
-        category: "All",
+        category: next ? "World" : s.category,
         mode: next ? "PAD" : "STYLE",
       }))
     } catch (error) {
@@ -300,12 +300,12 @@ export function useArranger() {
 
   const importSet = useCallback(() => {
     Alert.alert(
-      "Import",
-      "A PA4X .SET is a folder (STYLE/USER01.STY is a bank of up to 16 styles).\n\nYou can import that SET folder, a STY bank, a Pa5X .STG, or a Style Edit SMF (.MID with v1cv1 markers, channels 9–16).",
+      "PA4X import",
+      "ArrangerBox reads a Pa4X SET (STYLE / SOUND / PCM).\n\nNative USER01.STY banks are OC31-compressed (Korg never published that). The documented path is Style Record > Export SMF (hold Shift + Execute): format 0, markers v1cv1, channels 9–16.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Files", onPress: () => setTimeout(() => void runImport("files"), 400) },
         { text: "SET folder", onPress: () => setTimeout(() => void runImport("folder"), 400) },
+        { text: "SMF / STY", onPress: () => setTimeout(() => void runImport("files"), 400) },
       ]
     )
   }, [runImport])

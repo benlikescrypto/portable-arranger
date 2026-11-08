@@ -40,9 +40,9 @@ Host `test_engine` playback tests (polyphony, sustain, pitch bend, SFZ zones, ar
 ## Known gaps
 
 - **PCG is names + missing-file reporting only.** EDS-X oscillator/filter/FX parameters are unpublished (ConvertWithMoss / PCG Tools agree). Playable Korg instruments come from KMP + PCM/KSF/WAV.
-- **SET import UI** asks SET folder vs files. iOS copies the picked folder natively (security-scoped) so `.SET` packages work.
+- **SET import UI** asks SET folder vs Style Record SMF / STY. iOS copies the picked folder natively (security-scoped) so `.SET` packages work.
 - **PAD objects** are not playable pads.
-- **Pa STY** is a KORF bank of OC31-compressed styles. The loader walks KORF chunks and unpacks OC31 (zlib / LZSS / LZW) looking for Korg’s documented SMF + `v1cv1` markers. If unpacking still fails, export SMF from Style Record on the Pa. NTT / Guitar Mode / full CAS are not reconstructed.
+- **PA4X styles** use Korg’s published Style Record SMF (`v1cv1`, channels 9–16, Program Change at tick 0) and SET folders. Host-tested: Korg EnCVn SMF loaded and rendered audio. Native `USER01.STY` is a KORF bank of unpublished OC31 MIDI; the loader still reads the name list and tells you to export SMF from the Pa (Style Record > Export SMF, Shift + Execute).
 - **SFZ 2.0**, `trigger=release`, `lorand`/`hirand`, CC opcode maps: not supported.
 - **Sample streaming**: samples load fully into RAM. No disk streamer yet.
 - **No manufacturer ROM.** Do not expect Korg/Yamaha/Roland factory PCM or styles inside the app.

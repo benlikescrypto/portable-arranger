@@ -63,3 +63,7 @@ yarn-error.*
 
 # local tunnel binary (downloaded by npm run dev:tunnel)
 /scripts/bin/
+
+# host test scratch (compilers, downloaded styles)
+/tmp/
+/modules/audio/cpp/tests/build/

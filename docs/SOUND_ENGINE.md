@@ -47,7 +47,7 @@ Implemented:
 - KSF `SMP1`/`SMD1` (uncompressed and best-effort compressed)
 - PCM banks containing SMP1/SMD1
 - KMP `MSP1`/`RLP1` key maps (root, top key, tune, level, pan)
-- STY/STG/MID/SMF: Korg’s documented SMF+`v1cv1` markers and channels 9–16; KORF style-bank walk; OC31 unpack (zlib / LZSS / LZW)
+- PA4X SET + Style Record SMF (`v1cv1`, channels 9–16, PC at tick 0); KORF style-bank names; OC31 unpack best-effort (zlib / LZSS / LZW)
 - Chord-variation CV1 markers (`v1cv1` …)
 - PCG **name extraction** and missing-file reporting
 

@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(PA_CPP ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-add_executable(test_engine
-        test_parsers.cpp
+set(PA_ENGINE_SRC
         ${PA_CPP}/Engine.cpp
         ${PA_CPP}/Factory.cpp
         ${PA_CPP}/FactoryStyles.cpp
@@ -18,17 +17,30 @@ add_executable(test_engine
         ${PA_CPP}/PcgParser.cpp
         ${PA_CPP}/TsfHost.cpp)
 
+add_executable(test_engine
+        test_parsers.cpp
+        ${PA_ENGINE_SRC})
+
+add_executable(test_sty_load
+        test_sty_load.cpp
+        ${PA_CPP}/Pa4xLoader.cpp
+        ${PA_ENGINE_SRC})
+
 target_include_directories(test_engine PRIVATE ${PA_CPP})
+target_include_directories(test_sty_load PRIVATE ${PA_CPP})
 
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
     target_link_libraries(test_engine PRIVATE ZLIB::ZLIB)
+    target_link_libraries(test_sty_load PRIVATE ZLIB::ZLIB)
 else()
     find_library(Z_LIB z zlib zlibd)
     if(Z_LIB)
         target_link_libraries(test_engine PRIVATE ${Z_LIB})
+        target_link_libraries(test_sty_load PRIVATE ${Z_LIB})
     else()
         message(STATUS "zlib not found; building engine tests with ARRANGERBOX_NO_ZLIB (KSF inflate disabled)")
         target_compile_definitions(test_engine PRIVATE ARRANGERBOX_NO_ZLIB)
+        target_compile_definitions(test_sty_load PRIVATE ARRANGERBOX_NO_ZLIB)
     endif()
 endif()

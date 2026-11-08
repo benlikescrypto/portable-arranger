@@ -90,13 +90,14 @@ Do **not** ship Oboe, CoreMIDI, Kotlin, Swift, or C++ changes through EAS Update
 
 ## PA4X SET folders
 
-Tap **MEDIA** and pick the SET files (STY, PCM, KMP, PCG, KSF, WAV). Multi-select the contents of a `.SET` folder from USB storage or Files.
-The SET files are copied into the app. Native code then:
+Tap **Import** and pick the Pa4X `.SET` folder (`STYLE` / `SOUND` / `PCM`). Native code then:
 
 - Loads WAV, KSF, and PCM sample data (including best-effort compressed KSF)
 - Applies KMP key maps (zones, roots, tune, level, pan)
-- Imports STY/SMF accompaniment into the arranger
+- Imports Style Record SMF (`v1cv1`, channels 9–16) and walks KORF style banks
 - Extracts PCG program names and reports missing sample references
+
+Native `USER01.STY` MIDI is OC31-compressed; Korg never published that codec. If a bank lists styles but nothing plays, export from the Pa: **Style Record > Export SMF** (hold Shift + Execute) and import that `.MID`.
 
 This is **not** a full EDS-X recreation. PCG oscillator/filter programs are unpublished; playable instruments come from KMP + samples. Confirm with a real SET on hardware.
 

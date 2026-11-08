@@ -9,7 +9,25 @@
 #include <string>
 #include <sys/stat.h>
 #include <vector>
+#ifdef ARRANGERBOX_NO_ZLIB
+struct z_stream {
+    unsigned char* next_in = nullptr;
+    unsigned avail_in = 0;
+    unsigned char* next_out = nullptr;
+    unsigned avail_out = 0;
+    unsigned long total_out = 0;
+};
+using Bytef = unsigned char;
+using uInt = unsigned;
+constexpr int Z_OK = 0;
+constexpr int Z_STREAM_END = 1;
+constexpr int Z_FINISH = 4;
+inline int inflateInit2(z_stream*, int) { return -1; }
+inline int inflate(z_stream*, int) { return -1; }
+inline int inflateEnd(z_stream*) { return 0; }
+#else
 #include <zlib.h>
+#endif
 
 namespace pa {
 namespace {
@@ -119,11 +137,51 @@ std::string lowerCopy(std::string s) {
     return s;
 }
 
-// Korg Style Edit SMF markers are `EnCVn` (Pa4X manual): v1cv1, i2cv1, f1cv1, e1cv1.
-// CV2–CV6 are other chord takes — keep them out of CV1 or the C-major groove is a cluster.
+void squashSpaces(std::string& s) {
+    std::string o;
+    o.reserve(s.size());
+    bool sp = false;
+    for (char c : s) {
+        if (c == ' ' || c == '_' || c == '-' || c == '\t') {
+            if (!o.empty()) sp = true;
+            continue;
+        }
+        if (sp) {
+            o.push_back(' ');
+            sp = false;
+        }
+        o.push_back(c);
+    }
+    s.swap(o);
+}
+
+// Korg EnCVn (Pa4X manual) plus Yamaha SFF part names (documented SMF style files).
 int markerSection(const std::string& raw) {
     std::string s = lowerCopy(raw);
     while (!s.empty() && (s.back() == ' ' || s.back() == 0)) s.pop_back();
+    squashSpaces(s);
+    if (s.find("sff") == 0 || s == "sint" || s == "sdec") return -1;
+
+    if (s.find("main a") != std::string::npos) return 3;
+    if (s.find("main b") != std::string::npos) return 4;
+    if (s.find("main c") != std::string::npos) return 5;
+    if (s.find("main d") != std::string::npos) return 6;
+    if (s.find("intro a") != std::string::npos || s == "intro 1" || s.find("intro1") != std::string::npos) return 0;
+    if (s.find("intro b") != std::string::npos || s == "intro 2" || s.find("intro2") != std::string::npos) return 1;
+    if (s.find("intro c") != std::string::npos || s == "intro 3" || s.find("intro3") != std::string::npos) return 2;
+    if (s.find("fill in aa") != std::string::npos || s.find("fill aa") != std::string::npos || s.find("fill in a") != std::string::npos)
+        return 7;
+    if (s.find("fill in bb") != std::string::npos || s.find("fill bb") != std::string::npos || s.find("fill in b") != std::string::npos)
+        return 8;
+    if (s.find("fill in cc") != std::string::npos || s.find("fill cc") != std::string::npos || s.find("fill in c") != std::string::npos)
+        return 9;
+    if (s.find("fill in dd") != std::string::npos || s.find("fill dd") != std::string::npos || s.find("fill in d") != std::string::npos)
+        return 10;
+    if (s.find("ending a") != std::string::npos || s.find("ending 1") != std::string::npos) return 12;
+    if (s.find("ending b") != std::string::npos || s.find("ending 2") != std::string::npos) return 13;
+    if (s.find("ending c") != std::string::npos || s.find("ending 3") != std::string::npos) return 14;
+    if (s.find("break") != std::string::npos) return 11;
+
     auto findMark = [&](size_t from) -> size_t {
         for (size_t i = from; i + 4 < s.size(); ++i) {
             const char e = s[i];
@@ -143,7 +201,7 @@ int markerSection(const std::string& raw) {
         elem = s[at];
         n = s[at + 1] - '0';
         cv = s[at + 4] - '0';
-    } else if (s == "brk" || s == "break" || s.find("brv") != std::string::npos) {
+    } else if (s == "brk" || s.find("brv") != std::string::npos) {
         elem = 'b';
         n = 1;
         cv = 1;
@@ -168,7 +226,8 @@ bool looksLikeStyleMidi(const uint8_t* d, size_t n) {
             if (std::memcmp(d + i, tag, t) == 0) return true;
         return false;
     };
-    return has("MThd") || has("MTrk") || has("v1cv1") || has("i1cv1") || has("f1cv1");
+    return has("MThd") || has("MTrk") || has("v1cv1") || has("i1cv1") || has("f1cv1") || has("SFF1") || has("SFF2") ||
+           has("Main A") || has("CASM");
 }
 
 void collectEncvnMarkers(const uint8_t* p, size_t n, int tick, std::vector<Marker>* markers) {
@@ -196,7 +255,7 @@ std::string jsonSafe(const std::string& s) {
 }
 
 void parseSmfTrack(const uint8_t* p, size_t n, int division, std::vector<MidiNote>& notes, std::vector<Marker>* markers,
-                   int programs[16], int* tempoBpm) {
+                   int programs[16], int* tempoBpm, int* barTicks = nullptr) {
     const uint8_t* cur = p;
     const uint8_t* end = p + n;
     int tick = 0;
@@ -243,6 +302,13 @@ void parseSmfTrack(const uint8_t* p, size_t n, int division, std::vector<MidiNot
                 const int us = (cur[0] << 16) | (cur[1] << 8) | cur[2];
                 if (us > 0) *tempoBpm = std::max(40, std::min(240, 60000000 / us));
             }
+            if (barTicks && meta == 0x58 && len >= 2) {
+                const int nn = cur[0];
+                const int dd = cur[1];
+                const int den = 1 << std::max(0, std::min(6, dd));
+                const int ticks = nn * division * 4 / std::max(1, den);
+                if (ticks >= kPpq && ticks <= kPpq * 16) *barTicks = ticks;
+            }
             cur += len;
             continue;
         }
@@ -285,7 +351,7 @@ void parseSmfTrack(const uint8_t* p, size_t n, int division, std::vector<MidiNot
 }
 
 bool parseStandardSmf(const uint8_t* b, size_t n, size_t offset, std::vector<MidiNote>& notes, std::vector<Marker>* markers,
-                      int& division, int programs[16], size_t* consumed, int* tempoBpm) {
+                      int& division, int programs[16], size_t* consumed, int* tempoBpm, int* barTicks = nullptr) {
     if (offset + 14 > n || std::memcmp(b + offset, "MThd", 4) != 0) return false;
     const uint32_t hdrLen = ru32be(b + offset + 4);
     if (hdrLen < 6 || offset + 8 + hdrLen > n) return false;
@@ -294,28 +360,90 @@ bool parseStandardSmf(const uint8_t* b, size_t n, size_t offset, std::vector<Mid
     if (division & 0x8000) division = 96;
     if (division <= 0) division = 96;
     if (ntrks < 1 || ntrks > 64) return false;
+    size_t casm = n;
+    for (size_t j = offset + 8 + hdrLen; j + 4 <= n; ++j) {
+        if (std::memcmp(b + j, "CASM", 4) == 0) {
+            casm = j;
+            break;
+        }
+    }
     size_t i = offset + 8 + hdrLen;
     int parsed = 0;
-    while (parsed < ntrks && i + 8 <= n) {
-        const uint32_t sz = ru32be(b + i + 4);
-        if (i + 8 + sz > n) break;
+    while (parsed < ntrks && i + 8 <= n && i < casm) {
+        uint32_t sz = ru32be(b + i + 4);
+        const size_t maxPay = std::min(casm, n) - (i + 8);
+        if (sz > maxPay) sz = (uint32_t)maxPay;
         if (std::memcmp(b + i, "MTrk", 4) == 0) {
-            parseSmfTrack(b + i + 8, sz, division, notes, markers, programs, tempoBpm);
+            parseSmfTrack(b + i + 8, sz, division, notes, markers, programs, tempoBpm, barTicks);
             parsed++;
         }
         i += 8 + sz;
+        if (sz == 0) break;
     }
     if (consumed) *consumed = i - offset;
-    if (notes.empty()) return false;
+    return !notes.empty();
+}
+
+// Yamaha CASM Ctab/Ctb2: source MIDI channel -> accompaniment dest 9–16 (0-based 8–15).
+void applyCasmChannelMap(const uint8_t* b, size_t n, std::vector<MidiNote>& notes, int programs[16]) {
+    int map[16];
+    for (int c = 0; c < 16; ++c) map[c] = c;
+    bool any = false;
+    auto walk = [&](const char* tag) {
+        const size_t tlen = std::strlen(tag);
+        for (size_t i = 0; i + 8 + 10 <= n; ++i) {
+            if (std::memcmp(b + i, tag, tlen) != 0) continue;
+            const uint32_t sz = ru32be(b + i + 4);
+            if (sz < 10 || sz > 512 || i + 8 + sz > n) continue;
+            const uint8_t src = b[i + 8];
+            const uint8_t dst = b[i + 8 + 9];
+            if (src > 15 || dst < 8 || dst > 15) continue;
+            map[src] = dst;
+            any = true;
+        }
+    };
+    walk("Ctab");
+    walk("Ctb2");
+    if (!any) return;
+    for (auto& m : notes) {
+        if (m.ch >= 0 && m.ch < 16) m.ch = map[m.ch];
+    }
+    if (!programs) return;
+    int next[16];
+    std::fill(next, next + 16, -1);
+    for (int c = 0; c < 16; ++c) {
+        if (programs[c] < 0) continue;
+        const int d = map[c];
+        if (d >= 0 && d < 16) next[d] = programs[c];
+    }
+    std::copy(next, next + 16, programs);
+}
+
+bool containsTag(const uint8_t* b, size_t n, const char* tag) {
+    if (!b || !tag) return false;
+    const size_t t = std::strlen(tag);
+    if (t == 0 || t > n) return false;
+    for (size_t i = 0; i + t <= n; ++i)
+        if (std::memcmp(b + i, tag, t) == 0) return true;
+    return false;
+}
+
+void keepStyleChannels(std::vector<MidiNote>& notes, bool yamaha) {
+    if (notes.empty()) return;
+    bool high = false;
+    for (const auto& m : notes)
+        if (m.ch >= 8 && m.ch <= 15) high = true;
+    if (!high) {
+        for (auto& m : notes)
+            if (m.ch >= 0 && m.ch < 8) m.ch += 8;
+    }
+    (void)yamaha;
     std::vector<MidiNote> keep;
     keep.reserve(notes.size());
     for (const auto& m : notes) {
         if (m.ch >= 8 && m.ch <= 15) keep.push_back(m);
     }
-    // PA styles use 8–15. Converted / GM STY files often put the band on 0–7.
-    if (keep.empty()) keep = notes;
-    notes.swap(keep);
-    return !notes.empty();
+    if (!keep.empty()) notes.swap(keep);
 }
 
 bool inflateZlibBlock(const uint8_t* p, size_t n, std::vector<uint8_t>& out) {
@@ -581,6 +709,7 @@ void splitByMarkers(const std::vector<MidiNote>& notes, std::vector<Marker> mark
                 start = sp.first;
             }
         }
+        if (n.tick < spans[0].first) continue;
         if (sec < 0) continue;
         MidiNote c = n;
         c.tick = std::max(0, n.tick - start);
@@ -594,6 +723,8 @@ struct ParsedStyleSmf {
     std::vector<std::vector<MidiNote>> blobs;
     int program[16];
     int tempo = 0;
+    int barTicks = kPpq * 4;
+    bool yamaha = false;
     ParsedStyleSmf() { std::fill(program, program + 16, -1); }
 };
 
@@ -602,7 +733,19 @@ void ingestParsedSmf(std::vector<MidiNote> notes, std::vector<Marker> markers, i
         m.tick = scaleTick(m.tick, div);
         m.dur = std::max(1, std::min(kPpq * 8, scaleTick(m.dur, div)));
     }
-    for (auto& mk : markers) mk.tick = scaleTick(mk.tick, div);
+    bool korg = false;
+    for (auto& mk : markers) {
+        mk.tick = scaleTick(mk.tick, div);
+        const std::string s = lowerCopy(mk.name);
+        if (s.find("v1cv") != std::string::npos || s.find("i1cv") != std::string::npos ||
+            s.find("f1cv") != std::string::npos || s.find("e1cv") != std::string::npos)
+            korg = true;
+        if (s.find("sff") != std::string::npos || s.find("main a") != std::string::npos ||
+            s.find("fill in") != std::string::npos || s.find("sint") != std::string::npos)
+            out.yamaha = true;
+    }
+    if (korg) out.yamaha = false;
+    keepStyleChannels(notes, out.yamaha);
     splitByMarkers(notes, markers, out.blobs);
 }
 
@@ -612,7 +755,8 @@ bool tryParseSmfAt(const uint8_t* b, size_t n, size_t offset, ParsedStyleSmf& ou
     int div = 96;
     int programs[16];
     std::fill(programs, programs + 16, -1);
-    if (!parseStandardSmf(b, n, offset, notes, &markers, div, programs, consumed, &out.tempo)) return false;
+    if (!parseStandardSmf(b, n, offset, notes, &markers, div, programs, consumed, &out.tempo, &out.barTicks)) return false;
+    if (containsTag(b, n, "CASM")) applyCasmChannelMap(b, n, notes, programs);
     std::copy(programs, programs + 16, out.program);
     ingestParsedSmf(std::move(notes), std::move(markers), div, out);
     return !out.blobs.empty();
@@ -647,9 +791,24 @@ bool korfStyleIndex(const uint8_t* b, size_t n, size_t& dataOff, std::vector<std
         names.swap(got);
         return true;
     };
+    // RicFreak Pa80/Pa4X: index length at bytes 33–36 (offset 32), KORF at 25–28.
     if (tryLenAt(32, true) || tryLenAt(32, false)) return true;
     if (tryLenAt(tag + 8, true) || tryLenAt(tag + 8, false)) return true;
     return false;
+}
+
+void korfKbegStarts(const uint8_t* b, size_t n, std::vector<size_t>& starts) {
+    for (size_t i = 0; i + 8 <= n; ++i) {
+        if (std::memcmp(b + i, "KBEG", 4) != 0) continue;
+        size_t p = i + 4;
+        while (p + 4 <= n && starts.size() < 64) {
+            if (p + 4 <= n && std::memcmp(b + p, "KEND", 4) == 0) break;
+            const uint32_t off = ru32be(b + p);
+            if (off >= 8 && off + 16 < n) starts.push_back(off);
+            p += 4;
+        }
+        if (!starts.empty()) return;
+    }
 }
 
 void collectStyleSmfs(const uint8_t* b, size_t n, std::vector<ParsedStyleSmf>& found, std::vector<std::string>* namesOut) {
@@ -672,12 +831,31 @@ void collectStyleSmfs(const uint8_t* b, size_t n, std::vector<ParsedStyleSmf>& f
         }
         return found.size() > before;
     };
+    auto ingestRawMidi = [&](const uint8_t* src, size_t srcN) {
+        size_t off = 0;
+        while (off < 256 && off < srcN && src[off] == (uint8_t)off) off++;
+        std::vector<MidiNote> notes;
+        std::vector<Marker> markers;
+        int programs[16];
+        std::fill(programs, programs + 16, -1);
+        int tempo = 0;
+        parseSmfTrack(src + off, srcN - off, 96, notes, &markers, programs, &tempo);
+        if (notes.size() < 12) return false;
+        if (containsTag(src, srcN, "CASM")) applyCasmChannelMap(src, srcN, notes, programs);
+        ParsedStyleSmf smf;
+        smf.tempo = tempo;
+        std::copy(programs, programs + 16, smf.program);
+        ingestParsedSmf(std::move(notes), std::move(markers), 96, smf);
+        pushIf(std::move(smf));
+        return true;
+    };
     auto scanRegion = [&](const uint8_t* src, size_t srcN) {
         if (ingestMthdFrom(src, srcN)) return true;
         auto tryPayload = [&](const uint8_t* payload, size_t payloadN, size_t cap) {
             std::vector<uint8_t> unpacked;
             if (!tryUnpackOc31Payload(payload, payloadN, cap, unpacked)) return false;
-            return ingestMthdFrom(unpacked.data(), unpacked.size());
+            if (ingestMthdFrom(unpacked.data(), unpacked.size())) return true;
+            return ingestRawMidi(unpacked.data(), unpacked.size());
         };
         for (size_t i = 0; i + 8 < srcN; ++i) {
             if (std::memcmp(src + i, "OC31", 4) != 0) continue;
@@ -714,6 +892,13 @@ void collectStyleSmfs(const uint8_t* b, size_t n, std::vector<ParsedStyleSmf>& f
             pos += total;
         }
         if (!found.empty()) return;
+        std::vector<size_t> kbeg;
+        korfKbegStarts(b, n, kbeg);
+        for (size_t off : kbeg) {
+            if (off >= n) continue;
+            scanRegion(b + off, n - off);
+        }
+        if (!found.empty()) return;
         scanRegion(b + dataOff, n - dataOff);
         if (!found.empty()) return;
     }
@@ -723,18 +908,30 @@ void collectStyleSmfs(const uint8_t* b, size_t n, std::vector<ParsedStyleSmf>& f
     if (inflateZlibBlock(b, n, inflated)) ingestMthdFrom(inflated.data(), inflated.size());
 }
 
-void notesToPattern(const std::vector<MidiNote>& notes, Arranger::Pattern& p) {
+void notesToPattern(const std::vector<MidiNote>& notes, Arranger::Pattern& p, bool yamaha, int barTicks = 0) {
     p.evs.clear();
     int last = 0;
-    const int bar = kPpq * 4;
+    const int bar = barTicks >= kPpq ? barTicks : kPpq * 4;
     for (const MidiNote& m : notes) {
         const int tick = m.tick;
         const int dur = std::max(1, std::min(m.dur, bar * 2));
         last = std::max(last, tick + dur);
         uint8_t flags = kEvTrans;
         uint8_t trk = 2;
-        // Pa4X Style Edit SMF: Bass 9, Drum 10, Perc 11, Acc1–5 = 12–16 (1-based).
-        if (m.ch == 9 || m.ch == 10) {
+        if (yamaha) {
+            // Yamaha SFF: Rhythm 9–10, Bass 11, Chord/Pad/Phrase 12–16 (1-based).
+            if (m.ch == 8 || m.ch == 9) {
+                flags = kEvAbs;
+                trk = 0;
+            } else if (m.ch == 10) {
+                flags = kEvTrans;
+                trk = 1;
+            } else {
+                flags = kEvTrans;
+                const int accIndex = m.ch >= 11 ? (m.ch - 11) : 0;
+                trk = (uint8_t)std::min(4, 2 + accIndex);
+            }
+        } else if (m.ch == 9 || m.ch == 10) {
             flags = kEvAbs;
             trk = 0;
         } else if (m.ch == 8 || m.ch == 1) {
@@ -752,16 +949,27 @@ void notesToPattern(const std::vector<MidiNote>& notes, Arranger::Pattern& p) {
     if (p.lengthTicks > bar * 8) p.lengthTicks = bar * 8;
 }
 
-void applyBlobsToStyle(Arranger::Style& s, const std::vector<std::vector<MidiNote>>& blobs) {
+void applyBlobsToStyle(Arranger::Style& s, const std::vector<std::vector<MidiNote>>& blobs, bool yamaha, int barTicks = 0) {
     if (blobs.empty()) return;
     if (blobs.size() == 15) {
         Arranger::Pattern* order[] = {&s.intro1, &s.intro2, &s.intro3, &s.var[0], &s.var[1], &s.var[2], &s.var[3],
                                       &s.fill[0], &s.fill[1], &s.fill[2], &s.fill[3], &s.brk, &s.end1, &s.end2, &s.end3};
-        for (size_t i = 0; i < 15; ++i) notesToPattern(blobs[i], *order[i]);
-        return;
+        for (size_t i = 0; i < 15; ++i) notesToPattern(blobs[i], *order[i], yamaha, barTicks);
+    } else {
+        notesToPattern(blobs[0], s.var[0], yamaha, barTicks);
+        for (size_t i = 1; i < blobs.size() && i < 4; ++i) notesToPattern(blobs[i], s.var[i], yamaha, barTicks);
     }
-    notesToPattern(blobs[0], s.var[0]);
-    for (size_t i = 1; i < blobs.size() && i < 4; ++i) notesToPattern(blobs[i], s.var[i]);
+    if (s.var[0].evs.empty()) {
+        for (int i = 1; i < 4; ++i) {
+            if (!s.var[i].evs.empty()) {
+                s.var[0] = s.var[i];
+                break;
+            }
+        }
+    }
+    for (int i = 1; i < 4; ++i) {
+        if (s.var[i].evs.empty()) s.var[i] = s.var[0];
+    }
 }
 
 void applyPrograms(Arranger::Style& s, int drumProg, int bassProg, int acc1, int acc2, int acc3) {
@@ -914,6 +1122,18 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         struct stat st {};
         if (stat(folder, &st) == 0 && S_ISREG(st.st_mode)) files.push_back(folder);
     }
+    auto styleScore = [](const std::string& path) {
+        const std::string ext = upperExt(path);
+        std::string u = path;
+        for (char& c : u) c = (char)std::toupper((unsigned char)c);
+        int s = 0;
+        if (u.find("/STYLE/") != std::string::npos || u.find("\\STYLE\\") != std::string::npos) s += 100;
+        if (ext == ".MID" || ext == ".SMF") s += 50;
+        else if (ext == ".STY") s += 40;
+        return s;
+    };
+    std::stable_sort(files.begin(), files.end(),
+                     [&](const std::string& a, const std::string& b) { return styleScore(a) > styleScore(b); });
     if (files.empty()) {
         if (report && reportLen > 0) {
             std::snprintf(report, (size_t)reportLen, "{\"ok\":0,\"reason\":\"No files in the import folder\"}");
@@ -1105,6 +1325,49 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
     const int acc2 = sampledAcc.size() > 1 ? sampledAcc[1] : (sampledAcc.empty() ? factoryAcc2 : acc1);
     const int acc3 = sampledAcc.size() > 2 ? sampledAcc[2] : (sampledAcc.empty() ? factoryAcc3 : acc1);
 
+    auto pickGm = [&](int gm, bool drums, int fallback) {
+        if (gm < 0) return fallback;
+        std::lock_guard<std::mutex> g(loadMu);
+        int best = fallback;
+        int bestScore = -1;
+        for (int i = 0; i < (int)patches.size(); ++i) {
+            const Patch& p = patches[(size_t)i];
+            if (p.sampled) continue;
+            const bool kit = isKit(p.model);
+            if (kit != drums) continue;
+            int score = 1;
+            if (drums) {
+                if (gm == 25 && p.model == Model::KitDance) score = 4;
+                else if (gm == 48 && p.model == Model::KitOrchestral) score = 4;
+                else if (gm == 8 && p.model == Model::KitLatin) score = 4;
+                else if ((gm == 40 || gm == 32) && (p.model == Model::KitWorld || p.model == Model::KitArabic)) score = 4;
+            } else if (p.bus == BusBass && gm >= 32 && gm <= 39) {
+                score = gm == 33 && p.model == Model::FingerBass ? 4 : (gm == 32 && p.model == Model::AcousticBass ? 4 : 3);
+            } else if (gm <= 7 && (p.model == Model::Piano || p.model == Model::BrightPiano || p.model == Model::DigitalPiano)) {
+                score = gm == 0 && p.model == Model::Piano ? 4 : 3;
+            } else if (gm >= 24 && gm <= 31 &&
+                       (p.model == Model::NylonGuitar || p.model == Model::SteelGuitar || p.model == Model::CleanGuitar ||
+                        p.model == Model::DistGuitar)) {
+                score = 3;
+            } else if (gm >= 40 && gm <= 51 &&
+                       (p.model == Model::Violin || p.model == Model::ConcertStrings || p.model == Model::CinematicStrings)) {
+                score = 3;
+            } else if (gm >= 56 && gm <= 63 && (p.model == Model::Trumpet || p.model == Model::Brass || p.model == Model::Trombone)) {
+                score = 3;
+            } else if (gm >= 16 && gm <= 20 &&
+                       (p.model == Model::JazzOrgan || p.model == Model::RockOrgan || p.model == Model::DrawbarOrgan)) {
+                score = 3;
+            } else {
+                continue;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                best = i;
+            }
+        }
+        return best;
+    };
+
     auto ingestStyleFile = [&](const std::string& path, const std::string& fileName) {
         std::vector<uint8_t> bytes;
         if (!readFileBytes(path.c_str(), bytes)) {
@@ -1126,10 +1389,30 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
                         break;
                     }
                 }
+                reason += " magic=";
+                for (size_t m = 0; m < std::min<size_t>(8, bytes.size()); ++m) {
+                    const unsigned char c = bytes[m];
+                    reason += (c >= 32 && c < 127) ? (char)c : '.';
+                }
+                if (!korf.empty()) {
+                    reason += " listed ";
+                    reason += std::to_string((int)korf.size());
+                    reason += " PA4X styles";
+                    if (!korf[0].empty()) {
+                        reason += " (";
+                        reason += korf[0];
+                        if (korf.size() > 1) {
+                            reason += ", ";
+                            reason += korf[1];
+                        }
+                        reason += ")";
+                    }
+                    reason += ".";
+                }
                 if (oc31)
-                    reason += " (Korg STY bank / OC31). Export the style as SMF from Style Record > Import/Export on the Pa.";
+                    reason += " Native STY MIDI is OC31. On the Pa: Style Record > Export SMF, hold Shift and Execute.";
                 else
-                    reason += " (no MThd / v1cv1 markers). Use a Pa Style Edit SMF (markers v1cv1, channels 9–16).";
+                    reason += " Need a Pa Style Record SMF (markers v1cv1, channels 9-16).";
                 reason += " ";
             }
             return;
@@ -1142,7 +1425,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             copyName40(style.name, sizeof(style.name), name);
             copyName40(style.category, sizeof(style.category), guessCat(name.c_str(), "Style"));
             if (smfs[i].tempo > 0) style.tempo = (float)smfs[i].tempo;
-            applyBlobsToStyle(style, smfs[i].blobs);
+            applyBlobsToStyle(style, smfs[i].blobs, smfs[i].yamaha, smfs[i].barTicks);
             bool hasNotes = !style.var[0].evs.empty();
             for (int v = 1; v < 4 && !hasNotes; ++v) hasNotes = !style.var[v].evs.empty();
             if (!hasNotes) {
@@ -1157,11 +1440,12 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
                 }
             }
             if (!hasNotes) continue;
-            const int d = drumProg;
-            const int b = bassProg;
-            const int a1 = acc1;
-            const int a2 = acc2;
-            const int a3 = acc3;
+            const int* pc = smfs[i].program;
+            const int d = pickGm(pc[9] >= 0 ? pc[9] : pc[10], true, drumProg);
+            const int b = pickGm(pc[8], false, bassProg);
+            const int a1 = pickGm(pc[11], false, acc1);
+            const int a2 = pickGm(pc[12], false, acc2);
+            const int a3 = pickGm(pc[13] >= 0 ? pc[13] : pc[14], false, acc3);
             applyPrograms(style, d, b, a1, a2, a3);
             addStyle(completeStyle(std::move(style)));
             stylesAdded++;
@@ -1205,9 +1489,9 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
     if (report && reportLen > 0) {
         std::snprintf(report, (size_t)reportLen,
                       "{\"ok\":1,\"samples\":%d,\"patches\":%d,\"styles\":%d,\"compressed\":%d,\"skipped\":%d,"
-                      "\"pcgFiles\":%d,\"pcgNames\":%d,\"missing\":%d,\"reason\":\"%s\"}",
+                      "\"pcgFiles\":%d,\"pcgNames\":%d,\"missing\":%d,\"files\":%d,\"reason\":\"%s\"}",
                       (int)loaded.size(), patchesAdded, stylesAdded, compressed, skipped, pcgFiles, pcgNames,
-                      (int)pcgMissing.size(), jsonSafe(reason).c_str());
+                      (int)pcgMissing.size(), (int)files.size(), jsonSafe(reason).c_str());
     }
     return (int)loaded.size();
 }

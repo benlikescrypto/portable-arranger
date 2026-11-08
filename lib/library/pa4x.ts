@@ -101,7 +101,7 @@ export function fileKind(name: string): string {
   if (upper.endsWith(".PAD")) return "PAD"
   if (upper.endsWith(".WAV")) return "WAV"
   if (upper.endsWith(".MID") || upper.endsWith(".SMF")) return "MIDI"
-  if (upper.endsWith(".STG")) return "STYLE"
+  if (upper.endsWith(".STG")) return "FILE"
   if (upper.endsWith(".KST")) return "SET"
   return "FILE"
 }
@@ -117,7 +117,7 @@ export async function inspectPa4x(root: Directory): Promise<ImportedLibrary> {
     const kind = fileKind(name)
     const size = "size" in item && typeof item.size === "number" ? item.size : 0
     files.push({ relativePath: rel, size, kind })
-    if (!isDirectory(item) && name.toUpperCase().endsWith(".STY")) {
+    if (!isDirectory(item) && /\.(STY|MID|SMF)$/i.test(name)) {
       styles.push({
         id: styles.length,
         name: name.replace(/\.[^.]+$/, ""),

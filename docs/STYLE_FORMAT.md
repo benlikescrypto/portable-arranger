@@ -53,9 +53,11 @@ Tracks 0 drums, 1 bass, 2–4 accompaniment. The engine assigns actual factory o
 
 Factory `.abstyle` content is original ArrangerBox arrangements.
 
-## Korg Pa4X STY (what the keyboard actually stores)
+## PA4X interchange (this is what ArrangerBox is built for)
 
-Korg’s documented, playable style format is a **Standard MIDI File separated by markers** (Pa4X User Manual, Style Record > Import/Export SMF). That is what ArrangerBox plays.
+Import a **Pa4X SET folder** (`NAME.SET` with `STYLE` / `SOUND` / `PCM`) when you have samples. Import **Style Record SMF** when you want the arrangement.
+
+Korg’s documented, playable style format is a **Standard MIDI File separated by markers** (Pa4X User Manual, Style Record > Import/Export SMF). ArrangerBox is a PA4X SET/SMF reader. That SMF is the path Korg published; native `.STY` bytes are not.
 
 ### MIDI channels (Korg’s table, 1-based)
 
@@ -83,10 +85,6 @@ A `.STY` file is a **style bank**, not one style (USER01.STY holds many). RicFre
 - Style payloads follow the index; each chunk size is at bytes 5–8 plus 8
 - The MIDI inside each style is **OC31-compressed**. Korg has not published OC31. ArrangerBox walks the KORF chunks and unpacks OC31 with zlib, LZSS, and LZW, then looks for `MThd` / `v1cv1`.
 
-If unpacking fails, export the style from the Pa: **Style Record > Import/Export > Export SMF**, then import that `.MID`.
+If unpacking fails, export the style from the Pa: **Style Record > Import/Export > Export SMF** (hold Shift + Execute), then import that `.MID`.
 
-### Pa5X `.STG`
-
-One style per file, uncompressed bundle. The loader scans for the same SMF + `v1cv1` payload.
-
-Korg NTT / Guitar Mode / Chord Table are not reconstructed. CV1 notes are transposed from C by the recognized chord root (`trans` events).
+Korg NTT / Guitar Mode / Chord Table are not reconstructed. CV1 notes are transposed from C by the recognized chord root (`trans` events). Program Change at tick 0 of each CV maps onto factory GeneralUser GM, or onto sampled SET instruments when those loaded.

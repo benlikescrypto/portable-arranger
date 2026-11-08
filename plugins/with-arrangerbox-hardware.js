@@ -40,11 +40,11 @@ function withArrangerBoxHardware(config) {
         LSItemContentTypes: ["com.arrangerbox.pa-set"],
       },
       {
-        CFBundleTypeName: "Korg Style",
+        CFBundleTypeName: "PA4X Style / SMF",
         CFBundleTypeRole: "Viewer",
         LSHandlerRank: "Alternate",
-        CFBundleTypeExtensions: ["sty", "STY", "stg", "STG"],
-        LSItemContentTypes: ["com.arrangerbox.pa-style"],
+        CFBundleTypeExtensions: ["sty", "STY", "mid", "MID", "smf", "SMF"],
+        LSItemContentTypes: ["com.arrangerbox.pa-style", "public.midi-audio"],
       },
     ]
     plist.UTExportedTypeDeclarations = [
@@ -58,10 +58,10 @@ function withArrangerBoxHardware(config) {
       },
       {
         UTTypeIdentifier: "com.arrangerbox.pa-style",
-        UTTypeDescription: "Korg PA style",
+        UTTypeDescription: "PA4X Style Record SMF / STY",
         UTTypeConformsTo: ["public.data"],
         UTTypeTagSpecification: {
-          "public.filename-extension": ["sty", "stg"],
+          "public.filename-extension": ["sty", "mid", "smf"],
         },
       },
     ]

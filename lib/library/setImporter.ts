@@ -44,6 +44,25 @@ function isCanceled(error: unknown) {
   return /cancel|cancell?ed|dismiss|abort/i.test(msg)
 }
 
+function isStyleFileName(name: string) {
+  return /\.(STY|MID|SMF)$/i.test(name)
+}
+
+function* walkStyleFiles(dir: Directory): Generator<File> {
+  try {
+    for (const child of dir.list()) {
+      if (child.name.startsWith(".")) continue
+      if (isDirectory(child) || isSetName(child.name)) {
+        yield* walkStyleFiles(asDirectory(child))
+        continue
+      }
+      if (isStyleFileName(child.name)) yield child as File
+    }
+  } catch (error) {
+    logImport("walkStyleFiles failed", dir.uri, error)
+  }
+}
+
 function asciiMagic(bytes: Uint8Array, n = 8) {
   const slice = bytes.subarray(0, Math.min(n, bytes.length))
   const ascii = Array.from(slice)
@@ -78,7 +97,7 @@ async function peekFolder(dir: Directory) {
         if (peeks.length >= 4) break
         continue
       }
-      if (/\.(STY|STG|MID|SMF)$/i.test(child.name)) {
+      if (isStyleFileName(child.name)) {
         peeks.push(await peekFile(child))
         if (peeks.length >= 4) break
       }
@@ -149,9 +168,24 @@ async function loadCopiedFolder(
   const inspected = await inspectPa4x(setFolder)
   const peeks = await peekFolder(setFolder)
   onProgress({ message: "Loading STY, PCM, KMP and PCG into the engine…", fraction: 0.72 })
-  const raw = await audio.loadPa4xSet(nativePath(setFolder))
+  let raw = await audio.loadPa4xSet(nativePath(setFolder))
   logImport("engine", raw)
-  const report = parseReport(raw)
+  let report = parseReport(raw)
+  if ((report.styles ?? 0) === 0) {
+    try {
+      for (const child of walkStyleFiles(setFolder)) {
+        const again = await audio.loadPa4xSet(nativePath(child))
+        logImport("engine-file", child.name, again)
+        const next = parseReport(again)
+        if ((next.styles ?? 0) > (report.styles ?? 0)) {
+          raw = again
+          report = next
+        }
+      }
+    } catch (error) {
+      logImport("per-file retry failed", error)
+    }
+  }
   onProgress({ message: "Ready", fraction: 1 })
   const extra =
     (report.styles ?? 0) === 0 && peeks.length
@@ -325,7 +359,7 @@ export async function importPa4xSet(
   onProgress: (progress: ImportProgress) => void
 ): Promise<ImportedLibrary | null> {
   if (mode === "files") {
-    onProgress({ message: "Pick STY / MID / WAV / SFZ files…", fraction: 0 })
+    onProgress({ message: "Pick PA4X STY, Style Record SMF, or SET samples…", fraction: 0 })
     return importFiles(onProgress)
   }
 
