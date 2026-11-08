@@ -29,6 +29,42 @@ function withArrangerBoxHardware(config) {
     plist.UIBackgroundModes = [...modes]
     plist.UIRequiresPersistentWiFi = false
     plist.UIFileSharingEnabled = true
+    plist.LSSupportsOpeningDocumentsInPlace = true
+    plist.CFBundleDocumentTypes = [
+      {
+        CFBundleTypeName: "Korg PA SET",
+        CFBundleTypeRole: "Viewer",
+        LSHandlerRank: "Alternate",
+        LSTypeIsPackage: true,
+        CFBundleTypeExtensions: ["set", "SET"],
+        LSItemContentTypes: ["com.arrangerbox.pa-set"],
+      },
+      {
+        CFBundleTypeName: "Korg Style",
+        CFBundleTypeRole: "Viewer",
+        LSHandlerRank: "Alternate",
+        CFBundleTypeExtensions: ["sty", "STY", "stg", "STG"],
+        LSItemContentTypes: ["com.arrangerbox.pa-style"],
+      },
+    ]
+    plist.UTExportedTypeDeclarations = [
+      {
+        UTTypeIdentifier: "com.arrangerbox.pa-set",
+        UTTypeDescription: "Korg PA SET folder",
+        UTTypeConformsTo: ["com.apple.package", "public.composite-content"],
+        UTTypeTagSpecification: {
+          "public.filename-extension": ["set"],
+        },
+      },
+      {
+        UTTypeIdentifier: "com.arrangerbox.pa-style",
+        UTTypeDescription: "Korg PA style",
+        UTTypeConformsTo: ["public.data"],
+        UTTypeTagSpecification: {
+          "public.filename-extension": ["sty", "stg"],
+        },
+      },
+    ]
     return mod
   })
 

@@ -40,7 +40,7 @@ Host `test_engine` playback tests (polyphony, sustain, pitch bend, SFZ zones, ar
 ## Known gaps
 
 - **PCG is names + missing-file reporting only.** EDS-X oscillator/filter/FX parameters are unpublished (ConvertWithMoss / PCG Tools agree). Playable Korg instruments come from KMP + PCM/KSF/WAV.
-- **SET import UI** uses the system folder picker for `.SET` directories, then copies the tree into app storage. Cancel the folder picker to fall back to multi-file pick (STY / MID / WAV / SFZ). Nested SET folders are located with `findSetFolder`.
+- **SET import UI** asks SET folder vs files. iOS copies the picked folder natively (security-scoped) so `.SET` packages work. A lone STY without SMF still cannot play; OC31 unpack is best-effort.
 - **PAD objects** are not playable pads.
 - **OC31** is best-effort; uncompressed / zlib SMF is the reliable STY path.
 - **SFZ 2.0**, `trigger=release`, `lorand`/`hirand`, CC opcode maps: not supported.

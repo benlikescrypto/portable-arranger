@@ -16,9 +16,20 @@ export type DeviceCapabilities = {
   usbDevices: UsbDeviceInfo[]
 }
 
+export type PickedImportFolder = {
+  canceled?: boolean
+  path?: string
+  uri?: string
+  name?: string
+  files?: number
+  source?: string
+  error?: string
+}
+
 type DeviceNative = {
   isAvailable: () => boolean
   capabilities: () => DeviceCapabilities
+  pickAndCopyImportFolder?: () => Promise<PickedImportFolder>
 }
 
 const native = requireOptionalNativeModule<DeviceNative>("ArrangerBoxDevice")
@@ -31,6 +42,10 @@ export const device = {
   },
   capabilities(): DeviceCapabilities | null {
     return native ? native.capabilities() : null
+  },
+  pickAndCopyImportFolder(): Promise<PickedImportFolder> | null {
+    const pick = native?.pickAndCopyImportFolder
+    return pick ? pick() : null
   },
 }
 

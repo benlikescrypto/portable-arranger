@@ -13,6 +13,13 @@ class ArrangerBoxDeviceModule : Module() {
 
     Function("isAvailable") { true }
 
+    AsyncFunction("pickAndCopyImportFolder") {
+      mapOf(
+        "canceled" to true,
+        "error" to "android-js-picker"
+      )
+    }
+
     Function("capabilities") {
       val context = appContext.reactContext
       val usb = context?.getSystemService(Context.USB_SERVICE) as? UsbManager

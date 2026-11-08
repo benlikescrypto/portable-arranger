@@ -17,27 +17,42 @@ import {
   LibrarySheet,
   libraryItemWidth,
 } from "@/components/arranger/LibrarySheet"
-import { SelectCard } from "@/components/arranger/SelectCard"
-import { Pa } from "@/constants/theme"
+import { StylePlayHome } from "@/components/arranger/StylePlayHome"
+import { Lcd, Pa } from "@/constants/theme"
 import { useArranger } from "@/hooks/useArranger"
+import type { SoundItem } from "@/lib/types"
+
+const PART_TITLES = ["UP1", "UP2", "UP3", "LOW"] as const
+
+function soundById(sounds: SoundItem[], id: number | null | undefined) {
+  if (id == null) return undefined
+  return sounds.find((item) => item.id === id)
+}
+
+function soundName(sounds: SoundItem[], names: string[], fallback: string) {
+  for (const name of names) {
+    const hit = sounds.find((item) => item.name === name)
+    if (hit) return hit.name
+  }
+  return fallback
+}
 
 export function ArrangerScreen() {
   const vm = useArranger()
   const s = vm.state
   const insets = useSafeAreaInsets()
-  const { width, height } = useWindowDimensions()
-  const landscape = width > height
+  const { width } = useWindowDimensions()
   const [picker, setPicker] = useState<"sound" | "style" | null>(null)
+  const [soundPart, setSoundPart] = useState<0 | 1 | 2 | 3>(0)
   const [page, setPage] = useState(0)
   const [pagerW, setPagerW] = useState(0)
 
   const style = s.styles.find((item) => item.id === s.styleId)
-  const sound = s.sounds.find((item) => item.id === s.upper1)
   const itemWidth = libraryItemWidth(width)
-  const padX = Math.max(insets.left, 20)
-  const padYTop = Math.max(insets.top, 12)
-  const padYBot = Math.max(insets.bottom, 14)
-  const slideW = pagerW || Math.max(1, width - padX - Math.max(insets.right, 20))
+  const padX = Math.max(insets.left, 10)
+  const padYTop = Math.max(insets.top, 8)
+  const padYBot = Math.max(insets.bottom, 8)
+  const slideW = pagerW || Math.max(1, width - padX - Math.max(insets.right, 10))
   const hasImported =
     s.sounds.some((item) => (item.source ?? "FACTORY") !== "FACTORY") ||
     s.styles.some((item) => (item.source ?? "FACTORY") !== "FACTORY")
@@ -52,8 +67,18 @@ export function ArrangerScreen() {
   )
   const shownSounds = filterLibrary(s.sounds, s.query, s.category, s.libraryFilter, s.favorites, s.recentSounds)
   const shownStyles = filterLibrary(s.styles, s.query, s.category, s.libraryFilter, s.favorites, s.recentStyles)
+  const stsPads = useMemo(
+    () => [
+      { n: 1, name: soundName(s.sounds, ["Distorted Guitar", "Overdrive Guitar"], "STS 1") },
+      { n: 2, name: soundName(s.sounds, ["Jazz Organ", "Rock Organ"], "STS 2") },
+      { n: 3, name: soundName(s.sounds, ["Concert Grand", "Pop Piano"], "STS 3") },
+      { n: 4, name: soundName(s.sounds, ["Accordion", "Kanun"], "STS 4") },
+    ],
+    [s.sounds]
+  )
 
-  const openSound = () => {
+  const openSound = (part: 0 | 1 | 2 | 3) => {
+    setSoundPart(part)
     vm.setQuery("")
     vm.setCategory("All")
     vm.setMode("SOUND")
@@ -81,6 +106,8 @@ export function ArrangerScreen() {
     setPage(next === 1 ? 1 : 0)
   }
 
+  const activeSoundId = soundPart === 1 ? s.upper2 : soundPart === 2 ? s.upper3 : soundPart === 3 ? s.lower : s.upper1
+
   return (
     <View
       style={[
@@ -89,11 +116,11 @@ export function ArrangerScreen() {
           paddingTop: padYTop,
           paddingBottom: padYBot,
           paddingLeft: padX,
-          paddingRight: Math.max(insets.right, 20),
+          paddingRight: Math.max(insets.right, 10),
         },
       ]}
     >
-      <View style={styles.top}>
+      <View style={styles.bezelTop}>
         <Text style={styles.brand}>ArrangerBox</Text>
         <Pressable onPress={vm.importSet} hitSlop={10} style={({ pressed }) => pressed && styles.pressed}>
           <Text style={styles.importLabel}>Import</Text>
@@ -123,16 +150,31 @@ export function ArrangerScreen() {
         contentContainerStyle={styles.pagerContent}
       >
         <View style={[styles.slide, { width: slideW }]}>
-          <View style={[styles.picks, landscape && styles.picksWide]}>
-            <SelectCard kicker="Sound" title={sound?.name ?? "Concert Grand"} subtitle={sound?.category} onPress={openSound} />
-            <SelectCard
-              kicker="Style"
-              title={style?.name ?? "No Style"}
-              subtitle={style ? `${style.category} · ${Math.round(style.tempo)} BPM` : undefined}
-              onPress={openStyle}
-            />
-          </View>
-          <Text style={styles.hint}>Swipe for Start</Text>
+          <StylePlayHome
+            style={style}
+            tempo={s.tempo}
+            sts={s.sts}
+            kbdName={s.setName || "My Setting"}
+            kbdIndex={0}
+            upper1={soundById(s.sounds, s.upper1)}
+            upper2={soundById(s.sounds, s.upper2)}
+            upper3={soundById(s.sounds, s.upper3)}
+            lower={soundById(s.sounds, s.lower)}
+            upper2On={s.upper2On}
+            upper3On={s.upper3On}
+            lowerOn={s.lowerOn}
+            split={s.split}
+            mixer={s.mixer}
+            stsPads={stsPads}
+            onOpenStyle={openStyle}
+            onOpenSound={openSound}
+            onTogglePart={vm.togglePart}
+            onSts={vm.setSts}
+            onTempo={vm.nudgeTempo}
+            onSplit={vm.setSplit}
+            onMixer={vm.setMixer}
+            onAccVolume={vm.setAccVolume}
+          />
         </View>
 
         <View style={[styles.slide, styles.playSlide, { width: slideW }]}>
@@ -163,7 +205,7 @@ export function ArrangerScreen() {
 
       {picker === "sound" ? (
         <LibrarySheet
-          title="Sounds"
+          title={PART_TITLES[soundPart]}
           query={s.query}
           category={s.category}
           categories={soundCats}
@@ -179,11 +221,11 @@ export function ArrangerScreen() {
               key={item.id}
               name={item.name}
               meta={item.category}
-              active={item.id === s.upper1}
+              active={item.id === activeSoundId}
               favorite={s.favorites.includes(item.id)}
               width={itemWidth}
               onPress={() => {
-                vm.selectSound(item.id, 0)
+                vm.selectSound(item.id, soundPart)
                 closePicker()
               }}
               onFavorite={() => vm.toggleFavorite(item.id)}
@@ -244,21 +286,23 @@ export function ArrangerScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Pa.bg },
-  top: {
+  root: { flex: 1, backgroundColor: Lcd.bezel },
+  bezelTop: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 8,
+    paddingHorizontal: 4,
   },
   brand: {
     color: Pa.text,
-    fontSize: 18,
-    fontWeight: "700",
-    letterSpacing: -0.3,
+    fontSize: 16,
+    fontWeight: "800",
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
   },
   importLabel: { color: Pa.muted, fontSize: 15, fontWeight: "600" },
-  status: { color: Pa.dim, fontSize: 12, marginBottom: 8 },
+  status: { color: Pa.dim, fontSize: 12, marginBottom: 8, paddingHorizontal: 4 },
   progressTrack: {
     height: 3,
     borderRadius: 2,
@@ -271,19 +315,9 @@ const styles = StyleSheet.create({
   pagerContent: { flexGrow: 1 },
   slide: {
     alignSelf: "stretch",
-    justifyContent: "center",
-    paddingBottom: 8,
+    paddingBottom: 4,
   },
-  playSlide: { alignItems: "center" },
-  picks: { flex: 1, gap: 12, justifyContent: "center" },
-  picksWide: { flexDirection: "row" },
-  hint: {
-    color: Pa.dim,
-    fontSize: 13,
-    fontWeight: "600",
-    textAlign: "center",
-    marginTop: 18,
-  },
+  playSlide: { alignItems: "center", justifyContent: "center" },
   playKicker: {
     color: Pa.muted,
     fontSize: 15,
@@ -306,7 +340,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     gap: 8,
-    paddingTop: 10,
+    paddingTop: 8,
   },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Pa.stroke },
   dotOn: { backgroundColor: Pa.text, width: 18 },

@@ -325,6 +325,70 @@ bool lzssInflate(const uint8_t* src, size_t n, std::vector<uint8_t>& dst, size_t
     return dst.size() > 32;
 }
 
+bool lzssRingInflate(const uint8_t* src, size_t n, std::vector<uint8_t>& dst, size_t cap, int window, int lookahead,
+                     int threshold, uint8_t fill, bool lowBitLiteral, bool posLowFirst) {
+    if (window <= 0 || (window & (window - 1)) != 0) return false;
+    std::vector<uint8_t> ring((size_t)window, fill);
+    int r = window - lookahead;
+    if (r < 0) r = 0;
+    size_t i = 0;
+    dst.clear();
+    dst.reserve(std::min(cap, n * 8));
+    while (i < n && dst.size() < cap) {
+        uint8_t flags = src[i++];
+        for (int bit = 0; bit < 8 && i < n && dst.size() < cap; ++bit) {
+            const bool literal = lowBitLiteral ? ((flags & 1u) != 0) : ((flags & 1u) == 0);
+            flags = (uint8_t)(flags >> 1);
+            if (literal) {
+                const uint8_t c = src[i++];
+                dst.push_back(c);
+                ring[(size_t)r] = c;
+                r = (r + 1) & (window - 1);
+            } else {
+                if (i + 1 >= n) return dst.size() > 32;
+                const uint8_t a = src[i++];
+                const uint8_t b = src[i++];
+                int pos = 0;
+                int len = 0;
+                if (posLowFirst) {
+                    pos = a | ((b & 0xF0) << 4);
+                    len = (b & 0x0F) + threshold + 1;
+                } else {
+                    pos = ((a & 0x0F) << 8) | b;
+                    len = ((a >> 4) & 0x0F) + threshold + 1;
+                }
+                pos &= window - 1;
+                for (int k = 0; k < len && dst.size() < cap; ++k) {
+                    const uint8_t c = ring[(size_t)((pos + k) & (window - 1))];
+                    dst.push_back(c);
+                    ring[(size_t)r] = c;
+                    r = (r + 1) & (window - 1);
+                }
+            }
+        }
+    }
+    return dst.size() > 32;
+}
+
+bool tryUnpackOc31Payload(const uint8_t* payload, size_t payloadN, size_t cap, std::vector<uint8_t>& unpacked) {
+    if (lzssInflate(payload, payloadN, unpacked, cap)) return true;
+    if (inflateZlibBlock(payload, payloadN, unpacked)) return true;
+    const uint8_t fills[] = {0, 0x20};
+    const int thresholds[] = {2, 3};
+    for (uint8_t fill : fills) {
+        for (int threshold : thresholds) {
+            for (int lit = 0; lit < 2; ++lit) {
+                for (int pos = 0; pos < 2; ++pos) {
+                    if (lzssRingInflate(payload, payloadN, unpacked, cap, 4096, 18, threshold, fill, lit != 0, pos != 0))
+                        return true;
+                }
+            }
+        }
+    }
+    unpacked.clear();
+    return false;
+}
+
 int scaleTick(int tick, int division) {
     if (division <= 0) division = 96;
     return std::max(0, (int)((int64_t)tick * kPpq / division));
@@ -406,6 +470,12 @@ void collectStyleSmfs(const uint8_t* b, size_t n, std::vector<ParsedStyleSmf>& f
     };
     ingestMthdFrom(b, n);
     if (!found.empty()) return;
+    auto tryPayload = [&](const uint8_t* payload, size_t payloadN, size_t cap) {
+        std::vector<uint8_t> unpacked;
+        if (!tryUnpackOc31Payload(payload, payloadN, cap, unpacked)) return false;
+        ingestMthdFrom(unpacked.data(), unpacked.size());
+        return !found.empty();
+    };
     for (size_t i = 0; i + 8 < n; ++i) {
         if (std::memcmp(b + i, "OC31", 4) != 0) continue;
         uint32_t cap = ru32le(b + i + 4);
@@ -414,17 +484,17 @@ void collectStyleSmfs(const uint8_t* b, size_t n, std::vector<ParsedStyleSmf>& f
         const size_t payloads[] = {8, 10, 12, 16};
         for (size_t skip : payloads) {
             if (i + skip >= n) continue;
-            std::vector<uint8_t> unpacked;
-            const uint8_t* payload = b + i + skip;
-            const size_t payloadN = n - (i + skip);
-            if (!lzssInflate(payload, payloadN, unpacked, cap)) {
-                if (!inflateZlibBlock(payload, payloadN, unpacked)) continue;
-            }
-            ingestMthdFrom(unpacked.data(), unpacked.size());
-            if (!found.empty()) return;
+            if (tryPayload(b + i + skip, n - (i + skip), cap)) return;
         }
     }
     if (!found.empty()) return;
+    if (n > 64 && std::memcmp(b, "KORF", 4) == 0) {
+        uint32_t indexLen = ru32le(b + 32);
+        if (indexLen < 24 || 36 + indexLen > n) indexLen = ru32be(b + 32);
+        if (indexLen >= 24 && 36 + indexLen < n) {
+            if (tryPayload(b + 36 + indexLen, n - (36 + indexLen), 2u * 1024u * 1024u)) return;
+        }
+    }
     std::vector<uint8_t> inflated;
     if (inflateZlibBlock(b, n, inflated)) {
         ParsedStyleSmf smf;
@@ -850,17 +920,24 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         collectStyleSmfs(bytes.data(), bytes.size(), smfs);
         if (smfs.empty()) {
             skipped++;
-            if (reason.size() < 180) {
+            if (reason.size() < 280) {
                 reason += "STY has no standard SMF";
                 bool oc31 = false;
+                bool korf = bytes.size() >= 4 && std::memcmp(bytes.data(), "KORF", 4) == 0;
                 for (size_t i = 0; i + 4 < bytes.size(); ++i) {
                     if (std::memcmp(bytes.data() + i, "OC31", 4) == 0) {
                         oc31 = true;
                         break;
                     }
                 }
-                if (oc31) reason += " (OC31 compression is unpublished)";
-                reason += " (" + fileName + "). ";
+                if (oc31) reason += " (Korg OC31, no playable MIDI recovered)";
+                reason += " (" + fileName + " " + std::to_string(bytes.size()) + "B magic=";
+                for (size_t i = 0; i < std::min<size_t>(bytes.size(), 4); ++i) {
+                    const char c = (char)bytes[i];
+                    reason += (c >= 32 && c < 127) ? c : '.';
+                }
+                reason += korf && !oc31 ? ", KORF header" : "";
+                reason += "). ";
             }
             return;
         }

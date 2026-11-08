@@ -27,21 +27,37 @@ export function isDirectory(item: Directory | File): item is Directory {
   return typeof (item as Directory).list === "function"
 }
 
+export function isSetName(name: string) {
+  return name.toUpperCase().endsWith(".SET")
+}
+
+export function asDirectory(item: Directory | File): Directory {
+  return isDirectory(item) ? item : new Directory(item.uri)
+}
+
 export function looksLikeSet(dir: Directory): boolean {
-  const names = new Set(
-    dir.list().map((item) => item.name.toUpperCase())
-  )
-  return ["SOUND", "STYLE", "PCM", "KEYBOARDSET"].filter((name) => names.has(name)).length >= 2
+  try {
+    const names = new Set(dir.list().map((item) => item.name.toUpperCase()))
+    return ["SOUND", "STYLE", "PCM", "KEYBOARDSET"].filter((name) => names.has(name)).length >= 2
+  } catch {
+    return isSetName(dir.name)
+  }
 }
 
 export function findSetFolder(root: Directory, depth = 0): Directory {
-  if (root.name.toUpperCase().endsWith(".SET") || looksLikeSet(root)) return root
+  if (isSetName(root.name) || looksLikeSet(root)) return root
   if (depth >= 4) return root
-  for (const child of root.list()) {
-    if (!isDirectory(child)) continue
-    if (child.name.toUpperCase().endsWith(".SET") || looksLikeSet(child)) return child
-    const nested = findSetFolder(child, depth + 1)
-    if (nested !== child && (nested.name.toUpperCase().endsWith(".SET") || looksLikeSet(nested))) return nested
+  try {
+    for (const child of root.list()) {
+      if (isSetName(child.name)) return asDirectory(child)
+      if (!isDirectory(child) && !isSetName(child.name)) continue
+      const dir = asDirectory(child)
+      if (looksLikeSet(dir)) return dir
+      const nested = findSetFolder(dir, depth + 1)
+      if (nested !== dir && (isSetName(nested.name) || looksLikeSet(nested))) return nested
+    }
+  } catch {
+    return root
   }
   return root
 }

@@ -16,6 +16,24 @@ export const Pa = {
   meter: "#7CDB9B",
 } as const
 
+/** PA4X Style Play LCD colors, sampled from the hardware screen. */
+export const Lcd = {
+  bezel: "#0B0C0E",
+  bg: "#5C6772",
+  bgDeep: "#4E5964",
+  cell: "#66727C",
+  line: "#3C4650",
+  header: "#C4A56B",
+  headerText: "#2B2416",
+  text: "#F4F6F8",
+  muted: "#D5DCE2",
+  dim: "#B7C0C8",
+  green: "#7EE0B8",
+  red: "#E24A4A",
+  orange: "#E39B45",
+  mute: "#EDEDED",
+} as const
+
 export const NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"] as const
 export const CHORD_TYPES = ["", "m", "7", "m7", "M7", "sus4", "dim", "6", "m6", "9", "sus2", "aug"] as const
 

@@ -1,8 +1,9 @@
 import { audio, isAudioNativeAvailable } from "arrangerbox-audio"
 import { midi } from "arrangerbox-midi"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { Alert } from "react-native"
 
-import { importPa4xSet } from "@/lib/library/setImporter"
+import { importPa4xSet, type ImportMode } from "@/lib/library/setImporter"
 import type { ArrangerUiState, Mode, SoundItem, StyleItem } from "@/lib/types"
 
 function catalogSounds(): SoundItem[] {
@@ -14,6 +15,14 @@ function catalogSounds(): SoundItem[] {
 }
 
 let factoryStyleCount = 0
+
+function findSoundId(sounds: SoundItem[], names: string[], fallback = 0) {
+  for (const name of names) {
+    const hit = sounds.find((item) => item.name === name)
+    if (hit) return hit.id
+  }
+  return fallback
+}
 
 function catalogStyles(): StyleItem[] {
   return audio.listStyles().map((item) => {
@@ -89,11 +98,17 @@ export function useArranger() {
       const sounds = catalogSounds()
       const styles = catalogStyles()
       factoryStyleCount = styles.length
-      audio.setPartProgram(0, 0)
-      audio.setPartProgram(1, 7)
-      audio.setPartProgram(3, 21)
+      const upper1 = findSoundId(sounds, ["Concert Grand"])
+      const upper2 = findSoundId(sounds, ["Warm Pad", "Atmosphere"], 11)
+      const upper3 = findSoundId(sounds, ["Concert Strings", "Chamber Strings"], 10)
+      const lower = findSoundId(sounds, ["Cinematic Strings", "Symphonic Strings", "Concert Strings"], 10)
+      audio.setPartProgram(0, upper1)
+      audio.setPartProgram(1, upper2)
+      audio.setPartProgram(2, upper3)
+      audio.setPartProgram(3, lower)
       audio.setPartEnable(1, false)
-      audio.setPartEnable(3, false)
+      audio.setPartEnable(2, false)
+      audio.setPartEnable(3, true)
       audio.setSplit(54)
       audio.setSynchro(false)
       audio.setFx(0, 0.18)
@@ -107,6 +122,13 @@ export function useArranger() {
         sounds,
         styles,
         nativeReady: started,
+        upper1,
+        upper2,
+        upper3,
+        lower,
+        upper2On: false,
+        upper3On: false,
+        lowerOn: true,
         styleId: styles[0]?.id ?? 0,
         tempo: styles[0]?.tempo || 112,
         importMessage: "",
@@ -212,15 +234,15 @@ export function useArranger() {
     }))
   }, [])
 
-  const importSet = useCallback(async () => {
+  const runImport = useCallback(async (mode: ImportMode) => {
     setState((s) => ({
       ...s,
       importing: true,
       importProgress: 0,
-      importMessage: "Pick a PA4X .SET folder…",
+      importMessage: mode === "folder" ? "Pick a PA4X .SET folder, then tap Open…" : "Pick STY / MID / WAV files…",
     }))
     try {
-      const lib = await importPa4xSet((progress) => {
+      const lib = await importPa4xSet(mode, (progress) => {
         setState((s) => ({ ...s, importMessage: progress.message, importProgress: progress.fraction }))
       })
       if (!lib) {
@@ -240,6 +262,11 @@ export function useArranger() {
       ]
         .filter(Boolean)
         .join(" · ")
+      console.log("[import] done", report, {
+        set: lib.setName,
+        styles: lib.stylesLoaded,
+        files: lib.files.slice(0, 12).map((f) => f.relativePath),
+      })
       if (next) {
         audio.setStyle(next.id)
         if (next.tempo) audio.setTempo(next.tempo)
@@ -267,8 +294,21 @@ export function useArranger() {
         importing: false,
         importMessage: error instanceof Error ? error.message : "SET import failed",
       }))
+      console.log("[import] failed", error)
     }
   }, [])
+
+  const importSet = useCallback(() => {
+    Alert.alert(
+      "Import",
+      "A PA4X .SET is a folder. On iPhone open that folder, then tap Open — do not pick one STY from inside it.\n\nA lone STY often has no playable MIDI (Korg OC31).",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Files", onPress: () => setTimeout(() => void runImport("files"), 400) },
+        { text: "SET folder", onPress: () => setTimeout(() => void runImport("folder"), 400) },
+      ]
+    )
+  }, [runImport])
 
   const actions = useMemo(
     () => ({
@@ -326,7 +366,24 @@ export function useArranger() {
       setSts: (n: number) => {
         const section = 3 + n
         audio.bookSection(section)
-        setState((s) => ({ ...s, sts: n, variation: n }))
+        setState((s) => {
+          const names =
+            n === 1
+              ? ["Distorted Guitar", "Overdrive Guitar"]
+              : n === 2
+                ? ["Jazz Organ", "Rock Organ"]
+                : n === 3
+                  ? ["Concert Grand", "Pop Piano"]
+                  : ["Accordion", "Kanun"]
+          const id = findSoundId(s.sounds, names, s.upper1)
+          audio.setPartProgram(0, id)
+          return { ...s, sts: n, variation: n, upper1: id }
+        })
+      },
+      setSplit: (note: number) => {
+        const split = Math.min(84, Math.max(24, note))
+        audio.setSplit(split)
+        setState((s) => ({ ...s, split }))
       },
       toggleFavorite: (id: number) =>
         setState((s) => ({
