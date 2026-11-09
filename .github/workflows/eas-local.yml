@@ -3,6 +3,9 @@
 #
 # Secret: EXPO_TOKEN (https://expo.dev/settings/access-tokens)
 # Actions → EAS local build → Run workflow.
+#
+# Expo SDK 58 needs Xcode 26.4+. macos-15 ships Xcode 16 and fails in
+# ExpoModulesJSI ("Could not resolve package dependencies").
 
 name: EAS local build
 
@@ -26,10 +29,12 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ inputs.platform == 'ios' && 'macos-15' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.platform == 'ios' && 'macos-26' || 'ubuntu-latest' }}
     timeout-minutes: 120
     env:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_LOCAL_BUILD_SKIP_CLEANUP: "1"
+      EAS_LOCAL_BUILD_WORKINGDIR: ${{ github.workspace }}/eas-work
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +42,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      - name: Select newest Xcode
+        if: inputs.platform == 'ios'
+        run: |
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Selecting $XC"
+          sudo xcode-select -s "$XC"
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          swift --version
 
       - name: Check Expo token
         run: |
@@ -69,6 +85,7 @@ jobs:
           ls -lh "$OUT"
 
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: arrangerbox-${{ inputs.platform }}-${{ inputs.profile }}
           path: |
@@ -76,3 +93,11 @@ jobs:
             arrangerbox.apk
           if-no-files-found: error
           retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: eas-logs-${{ inputs.platform }}-${{ inputs.profile }}
+          path: eas-work/logs
+          if-no-files-found: warn
+          retention-days: 7
