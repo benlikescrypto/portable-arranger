@@ -1,12 +1,8 @@
 # Builds on GitHub's runners instead of paid EAS cloud.
-# Private repo: GitHub Free includes ~$12/month (~2000 Linux minutes, ~190 macOS minutes).
 # Public repo: standard GitHub-hosted macOS/Linux minutes are free.
-# iOS needs macos-latest. Android can use ubuntu-latest.
 #
-# One-time: GitHub repo Settings → Secrets → Actions → EXPO_TOKEN
-# (create at https://expo.dev/accounts/[account]/settings/access-tokens)
-#
-# Then: Actions → "EAS local build" → Run workflow.
+# Secret: EXPO_TOKEN (https://expo.dev/settings/access-tokens)
+# Actions → EAS local build → Run workflow.
 
 name: EAS local build
 
@@ -32,32 +28,51 @@ jobs:
   build:
     runs-on: ${{ inputs.platform == 'ios' && 'macos-15' || 'ubuntu-latest' }}
     timeout-minutes: 120
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
-      - uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Check Expo token
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "EXPO_TOKEN secret is missing."
+            exit 1
+          fi
 
       - name: Install npm packages
         run: npm ci
 
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Confirm Expo login
+        run: eas whoami
+
       - name: Local EAS build
-        run: >
-          npx eas-cli build --local --non-interactive --wait
-          --platform ${{ inputs.platform }}
-          --profile ${{ inputs.profile }}
-          --output ${{ github.workspace }}/arrangerbox-build
+        run: |
+          if [ "${{ inputs.platform }}" = "ios" ]; then
+            OUT="${{ github.workspace }}/arrangerbox.ipa"
+          else
+            OUT="${{ github.workspace }}/arrangerbox.apk"
+          fi
+          eas build --local --non-interactive --wait \
+            --platform "${{ inputs.platform }}" \
+            --profile "${{ inputs.profile }}" \
+            --output "$OUT"
+          echo "OUTPUT=$OUT" >> "$GITHUB_ENV"
+          ls -lh "$OUT"
 
       - uses: actions/upload-artifact@v4
         with:
           name: arrangerbox-${{ inputs.platform }}-${{ inputs.profile }}
-          path: arrangerbox-build
+          path: |
+            arrangerbox.ipa
+            arrangerbox.apk
           if-no-files-found: error
           retention-days: 14
