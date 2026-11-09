@@ -6,9 +6,16 @@
 #include <cstring>
 #include <dirent.h>
 #include <mutex>
+#include <new>
 #include <string>
 #include <sys/stat.h>
 #include <vector>
+#ifdef _WIN32
+#include <direct.h>
+inline int paMkdir(const char* p) { return _mkdir(p); }
+#else
+inline int paMkdir(const char* p) { return mkdir(p, 0755); }
+#endif
 #ifdef ARRANGERBOX_NO_ZLIB
 struct z_stream {
     unsigned char* next_in = nullptr;
@@ -21,6 +28,8 @@ using Bytef = unsigned char;
 using uInt = unsigned;
 constexpr int Z_OK = 0;
 constexpr int Z_STREAM_END = 1;
+constexpr int Z_BUF_ERROR = -5;
+constexpr int Z_NO_FLUSH = 0;
 constexpr int Z_FINISH = 4;
 inline int inflateInit2(z_stream*, int) { return -1; }
 inline int inflate(z_stream*, int) { return -1; }
@@ -995,8 +1004,15 @@ int findSample(const std::vector<LoadedSample>& samples, const std::string& key)
     if (dot != std::string::npos) stem = stem.substr(0, dot);
     const std::string wantStem = normName(stem.c_str());
     for (const auto& s : samples) {
-        if (normName(fileStem(s.file).c_str()) == wantStem) return s.index;
-        if (normName(s.name.c_str()) == wantStem) return s.index;
+        const std::string fileNm = normName(fileStem(s.file).c_str());
+        const std::string sampleNm = normName(s.name.c_str());
+        if (fileNm == wantStem || sampleNm == wantStem) return s.index;
+        if (wantStem.size() >= 6) {
+            if (fileNm.size() >= wantStem.size() && fileNm.compare(0, wantStem.size(), wantStem) == 0) return s.index;
+            if (sampleNm.size() >= wantStem.size() && sampleNm.compare(0, wantStem.size(), wantStem) == 0) return s.index;
+            if (wantStem.size() >= fileNm.size() && wantStem.compare(0, fileNm.size(), fileNm) == 0 && fileNm.size() >= 6)
+                return s.index;
+        }
     }
     return -1;
 }
@@ -1110,6 +1126,165 @@ void copyName40(char* dst, size_t n, const std::string& s) {
     std::strncpy(dst, s.c_str(), n - 1);
 }
 
+void mkdirParents(const std::string& path) {
+    std::string cur;
+    for (size_t i = 0; i < path.size(); ++i) {
+        const char c = path[i] == '\\' ? '/' : path[i];
+        if (c == '/' && !cur.empty() && cur != "/" && cur != ".") paMkdir(cur.c_str());
+        cur.push_back(c);
+    }
+    if (!cur.empty()) paMkdir(cur.c_str());
+}
+
+bool peekMagic(const char* path, uint8_t mag[8], size_t* nread) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    const size_t n = std::fread(mag, 1, 8, f);
+    std::fclose(f);
+    if (nread) *nread = n;
+    return n >= 4;
+}
+
+bool looksLikeZipFile(const char* path) {
+    uint8_t mag[8]{};
+    size_t n = 0;
+    return peekMagic(path, mag, &n) && mag[0] == 'P' && mag[1] == 'K';
+}
+
+const char* archiveKind(const char* path) {
+    uint8_t mag[8]{};
+    size_t n = 0;
+    if (!peekMagic(path, mag, &n)) return nullptr;
+    if (mag[0] == 'P' && mag[1] == 'K') return "zip";
+    if (n >= 6 && mag[0] == '7' && mag[1] == 'z' && mag[2] == 0xBC && mag[3] == 0xAF && mag[4] == 0x27 && mag[5] == 0x1C)
+        return "7z";
+    if (n >= 4 && mag[0] == 'R' && mag[1] == 'a' && mag[2] == 'r' && mag[3] == '!') return "rar";
+    return nullptr;
+}
+
+bool inflateRawToFile(const uint8_t* p, size_t n, const std::string& outPath) {
+    FILE* o = std::fopen(outPath.c_str(), "wb");
+    if (!o) return false;
+    z_stream st{};
+    if (inflateInit2(&st, -15) != Z_OK) {
+        std::fclose(o);
+        return false;
+    }
+    std::vector<uint8_t> buf(1u << 16);
+    st.next_in = const_cast<Bytef*>(p);
+    st.avail_in = (uInt)n;
+    int err = Z_OK;
+    while (err != Z_STREAM_END) {
+        st.next_out = buf.data();
+        st.avail_out = (uInt)buf.size();
+        err = inflate(&st, Z_NO_FLUSH);
+        const size_t got = buf.size() - (size_t)st.avail_out;
+        if (got && std::fwrite(buf.data(), 1, got, o) != got) {
+            inflateEnd(&st);
+            std::fclose(o);
+            return false;
+        }
+        if (err == Z_STREAM_END) break;
+        if (err != Z_OK && err != Z_BUF_ERROR) {
+            inflateEnd(&st);
+            std::fclose(o);
+            return false;
+        }
+        if (st.avail_in == 0) break;
+    }
+    inflateEnd(&st);
+    std::fclose(o);
+    return true;
+}
+
+bool extractZipArchive(const char* zipPath, const std::string& destDir, int& wrote, std::string& reason) {
+    wrote = 0;
+    FILE* f = std::fopen(zipPath, "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    const long sz = std::ftell(f);
+    if (sz < 22) {
+        std::fclose(f);
+        return false;
+    }
+    const long tailN = sz < 65557 ? sz : 65557;
+    std::vector<uint8_t> tail((size_t)tailN);
+    std::fseek(f, sz - tailN, SEEK_SET);
+    if (std::fread(tail.data(), 1, tail.size(), f) != tail.size()) {
+        std::fclose(f);
+        return false;
+    }
+    int eocd = -1;
+    for (int i = (int)tail.size() - 22; i >= 0; --i) {
+        if (tail[(size_t)i] == 'P' && tail[(size_t)i + 1] == 'K' && tail[(size_t)i + 2] == 5 && tail[(size_t)i + 3] == 6) {
+            eocd = i;
+            break;
+        }
+    }
+    if (eocd < 0) {
+        std::fclose(f);
+        return false;
+    }
+    const uint8_t* e = tail.data() + (size_t)eocd;
+    const uint16_t nrec = (uint16_t)(e[10] | (e[11] << 8));
+    const uint32_t cdsz = (uint32_t)(e[12] | (e[13] << 8) | (e[14] << 16) | (e[15] << 24));
+    const uint32_t cdoff = (uint32_t)(e[16] | (e[17] << 8) | (e[18] << 16) | (e[19] << 24));
+    if (nrec == 0xffff || cdsz == 0xffffffffu || cdoff == 0xffffffffu) {
+        std::fclose(f);
+        reason += "Zip64 SET: unzip on a computer, then Import the .SET folder. ";
+        return false;
+    }
+    std::vector<uint8_t> cd(cdsz);
+    std::fseek(f, (long)cdoff, SEEK_SET);
+    if (cdsz && std::fread(cd.data(), 1, cdsz, f) != cdsz) {
+        std::fclose(f);
+        return false;
+    }
+    mkdirParents(destDir);
+    size_t p = 0;
+    for (int rec = 0; rec < nrec && p + 46 <= cd.size(); ++rec) {
+        if (std::memcmp(cd.data() + p, "PK\x01\x02", 4) != 0) break;
+        const uint16_t method = (uint16_t)(cd[p + 10] | (cd[p + 11] << 8));
+        const uint32_t csz =
+            (uint32_t)(cd[p + 20] | (cd[p + 21] << 8) | (cd[p + 22] << 16) | (cd[p + 23] << 24));
+        const uint16_t namelen = (uint16_t)(cd[p + 28] | (cd[p + 29] << 8));
+        const uint16_t extra = (uint16_t)(cd[p + 30] | (cd[p + 31] << 8));
+        const uint16_t comm = (uint16_t)(cd[p + 32] | (cd[p + 33] << 8));
+        const uint32_t localOff =
+            (uint32_t)(cd[p + 42] | (cd[p + 43] << 8) | (cd[p + 44] << 16) | (cd[p + 45] << 24));
+        if (p + 46 + namelen > cd.size()) break;
+        std::string name((const char*)cd.data() + p + 46, namelen);
+        p += 46 + namelen + extra + comm;
+        if (name.find("..") != std::string::npos || name.find("__MACOSX") != std::string::npos) continue;
+        if (name.empty() || name.back() == '/' || name.back() == '\\') continue;
+        uint8_t lh[30];
+        std::fseek(f, (long)localOff, SEEK_SET);
+        if (std::fread(lh, 1, 30, f) != 30) continue;
+        const uint16_t lname = (uint16_t)(lh[26] | (lh[27] << 8));
+        const uint16_t lextra = (uint16_t)(lh[28] | (lh[29] << 8));
+        std::fseek(f, (long)localOff + 30 + lname + lextra, SEEK_SET);
+        std::vector<uint8_t> payload(csz);
+        if (csz && std::fread(payload.data(), 1, csz, f) != csz) continue;
+        std::string outPath = destDir + "/";
+        for (char c : name) outPath.push_back(c == '\\' ? '/' : c);
+        const auto slash = outPath.find_last_of('/');
+        if (slash != std::string::npos) mkdirParents(outPath.substr(0, slash));
+        bool ok = false;
+        if (method == 0) {
+            FILE* o = std::fopen(outPath.c_str(), "wb");
+            if (o) {
+                if (!csz || std::fwrite(payload.data(), 1, csz, o) == csz) ok = true;
+                std::fclose(o);
+            }
+        } else if (method == 8) {
+            ok = inflateRawToFile(payload.data(), payload.size(), outPath);
+        }
+        if (ok) wrote++;
+    }
+    std::fclose(f);
+    return wrote > 0;
+}
+
 }  // namespace
 
 int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
@@ -1117,10 +1292,60 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
     if (!folder || !folder[0]) return -1;
 
     std::vector<std::string> files;
-    walkFiles(folder, files);
-    if (files.empty()) {
-        struct stat st {};
-        if (stat(folder, &st) == 0 && S_ISREG(st.st_mode)) files.push_back(folder);
+    std::string reason;
+    std::string root = folder;
+    struct stat rootSt {};
+    const bool rootIsFile = stat(folder, &rootSt) == 0 && S_ISREG(rootSt.st_mode);
+    auto collect = [&](const std::string& dir) {
+        files.clear();
+        walkFiles(dir, files);
+    };
+    if (rootIsFile) {
+        const char* kind = archiveKind(folder);
+        if (kind && std::strcmp(kind, "zip") != 0) {
+            if (report && reportLen > 0) {
+                std::snprintf(report, (size_t)reportLen,
+                              "{\"ok\":0,\"reason\":\"This SET is a %s archive. Unzip it on a computer, then Import the "
+                              ".SET folder (SOUND / PCM / STYLE).\"}",
+                              kind);
+            }
+            return -1;
+        }
+        if (kind && std::strcmp(kind, "zip") == 0) {
+            const std::string unpacked = std::string(folder) + "_unpacked";
+            int wrote = 0;
+            if (!extractZipArchive(folder, unpacked, wrote, reason)) {
+                if (report && reportLen > 0) {
+                    std::snprintf(report, (size_t)reportLen,
+                                  "{\"ok\":0,\"reason\":\"Could not unzip the SET file. %s\"}", jsonSafe(reason).c_str());
+                }
+                return -1;
+            }
+            reason += "Unzipped " + std::to_string(wrote) + " files. ";
+            root = unpacked;
+            collect(root);
+        } else {
+            files.push_back(folder);
+        }
+    } else {
+        collect(root);
+        bool hasPcm = false;
+        for (const auto& path : files) {
+            const std::string ext = upperExt(path);
+            if (ext == ".KMP" || ext == ".KSF" || ext == ".PCM" || ext == ".WAV") hasPcm = true;
+        }
+        if (!hasPcm) {
+            for (const auto& path : files) {
+                if (!looksLikeZipFile(path.c_str())) continue;
+                const std::string unpacked = path + "_unpacked";
+                int wrote = 0;
+                if (extractZipArchive(path.c_str(), unpacked, wrote, reason) && wrote > 0) {
+                    reason += "Unzipped " + std::to_string(wrote) + " files. ";
+                    collect(unpacked);
+                    break;
+                }
+            }
+        }
     }
     auto styleScore = [](const std::string& path) {
         const std::string ext = upperExt(path);
@@ -1146,18 +1371,28 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
     std::vector<int> kmpPatchIds;
     std::vector<int> drumPatchIds;
     int firstSampled = -1;
-    std::string reason;
+    size_t sampleBytes = 0;
+    constexpr size_t kMaxSampleBytes = 220ull * 1024ull * 1024ull;
 
     auto addLoaded = [&](Sample&& s, const std::string& path, bool wasCompressed) {
+        const size_t add = s.data.size() * sizeof(float);
+        if (sampleBytes + add > kMaxSampleBytes) {
+            skipped++;
+            if (reason.find("memory") == std::string::npos)
+                reason += "Stopped loading PCM (phone memory). ";
+            return -1;
+        }
         LoadedSample rec;
         rec.name = s.name[0] ? s.name : fileStem(path);
         rec.file = baseName(path);
         rec.index = addSample(std::move(s));
         loaded.push_back(rec);
+        sampleBytes += add;
         if (wasCompressed) compressed++;
         return rec.index;
     };
 
+    try {
     for (const auto& path : files) {
         const std::string ext = upperExt(path);
         if (ext == ".WAV") {
@@ -1231,7 +1466,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         }
     }
 
-    if (kmpPatchIds.empty() && kmpFiles == 0 && !loaded.empty()) {
+    if (kmpPatchIds.empty() && !loaded.empty()) {
         for (const auto& rec : loaded) {
             Zone z;
             z.sampleIndex = rec.index;
@@ -1241,13 +1476,13 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
                 if (rec.index >= 0 && rec.index < (int)samples.size() && samples[(size_t)rec.index].rootNote > 0)
                     z.root = samples[(size_t)rec.index].rootNote;
             }
-            Patch p = makeSamplePatch(rec.name.c_str(), "PCM", {z}, false);
+            Patch p = makeSamplePatch(rec.name.c_str(), guessCat(rec.name.c_str(), "Imported"), {z}, false);
+            p.source = PatchSource::Korg;
             const int id = addSampledInstrument(p);
             if (firstSampled < 0) firstSampled = id;
             patchesAdded++;
         }
-    } else if (kmpFiles > 0 && kmpPatchIds.empty()) {
-        if (reason.size() < 180) reason += "SET KMP did not resolve to playable instruments. ";
+        if (kmpFiles > 0) reason += "KMP names did not match PCM; loaded raw samples. Look in User. ";
     }
 
     int pcgFiles = 0;
@@ -1460,7 +1695,8 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
     auto skipStyleExt = [](const std::string& ext) {
         return ext == ".PCM" || ext == ".KMP" || ext == ".KSF" || ext == ".WAV" || ext == ".AIF" || ext == ".AIFF" ||
                ext == ".PCG" || ext == ".KST" || ext == ".SFZ" || ext == ".SF2" || ext == ".MP3" || ext == ".PNG" ||
-               ext == ".JPG" || ext == ".JPEG";
+               ext == ".JPG" || ext == ".JPEG" || ext == ".ZIP" || ext == ".PAD" || ext == ".SET" || ext == ".7Z" ||
+               ext == ".RAR";
     };
     for (const auto& path : files) {
         const std::string ext = upperExt(path);
@@ -1494,6 +1730,15 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
                       (int)pcgMissing.size(), (int)files.size(), jsonSafe(reason).c_str());
     }
     return (int)loaded.size();
+    } catch (const std::bad_alloc&) {
+        reason += "Out of memory loading this SET (KApro PCM is ~250MB compressed). ";
+        if (report && reportLen > 0) {
+            std::snprintf(report, (size_t)reportLen,
+                          "{\"ok\":0,\"samples\":%d,\"patches\":%d,\"styles\":%d,\"reason\":\"%s\"}",
+                          (int)loaded.size(), patchesAdded, stylesAdded, jsonSafe(reason).c_str());
+        }
+        return (int)loaded.size();
+    }
 }
 
 }  // namespace pa

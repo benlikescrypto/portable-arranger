@@ -41,7 +41,7 @@ bool readFileBytes(const char* path, std::vector<uint8_t>& bytes) {
     if (!in) return false;
     in.seekg(0, std::ios::end);
     const auto n = (size_t)in.tellg();
-    if (n == 0 || n > 400u * 1024u * 1024u) return false;
+    if (n == 0 || n > 800u * 1024u * 1024u) return false;
     in.seekg(0, std::ios::beg);
     bytes.resize(n);
     in.read((char*)bytes.data(), (std::streamsize)n);
@@ -233,7 +233,7 @@ static bool inflateZlib(const uint8_t* p, size_t n, std::vector<uint8_t>& out) {
     auto run = [&](int window) -> bool {
         z_stream st{};
         if (inflateInit2(&st, window) != Z_OK) return false;
-        out.assign(std::min<size_t>(n * 16, 32u * 1024u * 1024u), 0);
+        out.assign(std::min<size_t>(n * 16, 96u * 1024u * 1024u), 0);
         st.next_in = const_cast<Bytef*>(p);
         st.avail_in = (uInt)n;
         st.next_out = out.data();
@@ -283,7 +283,9 @@ static std::vector<float> decodeBest(const uint8_t* pcm, size_t pcmLen, int bits
         cands.push_back(decode16be(inflated.data(), inflated.size(), frames));
         cands.push_back(decode16le(inflated.data(), inflated.size(), frames));
     }
-    return firstAudible(std::move(cands));
+    auto got = firstAudible(std::move(cands));
+    if (!got.empty()) return got;
+    return decodeBest(pcm, pcmLen, bits, frames, false);
 }
 
 struct KsfResult {
@@ -369,25 +371,76 @@ int loadKsf(const char* path, Sample& out) {
 }
 
 int scanPcmBank(const char* path, std::vector<Sample>& out) {
-    std::vector<uint8_t> b;
-    if (!readAll(path, b)) return 0;
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return 0;
+    std::fseek(f, 0, SEEK_END);
+    const long fileSize = std::ftell(f);
+    if (fileSize < 16) {
+        std::fclose(f);
+        return 0;
+    }
+    auto readChunk = [&](long off, std::vector<uint8_t>& buf) -> bool {
+        if (off < 0 || off + 8 > fileSize) return false;
+        uint8_t hdr[8];
+        std::fseek(f, off, SEEK_SET);
+        if (std::fread(hdr, 1, 8, f) != 8) return false;
+        const uint32_t sz = ru32be(hdr + 4);
+        if (sz < 1 || sz > 96u * 1024u * 1024u || off + 8 + (long)sz > fileSize) return false;
+        buf.resize(8 + sz);
+        std::memcpy(buf.data(), hdr, 8);
+        return std::fread(buf.data() + 8, 1, sz, f) == sz;
+    };
     int found = 0;
-    for (size_t i = 0; i + 8 < b.size();) {
-        if (std::memcmp(b.data() + i, "SMP1", 4) == 0 || std::memcmp(b.data() + i, "SMD1", 4) == 0) {
-            Sample s;
-            auto r = parseKorgSample(b.data() + i, b.size() - i, s);
-            if (r.ok) {
-                if (!s.name[0]) {
-                    std::snprintf(s.name, sizeof(s.name), "PCM %03d", found + 1);
-                }
-                out.push_back(std::move(s));
-                found++;
-                i += std::max((size_t)8, r.consumed);
-                continue;
+    long pos = 0;
+    std::vector<uint8_t> window(256u * 1024u);
+    while (pos + 8 < fileSize) {
+        std::fseek(f, pos, SEEK_SET);
+        const size_t n = std::fread(window.data(), 1, window.size(), f);
+        if (n < 8) break;
+        size_t hit = (size_t)-1;
+        for (size_t i = 0; i + 4 <= n; ++i) {
+            if (std::memcmp(window.data() + i, "SMP1", 4) == 0 || std::memcmp(window.data() + i, "SMD1", 4) == 0) {
+                hit = i;
+                break;
             }
         }
-        ++i;
+        if (hit == (size_t)-1) {
+            pos += n > 4 ? (long)(n - 3) : (long)n;
+            continue;
+        }
+        const long start = pos + (long)hit;
+        std::vector<uint8_t> packed;
+        long p = start;
+        bool haveSmd = false;
+        for (int chunks = 0; chunks < 8 && p + 8 <= fileSize; ++chunks) {
+            std::vector<uint8_t> chunk;
+            if (!readChunk(p, chunk)) break;
+            packed.insert(packed.end(), chunk.begin(), chunk.end());
+            p += (long)chunk.size();
+            if (std::memcmp(chunk.data(), "SMD1", 4) == 0) {
+                haveSmd = true;
+                std::vector<uint8_t> nameChunk;
+                if (readChunk(p, nameChunk) && std::memcmp(nameChunk.data(), "NAME", 4) == 0) {
+                    packed.insert(packed.end(), nameChunk.begin(), nameChunk.end());
+                    p += (long)nameChunk.size();
+                }
+                break;
+            }
+        }
+        Sample s;
+        auto r = parseKorgSample(packed.data(), packed.size(), s);
+        if (r.ok) {
+            if (!s.name[0]) std::snprintf(s.name, sizeof(s.name), "PCM %03d", found + 1);
+            out.push_back(std::move(s));
+            found++;
+            pos = start + (long)std::max((size_t)8, r.consumed);
+        } else if (haveSmd) {
+            pos = p;
+        } else {
+            pos = start + 4;
+        }
     }
+    std::fclose(f);
     return found;
 }
 

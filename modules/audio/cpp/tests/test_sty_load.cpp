@@ -68,6 +68,7 @@ int main(int argc, char** argv) {
         "tmp/styles/yamaha-sff-casm-low.sty",
         "tmp/styles/korg-encvn.mid",
         "tmp/styles/yamaha-demo.sty",
+        "tmp/styles/korg-set.zip",
     };
     for (const char* f : files) loadAndPlay(eng, f, f);
     std::printf("%s\n", fails ? "FAILED" : "ALL PASSED");

@@ -252,11 +252,13 @@ export function useArranger() {
       const sounds = catalogSounds()
       const styles = catalogStyles()
       const importedStyles = styles.filter((item) => item.source === "IMPORTED")
+      const importedSounds = sounds.filter((item) => (item.source ?? "FACTORY").toUpperCase() !== "FACTORY")
       const next = importedStyles[importedStyles.length - 1]
+      const nextSound = importedSounds[importedSounds.length - 1]
       const loaded = next ? 1 : lib.stylesLoaded
       const report = [
-        loaded ? `${importedStyles.length || lib.stylesLoaded} imported style${importedStyles.length === 1 ? "" : "s"}` : "0 styles imported",
-        lib.patchesLoaded ? `${lib.patchesLoaded} instruments` : "",
+        importedSounds.length ? `${importedSounds.length} instruments — open Sound Select, tap User` : "0 instruments (need PCM/KMP in the SET, or unzip the archive first)",
+        loaded ? `${importedStyles.length || lib.stylesLoaded} imported style${importedStyles.length === 1 ? "" : "s"}` : "0 styles (native STY is packed; use Export SMF)",
         lib.samplesLoaded ? `${lib.samplesLoaded} samples` : "",
         lib.reason?.trim(),
       ]
@@ -265,12 +267,14 @@ export function useArranger() {
       console.log("[import] done", report, {
         set: lib.setName,
         styles: lib.stylesLoaded,
+        patches: lib.patchesLoaded,
         files: lib.files.slice(0, 12).map((f) => f.relativePath),
       })
       if (next) {
         audio.setStyle(next.id)
         if (next.tempo) audio.setTempo(next.tempo)
       }
+      if (nextSound) audio.setPartProgram(0, nextSound.id)
       setState((s) => ({
         ...s,
         importing: false,
@@ -280,21 +284,25 @@ export function useArranger() {
         sounds,
         styles,
         styleId: next ? next.id : s.styleId,
+        upper1: nextSound ? nextSound.id : s.upper1,
         tempo: next?.tempo || s.tempo,
         setFiles: lib.files.map((f) => f.relativePath),
         importReport: report,
         importMessage: report || "Import finished.",
         libraryFilter: next ? "imported" : s.libraryFilter,
         category: next ? "World" : s.category,
-        mode: next ? "PAD" : "STYLE",
+        mode: "STYLE",
       }))
+      Alert.alert("Import", report || "Import finished.")
     } catch (error) {
+      const message = error instanceof Error ? error.message : "SET import failed"
       setState((s) => ({
         ...s,
         importing: false,
-        importMessage: error instanceof Error ? error.message : "SET import failed",
+        importMessage: message,
       }))
       console.log("[import] failed", error)
+      Alert.alert("Import failed", message)
     }
   }, [])
 
@@ -304,8 +312,8 @@ export function useArranger() {
       "ArrangerBox reads a Pa4X SET (STYLE / SOUND / PCM).\n\nNative USER01.STY banks are OC31-compressed (Korg never published that). The documented path is Style Record > Export SMF (hold Shift + Execute): format 0, markers v1cv1, channels 9–16.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "SET folder", onPress: () => setTimeout(() => void runImport("folder"), 400) },
-        { text: "SMF / STY", onPress: () => setTimeout(() => void runImport("files"), 400) },
+        { text: "SET folder / zip", onPress: () => setTimeout(() => void runImport("folder"), 400) },
+        { text: "SMF / STY / SET file", onPress: () => setTimeout(() => void runImport("files"), 400) },
       ]
     )
   }, [runImport])

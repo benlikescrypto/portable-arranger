@@ -48,6 +48,15 @@ function isStyleFileName(name: string) {
   return /\.(STY|MID|SMF)$/i.test(name)
 }
 
+function isSampleFileName(name: string) {
+  return /\.(KMP|KSF|PCM|WAV)$/i.test(name)
+}
+
+function diskInventory(files: { kind: string; relativePath: string }[]) {
+  const n = (kind: string) => files.filter((f) => f.kind === kind).length
+  return `on disk: ${files.length} files, ${n("MULTISAMPLE")} KMP, ${n("SAMPLE")} KSF, ${n("PCM")} PCM, ${n("WAV")} WAV, ${n("STYLE")} STY, ${n("ARCHIVE")} archives, ${n("SET")} SET, ${n("FILE")} other`
+}
+
 function* walkStyleFiles(dir: Directory): Generator<File> {
   try {
     for (const child of dir.list()) {
@@ -56,7 +65,7 @@ function* walkStyleFiles(dir: Directory): Generator<File> {
         yield* walkStyleFiles(asDirectory(child))
         continue
       }
-      if (isStyleFileName(child.name)) yield child as File
+      if (isStyleFileName(child.name) || isSampleFileName(child.name)) yield child as File
     }
   } catch (error) {
     logImport("walkStyleFiles failed", dir.uri, error)
@@ -97,7 +106,7 @@ async function peekFolder(dir: Directory) {
         if (peeks.length >= 4) break
         continue
       }
-      if (isStyleFileName(child.name)) {
+      if (isStyleFileName(child.name) || isSampleFileName(child.name)) {
         peeks.push(await peekFile(child))
         if (peeks.length >= 4) break
       }
@@ -171,13 +180,15 @@ async function loadCopiedFolder(
   let raw = await audio.loadPa4xSet(nativePath(setFolder))
   logImport("engine", raw)
   let report = parseReport(raw)
-  if ((report.styles ?? 0) === 0) {
+  if ((report.styles ?? 0) === 0 || (report.patches ?? 0) === 0) {
     try {
       for (const child of walkStyleFiles(setFolder)) {
         const again = await audio.loadPa4xSet(nativePath(child))
         logImport("engine-file", child.name, again)
         const next = parseReport(again)
-        if ((next.styles ?? 0) > (report.styles ?? 0)) {
+        const betterStyles = (next.styles ?? 0) > (report.styles ?? 0)
+        const betterPatches = (next.patches ?? 0) > (report.patches ?? 0)
+        if (betterStyles || betterPatches) {
           raw = again
           report = next
         }
@@ -187,12 +198,7 @@ async function loadCopiedFolder(
     }
   }
   onProgress({ message: "Ready", fraction: 1 })
-  const extra =
-    (report.styles ?? 0) === 0 && peeks.length
-      ? peeks.join(" · ")
-      : peeks.length
-        ? ""
-        : "Copied folder had no STY files."
+  const extra = [diskInventory(inspected.files), peeks.length ? peeks.join(" · ") : ""].filter(Boolean).join(" · ")
   return finishImport(inspected, setName, report, extra)
 }
 
@@ -328,7 +334,7 @@ async function importFiles(onProgress: (progress: ImportProgress) => void): Prom
   )
 
   const setFile = files.find((file) => isSetName(file.name))
-  if (setFile && files.length === 1) {
+  if (setFile && files.length === 1 && isDirectory(setFile)) {
     return importDirectory(asDirectory(setFile), onProgress)
   }
 
@@ -343,7 +349,7 @@ async function importFiles(onProgress: (progress: ImportProgress) => void): Prom
       await copyTree(asDirectory(src), new Directory(dest, src.name), () => undefined, { copied: 0, total: 1 })
       continue
     }
-    const destName = copyFileName(src.name)
+    const destName = /\.(zip|set|7z|rar)$/i.test(src.name) ? src.name.replace(/[\\/:*?"<>|]/g, "_") : copyFileName(src.name)
     await src.copy(new File(dest, destName), { overwrite: true })
     await peekFile(new File(dest, destName))
     onProgress({

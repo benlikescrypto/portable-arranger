@@ -43,7 +43,7 @@ function withArrangerBoxHardware(config) {
         CFBundleTypeName: "PA4X Style / SMF",
         CFBundleTypeRole: "Viewer",
         LSHandlerRank: "Alternate",
-        CFBundleTypeExtensions: ["sty", "STY", "mid", "MID", "smf", "SMF"],
+        CFBundleTypeExtensions: ["sty", "STY", "mid", "MID", "smf", "SMF", "zip", "ZIP"],
         LSItemContentTypes: ["com.arrangerbox.pa-style", "public.midi-audio"],
       },
     ]
@@ -53,7 +53,7 @@ function withArrangerBoxHardware(config) {
         UTTypeDescription: "Korg PA SET folder",
         UTTypeConformsTo: ["com.apple.package", "public.composite-content"],
         UTTypeTagSpecification: {
-          "public.filename-extension": ["set"],
+          "public.filename-extension": ["set", "zip"],
         },
       },
       {

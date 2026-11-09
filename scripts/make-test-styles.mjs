@@ -173,8 +173,63 @@ const files = {
   "yamaha-sff-casm-low.sty": yamahaSff({ overrun: true, sourceLow: true }),
   "korg-encvn.mid": korgSmf(),
 }
+function storeZip(entryName, data) {
+  const u16 = (n) => Buffer.from([n & 255, (n >> 8) & 255])
+  const u32 = (n) => Buffer.from([n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >> 24) & 255])
+  const name = Buffer.from(entryName)
+  const local = Buffer.concat([
+    Buffer.from("PK\x03\x04"),
+    u16(20),
+    u16(0),
+    u16(0),
+    u16(0),
+    u16(0),
+    u32(0),
+    u32(data.length),
+    u32(data.length),
+    u16(name.length),
+    u16(0),
+    name,
+    data,
+  ])
+  const cd = Buffer.concat([
+    Buffer.from("PK\x01\x02"),
+    u16(20),
+    u16(20),
+    u16(0),
+    u16(0),
+    u16(0),
+    u16(0),
+    u32(0),
+    u32(data.length),
+    u32(data.length),
+    u16(name.length),
+    u16(0),
+    u16(0),
+    u16(0),
+    u16(0),
+    u32(0),
+    u32(0),
+    name,
+  ])
+  const eocd = Buffer.concat([
+    Buffer.from("PK\x05\x06"),
+    u16(0),
+    u16(0),
+    u16(1),
+    u16(1),
+    u32(cd.length),
+    u32(local.length),
+    u16(0),
+  ])
+  return Buffer.concat([local, cd, eocd])
+}
+
 for (const [name, buf] of Object.entries(files)) {
   const p = path.join(dir, name)
   fs.writeFileSync(p, buf)
   console.log("wrote", p, buf.length)
 }
+const zipPath = path.join(dir, "korg-set.zip")
+fs.writeFileSync(zipPath, storeZip("STYLE/korg-encvn.mid", files["korg-encvn.mid"]))
+console.log("wrote", zipPath)

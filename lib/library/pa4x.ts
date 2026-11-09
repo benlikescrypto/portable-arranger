@@ -103,6 +103,9 @@ export function fileKind(name: string): string {
   if (upper.endsWith(".MID") || upper.endsWith(".SMF")) return "MIDI"
   if (upper.endsWith(".STG")) return "FILE"
   if (upper.endsWith(".KST")) return "SET"
+  if (upper.endsWith(".ZIP") || upper.endsWith(".7Z") || upper.endsWith(".RAR")) return "ARCHIVE"
+  if (upper.endsWith(".SET")) return "SET"
+  if (upper.endsWith(".KSC")) return "MULTISAMPLE"
   return "FILE"
 }
 

@@ -38,6 +38,13 @@ private func copyFolderToSandbox(_ src: URL) throws -> URL {
     try fm.removeItem(at: dest)
   }
   try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+  var isDir: ObjCBool = false
+  let exists = fm.fileExists(atPath: src.path, isDirectory: &isDir)
+  if exists && !isDir.boolValue {
+    try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+    try fm.copyItem(at: src, to: dest.appendingPathComponent(src.lastPathComponent))
+    return dest
+  }
   try fm.copyItem(at: src, to: dest)
   return dest
 }
@@ -141,12 +148,13 @@ public class ArrangerBoxDeviceModule: Module {
         promise.resolve(["canceled": false, "error": "No view controller to present the folder picker."])
         return
       }
-      var types: [UTType] = [.folder]
+      var types: [UTType] = [.folder, .zip, .archive, .package, .bundle, .data, .item]
       if let setType = UTType(filenameExtension: "set") {
-        types.append(setType)
+        types.insert(setType, at: 0)
       }
-      types.append(.package)
-      types.append(.bundle)
+      if let zipType = UTType(filenameExtension: "zip") {
+        types.append(zipType)
+      }
       let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
       picker.allowsMultipleSelection = false
       picker.shouldShowFileExtensions = true
