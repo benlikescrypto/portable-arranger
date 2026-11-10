@@ -105,29 +105,7 @@ export function ArrangerScreen() {
 
   const activeSoundId = soundPart === 1 ? s.upper2 : soundPart === 2 ? s.upper3 : soundPart === 3 ? s.lower : s.upper1
 
-  if (!s.arrangerReady) {
-    return (
-      <View
-        style={[
-          styles.root,
-          styles.boot,
-          {
-            paddingTop: padYTop,
-            paddingBottom: padYBot,
-            paddingLeft: padX,
-            paddingRight: Math.max(insets.right, 10),
-          },
-        ]}
-      >
-        <Text style={styles.bootBrand}>ArrangerBox</Text>
-        <Text style={styles.bootTitle}>Loading arranger</Text>
-        <Text style={styles.bootMsg}>{s.importMessage || "Loading sounds into memory…"}</Text>
-        <View style={styles.bootTrack}>
-          <View style={[styles.bootFill, { width: `${Math.max(8, Math.round(s.importProgress * 100))}%` }]} />
-        </View>
-      </View>
-    )
-  }
+  if (!s.arrangerReady) return null
 
   return (
     <View
@@ -182,7 +160,7 @@ export function ArrangerScreen() {
               loadingProgress={s.loadingProgress}
               onSelect={(id) => vm.selectSound(id, soundPart)}
               onClose={closePicker}
-              emptyHint="Import a SET, then tap a User sound to load it into RAM."
+              emptyHint="Import a SET to fill the User squares. Tap a gray square to load that sound."
             />
           ) : picker === "style" ? (
             <StyleSelect
@@ -341,24 +319,4 @@ const styles = StyleSheet.create({
   dotOn: { backgroundColor: Pa.text, width: 18 },
   pressed: { opacity: 0.82 },
   empty: { color: Pa.muted, fontSize: 15, padding: 8 },
-  boot: { alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
-  bootBrand: {
-    color: Pa.text,
-    fontSize: 22,
-    fontWeight: "800",
-    letterSpacing: 2,
-    textTransform: "uppercase",
-    marginBottom: 28,
-  },
-  bootTitle: { color: Pa.text, fontSize: 20, fontWeight: "700", marginBottom: 10 },
-  bootMsg: { color: Pa.muted, fontSize: 15, textAlign: "center", marginBottom: 28, minHeight: 22 },
-  bootTrack: {
-    width: "100%",
-    maxWidth: 320,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Pa.stroke,
-    overflow: "hidden",
-  },
-  bootFill: { height: "100%", backgroundColor: Pa.orange },
 })

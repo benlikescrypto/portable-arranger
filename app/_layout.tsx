@@ -10,6 +10,7 @@ import "react-native-reanimated"
 
 export { ErrorBoundary } from "expo-router"
 
+SplashScreen.preventAutoHideAsync()
 SplashScreen.setOptions({ duration: 240, fade: true })
 
 export default function RootLayout() {

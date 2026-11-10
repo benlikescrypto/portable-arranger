@@ -36,11 +36,6 @@ function nativePath(file: File | Directory) {
   return uri
 }
 
-function fileUri(path: string) {
-  if (path.startsWith("file:")) return path
-  return `file://${path.replace(/\\/g, "/")}`
-}
-
 function norm(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "")
 }
@@ -49,84 +44,14 @@ function stem(name: string) {
   return name.replace(/\.[^.]+$/, "")
 }
 
-function asciiName(bytes: Uint8Array, off: number, n: number) {
-  let out = ""
-  for (let i = 0; i < n && off + i < bytes.length; i++) {
-    const c = bytes[off + i]
-    if (c === 0) break
-    if (c >= 32 && c < 127) out += String.fromCharCode(c)
-  }
-  return out.trim()
+function isGenericStem(name: string) {
+  return /^(ram|pcm|sound|style|pad|multismp|multisample|samples)$/i.test(name.trim())
 }
 
-function parseKmpNames(bytes: Uint8Array) {
-  const names: string[] = []
-  for (let i = 0; i + 24 < bytes.length; i++) {
-    if (bytes[i] !== 0x4d || bytes[i + 1] !== 0x53 || bytes[i + 2] !== 0x50 || bytes[i + 3] !== 0x31) continue
-    const name = asciiName(bytes, i + 8, 16)
-    if (name.length >= 2) names.push(name)
-  }
-  return names
-}
-
-function parseKorfNames(bytes: Uint8Array) {
-  const names: string[] = []
-  const tryLen = (off: number) => {
-    if (off + 4 > bytes.length) return
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    for (const be of [true, false]) {
-      const len = be ? view.getUint32(off, false) : view.getUint32(off, true)
-      if (len < 24 || len % 24 !== 0 || off + 4 + len > bytes.length) continue
-      const entries = len / 24
-      if (entries < 1 || entries > 256) continue
-      for (let e = 0; e < entries; e++) {
-        const row = off + 4 + e * 24
-        const kind = bytes[row + 18]
-        if (kind !== 2 && kind !== 0) continue
-        const name = asciiName(bytes, row, 16)
-        if (name.length >= 2) names.push(name)
-      }
-      if (names.length) return
-    }
-  }
-  tryLen(32)
-  if (names.length) return names
-  for (let i = 0; i < Math.min(bytes.length, 48) - 4; i++) {
-    if (bytes[i] === 0x4b && bytes[i + 1] === 0x4f && bytes[i + 2] === 0x52 && bytes[i + 3] === 0x46) {
-      tryLen(i + 8)
-      break
-    }
-  }
-  return names
-}
-
-function uniqueNames(names: string[]) {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const name of names) {
-    const key = norm(name)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    out.push(name)
-  }
-  return out
-}
-
-async function namesFromFile(file: File, kind: LibraryKind) {
-  const ext = file.name.toUpperCase()
-  try {
-    if (ext.endsWith(".KMP") && (file.size ?? 0) < 8_000_000) {
-      const parsed = uniqueNames(parseKmpNames(await file.bytes()))
-      if (parsed.length) return parsed
-    }
-    if ((kind === "style" || kind === "pad") && (file.size ?? 0) < 2_000_000) {
-      const parsed = uniqueNames(parseKorfNames(await file.bytes()))
-      if (parsed.length) return parsed
-    }
-  } catch {
-    // File stem is enough for the square; native catalog fills real KORF names.
-  }
-  return [stem(file.name)]
+function catalogHasRealNames(catalog: DiskCatalog | null) {
+  if (!catalog) return false
+  const items = [...catalog.sounds, ...catalog.styles, ...catalog.pads]
+  return items.some((item) => !isGenericStem(item.name))
 }
 
 function pushItem(items: DiskItem[], item: DiskItem) {
@@ -150,21 +75,19 @@ async function walkDiskSet(dir: Directory, setName: string, setPath: string, int
     const file = child as File
     const upper = file.name.toUpperCase()
     let kind: LibraryKind | null = null
-    if (/\.(KMP|WAV|KSF)$/i.test(upper)) kind = "sound"
-    else if (/\.(STY|STG|MID|SMF)$/i.test(upper)) kind = "style"
-    else if (/\.PAD$/i.test(upper)) kind = "pad"
-    if (!kind) continue
-    const names = await namesFromFile(file, kind)
-    for (const name of names) {
-      pushItem(kind === "sound" ? into.sounds : kind === "pad" ? into.pads : into.styles, {
-        kind,
-        name,
-        category: categoryGuess(name, kind === "sound" ? "Imported" : "Style"),
-        fileName: file.name,
-        setPath,
-        setName,
-      })
-    }
+    if (/\.(WAV|KSF)$/i.test(upper)) kind = "sound"
+    else if (/\.(MID|SMF)$/i.test(upper)) kind = "style"
+    else continue
+    const name = stem(file.name)
+    if (isGenericStem(name)) continue
+    pushItem(kind === "sound" ? into.sounds : kind === "pad" ? into.pads : into.styles, {
+      kind,
+      name,
+      category: categoryGuess(name, kind === "sound" ? "Imported" : "Style"),
+      fileName: file.name,
+      setPath,
+      setName,
+    })
   }
 }
 
@@ -178,7 +101,7 @@ function parseCatalogFile(raw: string, setName: string, setPath: string): DiskCa
     for (const item of json.items) {
       const kind = item.kind === "pad" ? "pad" : item.kind === "sound" ? "sound" : "style"
       const name = item.name?.trim()
-      if (!name) continue
+      if (!name || isGenericStem(name)) continue
       pushItem(kind === "sound" ? out.sounds : kind === "pad" ? out.pads : out.styles, {
         kind,
         name,
@@ -209,26 +132,63 @@ function listSavedSetDirs() {
   return out
 }
 
+async function readCachedCatalog(setFolder: Directory, setName: string, setPath: string) {
+  try {
+    const cacheFile = new File(new Directory(setFolder, ".arrangerbox-cache"), "catalog.json")
+    if (!cacheFile.exists) return null
+    return parseCatalogFile(await Promise.resolve(cacheFile.text()), setName, setPath)
+  } catch {
+    return null
+  }
+}
+
 async function catalogOneSet(dir: Directory): Promise<DiskCatalog> {
   const setFolder = findSetFolder(dir)
   const setName = setFolder.name.replace(/\.SET$/i, "") || "Imported"
   const setPath = nativePath(setFolder)
   const empty: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
+  const cached = await readCachedCatalog(setFolder, setName, setPath)
+  if (catalogHasRealNames(cached)) return cached!
   try {
-    const raw = await audio.listPa4xCatalog(setPath)
-    const summary = JSON.parse(raw) as { ok?: number; file?: string }
-    if (summary.ok && summary.file) {
-      const file = new File(fileUri(summary.file))
-      if (file.exists) {
-        const parsed = parseCatalogFile(await Promise.resolve(file.text()), setName, setPath)
-        if (parsed && parsed.sounds.length + parsed.styles.length + parsed.pads.length > 0) return parsed
-      }
-    }
+    await audio.listPa4xCatalog(setPath)
   } catch {
-    // Current IPA has no catalog native; walk names from disk.
+    // Filename fallback below still lists WAV/SMF.
   }
+  const nativeCatalog = await readCachedCatalog(setFolder, setName, setPath)
+  if (catalogHasRealNames(nativeCatalog)) return nativeCatalog!
   await walkDiskSet(setFolder, setName, setPath, empty)
   return empty
+}
+
+export async function cachedFileName(setPath: string | undefined, kind: LibraryKind, name: string) {
+  if (!setPath || !name) return undefined
+  try {
+    const cacheFile = new File(new Directory(setPath, ".arrangerbox-cache"), "catalog.json")
+    if (!cacheFile.exists) return undefined
+    const parsed = parseCatalogFile(await Promise.resolve(cacheFile.text()), "", setPath)
+    const list = kind === "sound" ? parsed?.sounds : kind === "pad" ? parsed?.pads : parsed?.styles
+    return list?.find((item) => norm(item.name) === norm(name))?.fileName
+  } catch {
+    return undefined
+  }
+}
+
+export function setPathForName(setName?: string) {
+  const root = new Directory(Paths.document, "sets")
+  if (!root.exists) return undefined
+  try {
+    if (setName) {
+      for (const name of [setName, `${setName}.SET`, setName.replace(/\.SET$/i, "")]) {
+        const dir = new Directory(root, name)
+        if (dir.exists) return nativePath(findSetFolder(asDirectory(dir)))
+      }
+    }
+    const dirs = listSavedSetDirs()
+    if (!dirs.length) return undefined
+    return nativePath(findSetFolder(dirs[0]))
+  } catch {
+    return undefined
+  }
 }
 
 export async function loadDiskCatalog(): Promise<DiskCatalog> {

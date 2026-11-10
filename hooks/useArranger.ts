@@ -1,19 +1,21 @@
 import { audio, isAudioNativeAvailable } from "arrangerbox-audio"
 import { midi } from "arrangerbox-midi"
+import * as SplashScreen from "expo-splash-screen"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Alert } from "react-native"
 
 import {
+  cachedFileName,
   loadDiskCatalog,
   loadDiskItem,
   mergePads,
   mergeSounds,
   mergeStyles,
+  setPathForName,
 } from "@/lib/library/diskCatalog"
 import {
   importPa4xSet,
   readSavedSelection,
-  restoreSavedSets,
   writeSavedSelection,
   type ImportMode,
 } from "@/lib/library/setImporter"
@@ -70,6 +72,10 @@ function engineProgram(item?: { loaded?: boolean; engineId?: number; id: number 
   if (item.engineId != null && item.engineId >= 0) return item.engineId
   if (item.loaded !== false) return item.id
   return -1
+}
+
+function hideSplash() {
+  void SplashScreen.hideAsync().catch(() => {})
 }
 
 const initial: ArrangerUiState = {
@@ -138,77 +144,53 @@ export function useArranger() {
           importing: false,
           importMessage: "Native audio requires an Expo development build.",
         }))
+        hideSplash()
         return
       }
-      const started = await audio.start()
-      if (!alive) return
-      factoryStyleCount = catalogStyles().length
-      setState((s) => ({
-        ...s,
-        nativeReady: started,
-        importing: true,
-        importProgress: 0.08,
-        importMessage: "Reading library names…",
-      }))
+      let started = false
       try {
-        await restoreSavedSets(() => undefined)
+        started = await audio.start()
       } catch (error) {
-        console.log("[import] restore failed", error)
+        console.log("[boot] audio.start failed", error)
       }
-      if (!alive) return
-      const disk = await loadDiskCatalog()
+      if (!alive) {
+        hideSplash()
+        return
+      }
+      factoryStyleCount = catalogStyles().length
       const saved = await readSavedSelection()
-      let sounds = mergeSounds(catalogSounds(), disk.sounds)
-      let styles = mergeStyles(catalogStyles(), disk.styles)
-      let pads = mergePads(catalogStyles(), disk.pads)
-      const importedSounds = sounds.filter(isImportedSound)
-      const importedStyles = styles.filter((item) => item.source === "IMPORTED")
-      const upper1 = findSoundId(
-        sounds,
-        [saved.upper1Name, importedSounds.at(-1)?.name, "Concert Grand"].filter(Boolean) as string[]
-      )
+      const factorySounds = catalogSounds()
+      const factoryStyles = catalogStyles()
+      const upper1 = findSoundId(factorySounds, [saved.upper1Name, "Concert Grand"].filter(Boolean) as string[])
       const upper2 = findSoundId(
-        sounds,
+        factorySounds,
         [saved.upper2Name, "Warm Pad", "Atmosphere"].filter(Boolean) as string[],
         11
       )
       const upper3 = findSoundId(
-        sounds,
+        factorySounds,
         [saved.upper3Name, "Concert Strings", "Chamber Strings"].filter(Boolean) as string[],
         10
       )
       const lower = findSoundId(
-        sounds,
-        [saved.lowerName, "Cinematic Strings", "Symphonic Strings", "Concert Strings"].filter(
-          Boolean
-        ) as string[],
+        factorySounds,
+        [saved.lowerName, "Cinematic Strings", "Symphonic Strings", "Concert Strings"].filter(Boolean) as string[],
         10
       )
       const styleId = findStyleId(
-        styles,
-        [saved.styleName, importedStyles.at(-1)?.name, styles[0]?.name].filter(Boolean) as string[],
-        styles[0]?.id ?? 0
+        factoryStyles,
+        [saved.styleName, factoryStyles[0]?.name].filter(Boolean) as string[],
+        factoryStyles[0]?.id ?? 0
       )
-      const loadIfNeeded = async (kind: LibraryKind, item?: SoundItem | StyleItem) => {
-        if (!item || item.loaded !== false) return
-        setState((s) => ({ ...s, importMessage: `Loading ${item.name}…`, importProgress: 0.45 }))
-        await loadDiskItem({ kind, name: item.name, setPath: item.setPath, fileName: item.fileName })
-        sounds = mergeSounds(catalogSounds(), disk.sounds)
-        styles = mergeStyles(catalogStyles(), disk.styles)
-        pads = mergePads(catalogStyles(), disk.pads)
-      }
-      await loadIfNeeded("sound", sounds.find((item) => item.id === upper1))
-      await loadIfNeeded("style", styles.find((item) => item.id === styleId))
-      if (!alive) return
-      const style = styles.find((item) => item.id === styleId)
-      const program = (id: number, fallback: number) => {
-        const prog = engineProgram(sounds.find((item) => item.id === id))
+      const style = factoryStyles.find((item) => item.id === styleId)
+      const factoryProg = (id: number, fallback: number) => {
+        const prog = engineProgram(factorySounds.find((item) => item.id === id))
         return prog >= 0 ? prog : fallback
       }
-      audio.setPartProgram(0, program(upper1, 0))
-      audio.setPartProgram(1, program(upper2, 7))
-      audio.setPartProgram(2, program(upper3, 11))
-      audio.setPartProgram(3, program(lower, 21))
+      audio.setPartProgram(0, factoryProg(upper1, 0))
+      audio.setPartProgram(1, factoryProg(upper2, 7))
+      audio.setPartProgram(2, factoryProg(upper3, 11))
+      audio.setPartProgram(3, factoryProg(lower, 21))
       audio.setPartEnable(1, false)
       audio.setPartEnable(2, false)
       audio.setPartEnable(3, true)
@@ -216,38 +198,122 @@ export function useArranger() {
       audio.setSynchro(false)
       audio.setFx(0, 0.18)
       audio.setFx(1, 0.08)
-      const styleProg = engineProgram(style)
-      if (styleProg >= 0) {
-        audio.setStyle(styleProg)
+      if (styleId >= 0) {
+        audio.setStyle(styleId)
         audio.setTempo(style?.tempo || 112)
       }
-      const userOnDisk = disk.sounds.length + disk.styles.length + disk.pads.length
-      const restoreReport = userOnDisk
-        ? `${disk.sounds.length} User sounds · ${disk.styles.length} styles · ${disk.pads.length} pads — tap to load`
-        : ""
+
+      const factoryName = (name?: string) =>
+        !!name &&
+        (factorySounds.some((item) => item.name === name) || factoryStyles.some((item) => item.name === name))
+      const setPath = setPathForName(saved.setName)
+      const catalogP = loadDiskCatalog()
+      const session = [
+        { kind: "sound" as const, name: saved.upper1Name, part: 0 as const },
+        { kind: "sound" as const, name: saved.upper2Name, part: 1 as const },
+        { kind: "sound" as const, name: saved.upper3Name, part: 2 as const },
+        { kind: "sound" as const, name: saved.lowerName, part: 3 as const },
+        { kind: "style" as const, name: saved.styleName, part: null },
+      ]
+      try {
+        for (const job of session) {
+          if (!alive) return
+          if (!job.name || factoryName(job.name) || !setPath) continue
+          const fileName = await cachedFileName(setPath, job.kind, job.name)
+          if (job.kind === "style" && (!fileName || !/\.(MID|SMF)$/i.test(fileName))) continue
+          await loadDiskItem({ kind: job.kind, name: job.name, setPath, fileName })
+          const soundsNow = catalogSounds()
+          const stylesNow = catalogStyles()
+          if (job.kind === "sound" && job.part != null) {
+            const hit = soundsNow.find((item) => item.name === job.name)
+            const prog = engineProgram(hit)
+            if (prog >= 0) audio.setPartProgram(job.part, prog)
+          }
+          if (job.kind === "style") {
+            const hit = stylesNow.find((item) => item.name === job.name)
+            const prog = engineProgram(hit)
+            if (prog >= 0) {
+              audio.setStyle(prog)
+              if (hit?.tempo) audio.setTempo(hit.tempo)
+            }
+          }
+        }
+      } catch (error) {
+        console.log("[boot] session load failed", error)
+      }
+      if (!alive) return
+
+      const loadedSounds = catalogSounds()
+      const loadedStyles = catalogStyles()
+      const nextUpper1 = findSoundId(loadedSounds, [saved.upper1Name, "Concert Grand"].filter(Boolean) as string[])
+      const nextUpper2 = findSoundId(
+        loadedSounds,
+        [saved.upper2Name, "Warm Pad", "Atmosphere"].filter(Boolean) as string[],
+        11
+      )
+      const nextUpper3 = findSoundId(
+        loadedSounds,
+        [saved.upper3Name, "Concert Strings", "Chamber Strings"].filter(Boolean) as string[],
+        10
+      )
+      const nextLower = findSoundId(
+        loadedSounds,
+        [saved.lowerName, "Cinematic Strings", "Symphonic Strings", "Concert Strings"].filter(Boolean) as string[],
+        10
+      )
+      const nextStyleId = findStyleId(
+        loadedStyles,
+        [saved.styleName, loadedStyles[0]?.name].filter(Boolean) as string[],
+        loadedStyles[0]?.id ?? 0
+      )
+      const nextStyle = loadedStyles.find((item) => item.id === nextStyleId)
       setState((s) => ({
         ...s,
-        sounds,
-        styles,
-        pads,
+        sounds: loadedSounds,
+        styles: loadedStyles,
+        pads: [],
         nativeReady: started,
         arrangerReady: true,
-        setName: saved.setName || disk.setName || "",
-        upper1,
-        upper2,
-        upper3,
-        lower,
+        setName: saved.setName || "",
+        upper1: nextUpper1,
+        upper2: nextUpper2,
+        upper3: nextUpper3,
+        lower: nextLower,
         upper2On: false,
         upper3On: false,
         lowerOn: true,
-        styleId,
-        tempo: style?.tempo || 112,
+        styleId: nextStyleId,
+        tempo: nextStyle?.tempo || style?.tempo || 112,
         importing: false,
         importProgress: 1,
-        importMessage: restoreReport,
-        importReport: restoreReport,
+        importMessage: "",
       }))
-      await midi.start()
+      hideSplash()
+      void midi.start()
+
+      void (async () => {
+        try {
+          const disk = await catalogP
+          if (!alive) return
+          const sounds = mergeSounds(catalogSounds(), disk.sounds)
+          const styles = mergeStyles(catalogStyles(), disk.styles)
+          const pads = mergePads(catalogStyles(), disk.pads)
+          const userOnDisk = disk.sounds.length + disk.styles.length + disk.pads.length
+          setState((s) => ({
+            ...s,
+            sounds,
+            styles,
+            pads,
+            setName: saved.setName || disk.setName || s.setName,
+            importMessage: userOnDisk
+              ? `${disk.sounds.length} User sounds · ${disk.styles.length} styles · ${disk.pads.length} pads — tap to load`
+              : "",
+          }))
+        } catch (error) {
+          console.log("[boot] library catalog failed", error)
+          if (alive) setState((s) => ({ ...s, importMessage: "" }))
+        }
+      })()
     })()
     const sub = midi.addDeviceListener((event) => {
       setState((s) => ({ ...s, midiConnected: event.connected, midiName: event.name }))

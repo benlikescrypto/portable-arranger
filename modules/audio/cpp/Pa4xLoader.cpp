@@ -1050,6 +1050,39 @@ std::string readFixed(const uint8_t* p, int n) {
     return s;
 }
 
+bool isGenericBankName(const std::string& name) {
+    std::string n = name;
+    for (char& c : n) c = (char)std::toupper((unsigned char)c);
+    return n == "RAM" || n == "PCM" || n == "SOUND" || n == "STYLE" || n == "PAD" || n == "MULTISMP" ||
+           n == "MULTISAMPLE" || n == "SAMPLES";
+}
+
+void parseKmpCatalogNames(const uint8_t* b, size_t n, std::vector<std::string>& names) {
+    for (size_t i = 0; i + 24 <= n;) {
+        if (std::memcmp(b + i, "MSP1", 4) != 0) {
+            ++i;
+            continue;
+        }
+        const uint32_t sz = ru32be(b + i + 4);
+        if (sz < 18 || i + 8 + sz > n) {
+            ++i;
+            continue;
+        }
+        std::string name = readFixed(b + i + 8, 16);
+        size_t cursor = i + 8 + sz;
+        if (cursor + 8 <= n && std::memcmp(b + cursor, "NAME", 4) == 0) {
+            const uint32_t nsz = ru32be(b + cursor + 4);
+            if (cursor + 8 + nsz <= n) {
+                const std::string longer = readFixed(b + cursor + 8, std::min(24, (int)nsz));
+                if (!longer.empty()) name = longer;
+                cursor += 8 + nsz;
+            }
+        }
+        if (name.size() >= 2 && !isGenericBankName(name)) names.push_back(name);
+        i = std::max(cursor, i + 8);
+    }
+}
+
 void parseKmpBytes(const uint8_t* b, size_t n, std::vector<KmpInst>& out) {
     for (size_t i = 0; i + 18 <= n;) {
         if (std::memcmp(b + i, "MSP1", 4) != 0) {
@@ -2366,19 +2399,32 @@ int Engine::listPa4xCatalog(const char* folder, char* report, int reportLen) {
         if (ext == ".KMP") {
             std::vector<uint8_t> bytes;
             if (!readFileBytes(path.c_str(), bytes)) continue;
-            std::vector<KmpInst> insts;
-            parseKmpBytes(bytes.data(), bytes.size(), insts);
-            if (insts.empty()) push("sound", fileStem(path), path);
-            for (const auto& inst : insts) push("sound", inst.name.empty() ? fileStem(path) : inst.name, path);
+            std::vector<std::string> names;
+            parseKmpCatalogNames(bytes.data(), bytes.size(), names);
+            if (names.empty()) {
+                std::vector<KmpInst> insts;
+                parseKmpBytes(bytes.data(), bytes.size(), insts);
+                for (const auto& inst : insts)
+                    if (!inst.name.empty() && !isGenericBankName(inst.name)) names.push_back(inst.name);
+            }
+            for (const auto& n : names) push("sound", n, path);
+            if (names.empty() && !isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
         } else if (ext == ".WAV" || ext == ".KSF") {
-            push("sound", fileStem(path), path);
+            if (!isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
         } else if (ext == ".STY" || ext == ".STG" || ext == ".MID" || ext == ".SMF" || ext == ".PAD") {
             const char* kind = ext == ".PAD" ? "pad" : "style";
             std::vector<uint8_t> bytes;
             std::vector<std::string> names;
-            if (readFileBytes(path.c_str(), bytes) && korfNames(bytes, names)) {
-                for (const auto& n : names) push(kind, n, path);
-            } else {
+            std::ifstream in(path.c_str(), std::ios::binary);
+            if (in) {
+                bytes.resize(65536);
+                in.read((char*)bytes.data(), (std::streamsize)bytes.size());
+                bytes.resize((size_t)std::max<std::streamsize>(0, in.gcount()));
+            }
+            if (!bytes.empty() && korfNames(bytes, names)) {
+                for (const auto& n : names)
+                    if (!isGenericBankName(n)) push(kind, n, path);
+            } else if (ext == ".MID" || ext == ".SMF" || !isGenericBankName(fileStem(path))) {
                 push(kind, fileStem(path), path);
             }
         }

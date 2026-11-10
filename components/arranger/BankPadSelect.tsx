@@ -70,10 +70,10 @@ export function BankPadSelect({
   )
 
   const bankItems = useMemo(() => inBank(items, bank), [items, bank])
-  const categoryItems = useMemo(
-    () => bankItems.filter((item) => categorize(item) === category),
-    [bankItems, category, categorize]
-  )
+  const categoryItems = useMemo(() => {
+    if (bank === "User") return bankItems
+    return bankItems.filter((item) => categorize(item) === category)
+  }, [bankItems, bank, category, categorize])
   const pages = pageCount(categoryItems.length)
   const safePage = Math.min(page, pages - 1)
   const pads = categoryItems.slice(safePage * SOUND_PAGE_SIZE, safePage * SOUND_PAGE_SIZE + SOUND_PAGE_SIZE)
@@ -164,9 +164,9 @@ export function BankPadSelect({
                         >
                           {pad?.name ?? ""}
                         </Text>
-                        {pad && !loaded && !loading ? (
+                        {pad && !loaded && !loading && pad.loadError ? (
                           <Text style={styles.padMeta} numberOfLines={1}>
-                            {pad.loadError ? "Need SMF" : "Tap to load"}
+                            Need SMF
                           </Text>
                         ) : null}
                         {loading ? (
