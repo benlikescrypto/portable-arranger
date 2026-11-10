@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
+#include <map>
 #include <mutex>
 #include <new>
 #include <string>
@@ -989,12 +990,14 @@ struct LoadedSample {
     int index = -1;
     std::string name;
     std::string file;
+    std::string id;
 };
 
 int findSample(const std::vector<LoadedSample>& samples, const std::string& key) {
     const std::string want = normName(key.c_str());
     if (want.empty()) return -1;
     for (const auto& s : samples) {
+        if (!s.id.empty() && (s.id == key || normName(s.id.c_str()) == want)) return s.index;
         if (normName(s.name.c_str()) == want) return s.index;
         if (normName(s.file.c_str()) == want) return s.index;
         if (s.file.size() >= key.size() && s.file.compare(s.file.size() - key.size(), key.size(), key) == 0) return s.index;
@@ -1085,8 +1088,60 @@ void parseKmpBytes(const uint8_t* b, size_t n, std::vector<KmpInst>& out) {
             }
             cursor += 8 + rsz;
         }
-        if (!inst.regions.empty() || !inst.name.empty()) out.push_back(std::move(inst));
+        if (!inst.regions.empty()) out.push_back(std::move(inst));
         i = std::max(cursor, i + 8);
+    }
+    if (!out.empty()) return;
+
+    std::map<std::string, KmpInst> grouped;
+    for (size_t i = 0; i + 32 <= n; ++i) {
+        if (b[i] < 32 || b[i] >= 127 || !std::isalpha((unsigned char)b[i])) continue;
+        if (i > 0 && (std::isalnum((unsigned char)b[i - 1]) || b[i - 1] == ' ' || b[i - 1] == '-')) continue;
+        const std::string name = readFixed(b + i, 16);
+        if (name.size() < 4) continue;
+        if (name.find("Z110A") != std::string::npos || name.find("v3.") != std::string::npos) continue;
+        int letters = 0;
+        for (char c : name)
+            if (std::isalpha((unsigned char)c)) letters++;
+        if (letters < 3) continue;
+        const uint8_t* idp = b + i + 16;
+        const uint16_t rate = ru16be(idp + 12);
+        if (!(rate == 44100 || rate == 48000 || rate == 32000 || rate == 22050)) continue;
+        const int root = idp[14] & 0x7F;
+        char idHex[17];
+        static const char* kHex = "0123456789abcdef";
+        for (int k = 0; k < 8; ++k) {
+            idHex[k * 2] = kHex[idp[k] >> 4];
+            idHex[k * 2 + 1] = kHex[idp[k] & 0x0f];
+        }
+        idHex[16] = 0;
+        KmpRegion z;
+        z.original = root;
+        z.top = 127;
+        z.sampleName = idHex;
+        if (name.size() >= 2) {
+            const char side = (char)std::toupper((unsigned char)name.back());
+            if (name[name.size() - 2] == '-' && side == 'L') z.pan = 16;
+            else if (name[name.size() - 2] == '-' && side == 'R') z.pan = 112;
+        }
+        KmpInst& inst = grouped[name];
+        if (inst.name.empty()) inst.name = name;
+        inst.regions.push_back(z);
+        i += 24;
+    }
+    for (auto& kv : grouped) {
+        auto& inst = kv.second;
+        std::sort(inst.regions.begin(), inst.regions.end(),
+                  [](const KmpRegion& a, const KmpRegion& b) { return a.original < b.original; });
+        for (size_t r = 0; r < inst.regions.size(); ++r) {
+            if (r + 1 < inst.regions.size()) {
+                const int next = inst.regions[r + 1].original;
+                inst.regions[r].top = next > inst.regions[r].original ? next - 1 : inst.regions[r].original;
+            } else {
+                inst.regions[r].top = 127;
+            }
+        }
+        if (!inst.regions.empty()) out.push_back(std::move(inst));
     }
 }
 
@@ -1171,9 +1226,11 @@ bool fileHasKorgSampleMagic(const char* path) {
     std::fclose(f);
     for (size_t i = 0; i + 4 <= n; ++i) {
         if (std::memcmp(mag + i, "SMP1", 4) == 0 || std::memcmp(mag + i, "SMD1", 4) == 0 ||
-            std::memcmp(mag + i, "SMP2", 4) == 0 || std::memcmp(mag + i, "SDD1", 4) == 0)
+            std::memcmp(mag + i, "SMP2", 4) == 0 || std::memcmp(mag + i, "SDD1", 4) == 0 ||
+            std::memcmp(mag + i, "KORF", 4) == 0)
             return true;
     }
+    if (n >= 4 && mag[0] == 0x01 && mag[1] == 0x00 && mag[2] == 0x01 && mag[3] == 0x14) return true;
     return false;
 }
 
@@ -1454,6 +1511,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         LoadedSample rec;
         rec.name = s.name[0] ? s.name : fileStem(path);
         rec.file = baseName(path);
+        rec.id = s.sourceId;
         rec.index = addSample(std::move(s));
         loaded.push_back(rec);
         sampleBytes += add;
@@ -1493,7 +1551,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             scanPcmBank(path.c_str(), found);
             if (found.empty()) {
                 skipped++;
-                if (reason.size() < 220) reason += "PCM bank had no SMP1/SMD1 (" + fileStem(path) + "). ";
+                if (reason.size() < 220) reason += "PCM bank had no playable samples (" + fileStem(path) + "). ";
             }
             for (auto& s : found) addLoaded(std::move(s), path, false);
         }

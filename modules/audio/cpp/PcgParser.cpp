@@ -65,6 +65,23 @@ int parsePcgNames(const uint8_t* bytes, size_t n, std::vector<std::string>& name
         if (uniq.insert(s).second) names.push_back(s);
     };
 
+    const bool korf = n >= 24 && bytes[0] == 0x01 && bytes[1] == 0x00 && bytes[2] == 0x01 && bytes[3] == 0x14;
+    if (korf) {
+        for (size_t i = 0; i + 32 < n; ++i) {
+            if (!(bytes[i] == 0x00 && bytes[i + 2] == 0x00 && bytes[i + 3] == 0x05 && bytes[i + 6] == 0x00 &&
+                  bytes[i + 7] == 0x1c))
+                continue;
+            std::string name;
+            if (printableName((const char*)bytes + i + 8, 24, name) && name.find("Z110A") == std::string::npos &&
+                name.find("v3.") == std::string::npos)
+                consider(name);
+        }
+        if (!names.empty()) {
+            for (const auto& r : refs) missing.push_back(r);
+            return (int)names.size();
+        }
+    }
+
     for (size_t i = 0; i + 8 < n;) {
         if (isChunkId(bytes + i)) {
             const uint32_t sz = ru32be(bytes + i + 4);

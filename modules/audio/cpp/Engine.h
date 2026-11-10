@@ -22,6 +22,7 @@ struct Sample {
     bool loop = false;
     int rootNote = 60;
     char name[32]{};
+    std::string sourceId;
     int frames() const {
         const int ch = std::max(1, channels);
         return (int)data.size() / ch;

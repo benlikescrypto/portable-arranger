@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <map>
+#include <string>
 #include <vector>
 #ifdef ARRANGERBOX_NO_ZLIB
 struct z_stream {
@@ -390,6 +392,108 @@ int loadKsf(const char* path, Sample& out) {
     return loadKsfBytes(b.data(), b.size(), out, nullptr);
 }
 
+static std::string hex8(const uint8_t* p) {
+    static const char* kHex = "0123456789abcdef";
+    std::string s(16, '0');
+    for (int i = 0; i < 8; ++i) {
+        s[(size_t)i * 2] = kHex[p[i] >> 4];
+        s[(size_t)i * 2 + 1] = kHex[p[i] & 0x0f];
+    }
+    return s;
+}
+
+static std::string readName24(const uint8_t* p, int n) {
+    std::string s;
+    for (int i = 0; i < n; ++i) {
+        const unsigned char c = p[i];
+        if (c == 0) break;
+        if (c >= 32 && c < 127) s.push_back((char)c);
+    }
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s;
+}
+
+static bool looksLikePaKorf(const uint8_t* b, size_t n) {
+    if (n < 24) return false;
+    if (!(b[0] == 0x01 && b[1] == 0x00 && b[2] == 0x01 && b[3] == 0x14)) return false;
+    const size_t lim = std::min<size_t>(n, 48);
+    for (size_t i = 0; i + 4 <= lim; ++i) {
+        if (std::memcmp(b + i, "KORF", 4) == 0) return true;
+    }
+    return false;
+}
+
+static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& out) {
+    if (!looksLikePaKorf(b, n)) return 0;
+    std::map<std::string, std::string> names;
+    const size_t dirEnd = std::min<size_t>(n, 32u * 1024u);
+    for (size_t i = 0; i + 96 <= dirEnd; ++i) {
+        if (!(b[i] == 0x00 && b[i + 2] == 0x00 && b[i + 3] == 0x06 && b[i + 1] >= 0x50 && b[i + 1] <= 0x70))
+            continue;
+        const std::string name = readName24(b + i + 8, 24);
+        if (name.size() < 3) continue;
+        for (size_t k = i + 8; k + 11 < i + 94 && k + 11 < n; ++k) {
+            if (b[k] == 0x04 && b[k + 1] == 0x00 && b[k + 2] == 0x08) {
+                names[hex8(b + k + 3)] = name;
+                break;
+            }
+        }
+        i += 90;
+    }
+    int found = 0;
+    size_t pos = 0;
+    const uint8_t marker[4] = {0x12, 0x00, 0x00, 0x18};
+    while (pos + 74 < n) {
+        size_t hit = n;
+        for (size_t i = pos; i + 8 <= n; ++i) {
+            if (std::memcmp(b + i, marker, 4) == 0) {
+                hit = i;
+                break;
+            }
+        }
+        if (hit == n) break;
+        const uint32_t sz = ru32be(b + hit + 4);
+        if (sz < 66 || hit + 8 + (size_t)sz > n) {
+            pos = hit + 4;
+            continue;
+        }
+        const uint8_t* payload = b + hit + 8;
+        const std::string id = hex8(payload);
+        const int sr = (int)((payload[12] << 8) | payload[13]);
+        const uint32_t dataLen = ru32be(payload + 14);
+        const uint32_t loopStart = ru32be(payload + 50);
+        if (dataLen < 32 || 66 + (size_t)dataLen > (size_t)sz) {
+            pos = hit + 8 + (size_t)sz;
+            continue;
+        }
+        const uint8_t* audio = payload + 66;
+        Sample s;
+        auto decoded = decodeBest(audio, (size_t)dataLen, 16, (int)dataLen, true);
+        if (decoded.empty()) {
+            pos = hit + 8 + (size_t)sz;
+            continue;
+        }
+        s.channels = 1;
+        s.sampleRate = (sr >= 4000 && sr <= 192000) ? sr : 44100;
+        s.data = std::move(decoded);
+        s.sourceId = id;
+        const auto it = names.find(id);
+        const std::string nm = it != names.end() ? it->second : id;
+        std::memset(s.name, 0, sizeof(s.name));
+        std::strncpy(s.name, nm.c_str(), sizeof(s.name) - 1);
+        const int frames = s.frames();
+        if (loopStart > 0 && (int)loopStart < frames) {
+            s.loop = true;
+            s.loopStart = (int)loopStart;
+            s.loopEnd = frames;
+        }
+        out.push_back(std::move(s));
+        found++;
+        pos = hit + 8 + (size_t)sz;
+    }
+    return found;
+}
+
 int scanPcmBank(const char* path, std::vector<Sample>& out) {
     FILE* f = std::fopen(path, "rb");
     if (!f) return 0;
@@ -398,6 +502,19 @@ int scanPcmBank(const char* path, std::vector<Sample>& out) {
     if (fileSize < 16) {
         std::fclose(f);
         return 0;
+    }
+    uint8_t mag[48]{};
+    std::fseek(f, 0, SEEK_SET);
+    const size_t magN = std::fread(mag, 1, sizeof(mag), f);
+    if (looksLikePaKorf(mag, magN)) {
+        std::vector<uint8_t> bytes((size_t)fileSize);
+        std::fseek(f, 0, SEEK_SET);
+        if (std::fread(bytes.data(), 1, bytes.size(), f) != bytes.size()) {
+            std::fclose(f);
+            return 0;
+        }
+        std::fclose(f);
+        return scanPaKorfPcmBytes(bytes.data(), bytes.size(), out);
     }
     auto readChunk = [&](long off, std::vector<uint8_t>& buf) -> bool {
         if (off < 0 || off + 8 > fileSize) return false;

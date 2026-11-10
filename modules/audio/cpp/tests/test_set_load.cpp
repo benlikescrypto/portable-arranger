@@ -73,6 +73,84 @@ std::vector<uint8_t> makeKsf(const char* name, int frames, int root) {
     return out;
 }
 
+void be16(std::vector<uint8_t>& o, uint16_t v) {
+    o.push_back((uint8_t)(v >> 8));
+    o.push_back((uint8_t)v);
+}
+
+std::vector<uint8_t> makePaKorfPcm(const char* name, const uint8_t id[8], int frames) {
+    std::vector<uint8_t> audio;
+    audio.reserve((size_t)frames);
+    int acc = 0;
+    for (int i = 0; i < frames; ++i) {
+        const float t = (float)i / 44100.0f;
+        const int16_t s = (int16_t)(std::sin(2.0f * 3.14159265f * 440.0f * t) * 12000.0f);
+        int d = (s - acc) / 256;
+        if (d > 127) d = 127;
+        if (d < -128) d = -128;
+        acc += d * 256;
+        audio.push_back((uint8_t)(int8_t)d);
+    }
+    std::vector<uint8_t> dir(96, 0);
+    dir[0] = 0x00;
+    dir[1] = 0x5e;
+    dir[2] = 0x00;
+    dir[3] = 0x06;
+    dir[4] = 0x00;
+    dir[5] = 0x02;
+    dir[6] = 0x00;
+    dir[7] = 0x1c;
+    for (int i = 0; i < 24 && name[i]; ++i) dir[8 + (size_t)i] = (uint8_t)name[i];
+    dir[0x31] = 0x04;
+    dir[0x32] = 0x00;
+    dir[0x33] = 0x08;
+    std::memcpy(dir.data() + 0x34, id, 8);
+
+    std::vector<uint8_t> payload(66, 0);
+    std::memcpy(payload.data(), id, 8);
+    payload[8] = 0x01;
+    payload[9] = 0x80;
+    payload[12] = 0xac;
+    payload[13] = 0x44;
+    payload[14] = (uint8_t)((audio.size() >> 24) & 0xff);
+    payload[15] = (uint8_t)((audio.size() >> 16) & 0xff);
+    payload[16] = (uint8_t)((audio.size() >> 8) & 0xff);
+    payload[17] = (uint8_t)(audio.size() & 0xff);
+    payload.insert(payload.end(), audio.begin(), audio.end());
+
+    std::vector<uint8_t> body(0x24, 0);
+    body[0x0f] = 'K';
+    body[0x10] = 'O';
+    body[0x11] = 'R';
+    body[0x12] = 'F';
+    body.insert(body.end(), dir.begin(), dir.end());
+    body.insert(body.end(), {0, 0, 0, 0});
+    body.insert(body.end(), {0x12, 0x00, 0x00, 0x18});
+    be32(body, (uint32_t)payload.size());
+    body.insert(body.end(), payload.begin(), payload.end());
+
+    std::vector<uint8_t> out;
+    out.insert(out.end(), {0x01, 0x00, 0x01, 0x14});
+    be32(out, (uint32_t)body.size());
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
+}
+
+std::vector<uint8_t> makePaKorfKmp(const char* instName, const uint8_t id[8], int root) {
+    std::vector<uint8_t> out(8, 0);
+    out[0] = 0x01;
+    out[1] = 0x00;
+    out[2] = 0x01;
+    out[3] = 0x14;
+    padName(out, instName, 16);
+    out.insert(out.end(), id, id + 8);
+    out.insert(out.end(), {0, 0, 0, 0});
+    be16(out, 44100);
+    out.push_back((uint8_t)root);
+    out.push_back(0);
+    return out;
+}
+
 std::vector<uint8_t> makeKmp(const char* instName, const char* sampleName) {
     std::vector<uint8_t> msp;
     padName(msp, instName, 16);
@@ -218,6 +296,37 @@ int main() {
     expect(samplesAdded(report) >= 1, "zipset_samples");
     expect(patchesAdded(report) >= 1, "zipset_patches");
     expect(eng2->soundCount() > factory2, "zipset_catalog");
+
+    const uint8_t korfId[8] = {0x85, 0x71, 0x84, 0x00, 0x44, 0x85, 0xce, 0xb6};
+    mkdirs("tmp/PaKorf.SET/PCM");
+    mkdirs("tmp/PaKorf.SET/MULTISMP");
+    writeFile("tmp/PaKorf.SET/PCM/RAM01.PCM", makePaKorfPcm("KApro Legato O-L", korfId, 2048));
+    writeFile("tmp/PaKorf.SET/MULTISMP/RAM.KMP", makePaKorfKmp("KApro Legato O-L", korfId, 60));
+    auto eng3 = std::make_unique<pa::Engine>();
+    eng3->prepare(44100.0f);
+    const int factory3 = eng3->soundCount();
+    report[0] = 0;
+    eng3->loadPa4xSet("tmp/PaKorf.SET", report, (int)sizeof(report));
+    std::printf("KORF report=%s\n", report);
+    expect(samplesAdded(report) >= 1, "korf_samples");
+    expect(patchesAdded(report) >= 1, "korf_patches");
+    expect(eng3->soundCount() > factory3, "korf_catalog");
+
+    const char* realPcm =
+        "tmp/musikant/unpacked/Pa4X_MUSIKANT_Paket_Dezember2020.SET/PCM/RAM01.PCM";
+    FILE* real = std::fopen(realPcm, "rb");
+    if (real) {
+        std::fclose(real);
+        auto eng4 = std::make_unique<pa::Engine>();
+        eng4->prepare(44100.0f);
+        report[0] = 0;
+        eng4->loadPa4xSet(realPcm, report, (int)sizeof(report));
+        std::printf("REAL RAM01 report=%s\n", report);
+        expect(samplesAdded(report) >= 8, "real_ram01_samples");
+        expect(patchesAdded(report) >= 1, "real_ram01_patches");
+    } else {
+        std::printf("SKIP real_ram01 (SET not on disk)\n");
+    }
 
     std::printf("%s\n", fails ? "FAILED" : "ALL PASSED");
     return fails ? 1 : 0;
