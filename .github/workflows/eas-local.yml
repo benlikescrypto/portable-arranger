@@ -94,6 +94,27 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Free: upload the binary to Expo so the phone gets the Install page.
+      # This is not a paid EAS cloud build.
+      - name: Upload to Expo
+        if: success()
+        run: |
+          eas upload --platform "${{ inputs.platform }}" \
+            --build-path "$OUTPUT" \
+            --non-interactive --json > expo-upload.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          url = json.loads(Path("expo-upload.json").read_text())["url"]
+          print(url)
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a").write(
+              "## Install on your phone\n\n"
+              "Open this in **Safari** on the iPhone:\n\n"
+              f"{url}\n"
+          )
+          print(f"::notice::Install page {url}")
+          PY
+
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
