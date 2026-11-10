@@ -61,11 +61,11 @@ function* walkStyleFiles(dir: Directory): Generator<File> {
   try {
     for (const child of dir.list()) {
       if (child.name.startsWith(".")) continue
-      if (isDirectory(child) || isSetName(child.name)) {
+      if (isDirectory(child)) {
         yield* walkStyleFiles(asDirectory(child))
         continue
       }
-      if (isStyleFileName(child.name) || isSampleFileName(child.name)) yield child as File
+      if (isStyleFileName(child.name) || isSampleFileName(child.name) || /\.(ZIP|SET)$/i.test(child.name)) yield child as File
     }
   } catch (error) {
     logImport("walkStyleFiles failed", dir.uri, error)
@@ -101,12 +101,12 @@ async function peekFolder(dir: Directory) {
   const peeks: string[] = []
   try {
     for (const child of dir.list()) {
-      if (isDirectory(child) || isSetName(child.name)) {
+      if (isDirectory(child)) {
         peeks.push(...(await peekFolder(asDirectory(child))))
         if (peeks.length >= 4) break
         continue
       }
-      if (isStyleFileName(child.name) || isSampleFileName(child.name)) {
+      if (isStyleFileName(child.name) || isSampleFileName(child.name) || /\.(ZIP|SET)$/i.test(child.name)) {
         peeks.push(await peekFile(child))
         if (peeks.length >= 4) break
       }
@@ -155,6 +155,21 @@ function finishImport(
   }
 }
 
+function* walkArchives(dir: Directory): Generator<File> {
+  try {
+    for (const child of dir.list()) {
+      if (child.name.startsWith(".")) continue
+      if (isDirectory(child)) {
+        yield* walkArchives(asDirectory(child))
+        continue
+      }
+      if (/\.(ZIP|SET|KSC)$/i.test(child.name)) yield child as File
+    }
+  } catch (error) {
+    logImport("walkArchives failed", dir.uri, error)
+  }
+}
+
 async function loadCopiedFolder(
   dest: Directory,
   setName: string,
@@ -167,7 +182,7 @@ async function loadCopiedFolder(
     name: setFolder.name,
     listing: (() => {
       try {
-        return setFolder.list().map((item) => `${item.name}${isDirectory(item) || isSetName(item.name) ? "/" : ""}`)
+        return setFolder.list().map((item) => `${item.name}${isDirectory(item) ? "/" : ""}`)
       } catch (error) {
         return [`list failed: ${error instanceof Error ? error.message : String(error)}`]
       }
@@ -177,9 +192,28 @@ async function loadCopiedFolder(
   const inspected = await inspectPa4x(setFolder)
   const peeks = await peekFolder(setFolder)
   onProgress({ message: "Loading STY, PCM, KMP and PCG into the engine…", fraction: 0.72 })
-  let raw = await audio.loadPa4xSet(nativePath(setFolder))
-  logImport("engine", raw)
+  const targets = [nativePath(setFolder)]
+  for (const archive of walkArchives(setFolder)) {
+    const path = nativePath(archive)
+    if (!targets.includes(path)) targets.push(path)
+  }
+  let raw = '{"ok":0}'
   let report = parseReport(raw)
+  for (const target of targets) {
+    const again = await audio.loadPa4xSet(target)
+    logImport("engine", target, again)
+    const next = parseReport(again)
+    const better =
+      (next.patches ?? 0) > (report.patches ?? 0) ||
+      (next.samples ?? 0) > (report.samples ?? 0) ||
+      (next.styles ?? 0) > (report.styles ?? 0) ||
+      ((report.patches ?? 0) === 0 && (report.samples ?? 0) === 0 && (next.ok ?? 0) === 1)
+    if (better) {
+      raw = again
+      report = next
+    }
+    if ((report.patches ?? 0) > 0 && (report.samples ?? 0) > 0) break
+  }
   if ((report.styles ?? 0) === 0 || (report.patches ?? 0) === 0) {
     try {
       for (const child of walkStyleFiles(setFolder)) {
@@ -188,7 +222,8 @@ async function loadCopiedFolder(
         const next = parseReport(again)
         const betterStyles = (next.styles ?? 0) > (report.styles ?? 0)
         const betterPatches = (next.patches ?? 0) > (report.patches ?? 0)
-        if (betterStyles || betterPatches) {
+        const betterSamples = (next.samples ?? 0) > (report.samples ?? 0)
+        if (betterStyles || betterPatches || betterSamples) {
           raw = again
           report = next
         }

@@ -252,12 +252,18 @@ export function useArranger() {
       const sounds = catalogSounds()
       const styles = catalogStyles()
       const importedStyles = styles.filter((item) => item.source === "IMPORTED")
-      const importedSounds = sounds.filter((item) => (item.source ?? "FACTORY").toUpperCase() !== "FACTORY")
+      const importedSounds = sounds.filter((item) => {
+        const src = (item.source ?? "FACTORY").toUpperCase()
+        return src !== "FACTORY"
+      })
       const next = importedStyles[importedStyles.length - 1]
       const nextSound = importedSounds[importedSounds.length - 1]
       const loaded = next ? 1 : lib.stylesLoaded
+      const instrumentCount = Math.max(importedSounds.length, lib.patchesLoaded, lib.samplesLoaded > 0 ? 1 : 0)
       const report = [
-        importedSounds.length ? `${importedSounds.length} instruments — open Sound Select, tap User` : "0 instruments (need PCM/KMP in the SET, or unzip the archive first)",
+        instrumentCount
+          ? `${importedSounds.length || lib.patchesLoaded || lib.samplesLoaded} instruments — open Sound Select, tap User`
+          : "0 instruments (need PCM/KMP in the SET, or unzip the archive first)",
         loaded ? `${importedStyles.length || lib.stylesLoaded} imported style${importedStyles.length === 1 ? "" : "s"}` : "0 styles (native STY is packed; use Export SMF)",
         lib.samplesLoaded ? `${lib.samplesLoaded} samples` : "",
         lib.reason?.trim(),

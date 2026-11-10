@@ -44,17 +44,29 @@ export function looksLikeSet(dir: Directory): boolean {
   }
 }
 
+function canList(dir: Directory) {
+  try {
+    return dir.list().length >= 0
+  } catch {
+    return false
+  }
+}
+
 export function findSetFolder(root: Directory, depth = 0): Directory {
-  if (isSetName(root.name) || looksLikeSet(root)) return root
+  if (looksLikeSet(root) && canList(root)) return root
+  if (isSetName(root.name) && canList(root) && root.list().length > 0) return root
   if (depth >= 4) return root
   try {
     for (const child of root.list()) {
-      if (isSetName(child.name)) return asDirectory(child)
-      if (!isDirectory(child) && !isSetName(child.name)) continue
+      if (isDirectory(child) && looksLikeSet(asDirectory(child))) return asDirectory(child)
+      if (isSetName(child.name) && isDirectory(child)) {
+        const dir = asDirectory(child)
+        if (canList(dir) && dir.list().length > 0) return dir
+      }
+      if (!isDirectory(child)) continue
       const dir = asDirectory(child)
-      if (looksLikeSet(dir)) return dir
       const nested = findSetFolder(dir, depth + 1)
-      if (nested !== dir && (isSetName(nested.name) || looksLikeSet(nested))) return nested
+      if (nested !== dir && (looksLikeSet(nested) || (isSetName(nested.name) && canList(nested)))) return nested
     }
   } catch {
     return root

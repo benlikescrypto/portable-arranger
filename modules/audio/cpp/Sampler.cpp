@@ -258,21 +258,39 @@ static std::vector<float> firstAudible(std::vector<std::vector<float>>&& cands) 
     return {};
 }
 
-static std::vector<float> decodeBest(const uint8_t* pcm, size_t pcmLen, int bits, int frames, bool compressed) {
-    if (!compressed) {
-        if (bits == 16 && pcmLen >= 2) {
-            auto be = decode16be(pcm, pcmLen, frames);
-            if (pcmScore(be) > 1e-8f) return be;
-            return decode16le(pcm, pcmLen, frames);
-        }
-        if (bits == 24 && pcmLen >= 3) {
-            auto be = decode24(pcm, pcmLen, frames, true);
-            if (pcmScore(be) > 1e-8f) return be;
-            return decode24(pcm, pcmLen, frames, false);
-        }
-        if (bits == 8 && pcmLen >= 1) return decode8u(pcm, pcmLen, frames);
-        return {};
+static uint32_t korgChunkSize(const uint8_t* b, size_t i, size_t n) {
+    if (i + 8 > n) return 0;
+    const uint32_t be = ru32be(b + i + 4);
+    const uint32_t le = ru32le(b + i + 4);
+    auto ok = [&](uint32_t sz) { return sz >= 1 && sz <= 512u * 1024u * 1024u && i + 8 + (size_t)sz <= n; };
+    if (ok(be)) return be;
+    if (ok(le)) return le;
+    return 0;
+}
+
+static std::vector<float> decodeUncompressed(const uint8_t* pcm, size_t pcmLen, int bits, int frames) {
+    if (bits == 16 && pcmLen >= 2) {
+        auto be = decode16be(pcm, pcmLen, frames);
+        if (pcmScore(be) > 1e-8f || be.size() >= 64) return be;
+        auto le = decode16le(pcm, pcmLen, frames);
+        if (!le.empty()) return le;
+        return be;
     }
+    if (bits == 24 && pcmLen >= 3) {
+        auto be = decode24(pcm, pcmLen, frames, true);
+        if (pcmScore(be) > 1e-8f || be.size() >= 64) return be;
+        return decode24(pcm, pcmLen, frames, false);
+    }
+    if (bits == 8 && pcmLen >= 1) return decode8u(pcm, pcmLen, frames);
+    if (pcmLen >= 2) return decode16be(pcm, pcmLen, frames);
+    if (pcmLen >= 1) return decode8u(pcm, pcmLen, frames);
+    return {};
+}
+
+static std::vector<float> decodeBest(const uint8_t* pcm, size_t pcmLen, int bits, int frames, bool compressed) {
+    const size_t expect = (size_t)std::max(1, frames) * (size_t)std::max(1, bits / 8);
+    const bool sizeLooksRaw = frames <= 0 || pcmLen >= expect * 9 / 10;
+    if (!compressed || sizeLooksRaw) return decodeUncompressed(pcm, pcmLen, bits, frames);
     std::vector<std::vector<float>> cands;
     cands.push_back(decodeDpcm(pcm, pcmLen, frames, 1));
     cands.push_back(decodeDpcm(pcm, pcmLen, frames, 16));
@@ -285,7 +303,7 @@ static std::vector<float> decodeBest(const uint8_t* pcm, size_t pcmLen, int bits
     }
     auto got = firstAudible(std::move(cands));
     if (!got.empty()) return got;
-    return decodeBest(pcm, pcmLen, bits, frames, false);
+    return decodeUncompressed(pcm, pcmLen, bits, frames);
 }
 
 struct KsfResult {
@@ -304,27 +322,32 @@ static KsfResult parseKorgSample(const uint8_t* b, size_t n, Sample& out) {
     char name[32]{};
     while (i + 8 <= n) {
         const char* id = (const char*)b + i;
-        const uint32_t sz = ru32be(b + i + 4);
-        if (sz < 1 || i + 8 + sz > n) break;
+        const uint32_t sz = korgChunkSize(b, i, n);
+        if (sz < 1) break;
         const uint8_t* payload = b + i + 8;
-        if (std::memcmp(id, "SMP1", 4) == 0 && sz >= 32) {
+        if ((std::memcmp(id, "SMP1", 4) == 0 || std::memcmp(id, "SMP2", 4) == 0) && sz >= 32) {
             std::memcpy(name, payload, 16);
             loopS = (int)ru32be(payload + 20);
             loopE = (int)ru32be(payload + 24);
+            if (loopS < 0 || loopS > 200000000) loopS = (int)ru32le(payload + 20);
+            if (loopE < 0 || loopE > 200000000) loopE = (int)ru32le(payload + 24);
             if (loopE > 0) loopE--;
-        } else if (std::memcmp(id, "SMD1", 4) == 0 && sz >= 12) {
+        } else if ((std::memcmp(id, "SMD1", 4) == 0 || std::memcmp(id, "SDD1", 4) == 0) && sz >= 12) {
             sr = (int)ru32be(payload);
+            if (sr < 4000 || sr > 192000) sr = (int)ru32le(payload);
             attr = payload[4];
             bits = payload[7] ? payload[7] : 16;
+            if (bits != 8 && bits != 16 && bits != 24) bits = 16;
             frames = (int)ru32be(payload + 8);
+            if (frames <= 0) frames = (int)ru32le(payload + 8);
             pcm = payload + 12;
             pcmLen = sz - 12;
             if (attr & 0x80) loop = false;
             r.compressed = (attr & 0x10) != 0;
             r.consumed = i + 8 + sz;
             if (i + 8 + sz + 8 <= n && std::memcmp(b + i + 8 + sz, "NAME", 4) == 0) {
-                const uint32_t nsz = ru32be(b + i + 8 + sz + 4);
-                if (i + 8 + sz + 8 + nsz <= n) {
+                const uint32_t nsz = korgChunkSize(b, i + 8 + sz, n);
+                if (nsz >= 1) {
                     const int m = std::min(24, (int)nsz);
                     std::memcpy(name, b + i + 8 + sz + 8, (size_t)m);
                     r.consumed += 8 + nsz;
@@ -335,9 +358,6 @@ static KsfResult parseKorgSample(const uint8_t* b, size_t n, Sample& out) {
         } else if (std::memcmp(id, "NAME", 4) == 0 && sz >= 1) {
             const int m = std::min(24, (int)sz);
             std::memcpy(name, payload, m);
-        } else if (std::memcmp(id, "SMP1", 4) != 0 && std::memcmp(id, "SMD1", 4) != 0 &&
-                   std::memcmp(id, "NAME", 4) != 0 && pcm) {
-            break;
         }
         i += 8 + sz;
         r.consumed = i;
@@ -346,7 +366,7 @@ static KsfResult parseKorgSample(const uint8_t* b, size_t n, Sample& out) {
     auto decoded = decodeBest(pcm, pcmLen, bits, frames > 0 ? frames : (int)pcmLen, r.compressed);
     if (decoded.empty()) return r;
     out.channels = 1;
-    out.sampleRate = sr > 0 ? sr : 44100;
+    out.sampleRate = sr > 0 && sr < 192000 ? sr : 44100;
     out.loop = loop && loopE > loopS;
     out.loopStart = std::max(0, loopS);
     out.loopEnd = loopE > 0 ? loopE : (int)decoded.size();
@@ -384,8 +404,13 @@ int scanPcmBank(const char* path, std::vector<Sample>& out) {
         uint8_t hdr[8];
         std::fseek(f, off, SEEK_SET);
         if (std::fread(hdr, 1, 8, f) != 8) return false;
-        const uint32_t sz = ru32be(hdr + 4);
-        if (sz < 1 || sz > 96u * 1024u * 1024u || off + 8 + (long)sz > fileSize) return false;
+        const uint32_t be = ru32be(hdr + 4);
+        const uint32_t le = ru32le(hdr + 4);
+        auto ok = [&](uint32_t sz) {
+            return sz >= 1 && sz <= 400u * 1024u * 1024u && off + 8 + (long)sz <= fileSize;
+        };
+        const uint32_t sz = ok(be) ? be : (ok(le) ? le : 0);
+        if (!sz) return false;
         buf.resize(8 + sz);
         std::memcpy(buf.data(), hdr, 8);
         return std::fread(buf.data() + 8, 1, sz, f) == sz;
@@ -399,7 +424,8 @@ int scanPcmBank(const char* path, std::vector<Sample>& out) {
         if (n < 8) break;
         size_t hit = (size_t)-1;
         for (size_t i = 0; i + 4 <= n; ++i) {
-            if (std::memcmp(window.data() + i, "SMP1", 4) == 0 || std::memcmp(window.data() + i, "SMD1", 4) == 0) {
+            if (std::memcmp(window.data() + i, "SMP1", 4) == 0 || std::memcmp(window.data() + i, "SMD1", 4) == 0 ||
+                std::memcmp(window.data() + i, "SMP2", 4) == 0 || std::memcmp(window.data() + i, "SDD1", 4) == 0) {
                 hit = i;
                 break;
             }

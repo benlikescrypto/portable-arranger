@@ -1151,6 +1151,42 @@ bool looksLikeZipFile(const char* path) {
     return peekMagic(path, mag, &n) && mag[0] == 'P' && mag[1] == 'K';
 }
 
+std::string upperPath(std::string s) {
+    for (char& c : s) c = (char)std::toupper((unsigned char)c);
+    return s;
+}
+
+bool pathContainsFolder(const std::string& path, const char* folder) {
+    const std::string u = upperPath(path);
+    const std::string a = std::string("/") + folder + "/";
+    const std::string b = std::string("\\") + folder + "\\";
+    return u.find(a) != std::string::npos || u.find(b) != std::string::npos;
+}
+
+bool fileHasKorgSampleMagic(const char* path) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    uint8_t mag[256]{};
+    const size_t n = std::fread(mag, 1, sizeof(mag), f);
+    std::fclose(f);
+    for (size_t i = 0; i + 4 <= n; ++i) {
+        if (std::memcmp(mag + i, "SMP1", 4) == 0 || std::memcmp(mag + i, "SMD1", 4) == 0 ||
+            std::memcmp(mag + i, "SMP2", 4) == 0 || std::memcmp(mag + i, "SDD1", 4) == 0)
+            return true;
+    }
+    return false;
+}
+
+bool isPcmBankPath(const std::string& path) {
+    const std::string ext = upperExt(path);
+    if (ext == ".PCM" || ext == ".KSF") return true;
+    if (ext == ".KMP" || ext == ".PCG" || ext == ".STY" || ext == ".STG" || ext == ".MID" || ext == ".SMF" ||
+        ext == ".PAD" || ext == ".PRF" || ext == ".WAV" || ext == ".ZIP" || ext == ".SET")
+        return false;
+    return pathContainsFolder(path, "PCM") || pathContainsFolder(path, "MULTISMP") ||
+           fileHasKorgSampleMagic(path.c_str());
+}
+
 const char* archiveKind(const char* path) {
     uint8_t mag[8]{};
     size_t n = 0;
@@ -1207,7 +1243,7 @@ bool extractZipArchive(const char* zipPath, const std::string& destDir, int& wro
         std::fclose(f);
         return false;
     }
-    const long tailN = sz < 65557 ? sz : 65557;
+    const long tailN = sz < 128000 ? sz : 128000;
     std::vector<uint8_t> tail((size_t)tailN);
     std::fseek(f, sz - tailN, SEEK_SET);
     if (std::fread(tail.data(), 1, tail.size(), f) != tail.size()) {
@@ -1226,31 +1262,57 @@ bool extractZipArchive(const char* zipPath, const std::string& destDir, int& wro
         return false;
     }
     const uint8_t* e = tail.data() + (size_t)eocd;
-    const uint16_t nrec = (uint16_t)(e[10] | (e[11] << 8));
-    const uint32_t cdsz = (uint32_t)(e[12] | (e[13] << 8) | (e[14] << 16) | (e[15] << 24));
-    const uint32_t cdoff = (uint32_t)(e[16] | (e[17] << 8) | (e[18] << 16) | (e[19] << 24));
+    uint64_t nrec = (uint16_t)(e[10] | (e[11] << 8));
+    uint64_t cdsz = (uint32_t)(e[12] | (e[13] << 8) | (e[14] << 16) | (e[15] << 24));
+    uint64_t cdoff = (uint32_t)(e[16] | (e[17] << 8) | (e[18] << 16) | (e[19] << 24));
     if (nrec == 0xffff || cdsz == 0xffffffffu || cdoff == 0xffffffffu) {
+        int loc = -1;
+        for (int i = eocd - 20; i >= 0; --i) {
+            if (tail[(size_t)i] == 'P' && tail[(size_t)i + 1] == 'K' && tail[(size_t)i + 2] == 6 &&
+                tail[(size_t)i + 3] == 7) {
+                loc = i;
+                break;
+            }
+        }
+        if (loc < 0) {
+            std::fclose(f);
+            reason += "Zip64 SET locator missing. Unzip on a computer, then Import the .SET folder. ";
+            return false;
+        }
+        uint64_t z64off = 0;
+        std::memcpy(&z64off, tail.data() + (size_t)loc + 8, 8);
+        uint8_t z64[56];
+        std::fseek(f, (long)z64off, SEEK_SET);
+        if (std::fread(z64, 1, 56, f) != 56 || std::memcmp(z64, "PK\x06\x06", 4) != 0) {
+            std::fclose(f);
+            reason += "Zip64 SET header unreadable. Unzip on a computer, then Import the .SET folder. ";
+            return false;
+        }
+        std::memcpy(&nrec, z64 + 32, 8);
+        std::memcpy(&cdsz, z64 + 40, 8);
+        std::memcpy(&cdoff, z64 + 48, 8);
+    }
+    if (nrec > 200000 || cdsz > (uint64_t)sz) {
         std::fclose(f);
-        reason += "Zip64 SET: unzip on a computer, then Import the .SET folder. ";
         return false;
     }
-    std::vector<uint8_t> cd(cdsz);
+    std::vector<uint8_t> cd((size_t)cdsz);
     std::fseek(f, (long)cdoff, SEEK_SET);
-    if (cdsz && std::fread(cd.data(), 1, cdsz, f) != cdsz) {
+    if (cdsz && std::fread(cd.data(), 1, (size_t)cdsz, f) != cdsz) {
         std::fclose(f);
         return false;
     }
     mkdirParents(destDir);
     size_t p = 0;
-    for (int rec = 0; rec < nrec && p + 46 <= cd.size(); ++rec) {
+    for (uint64_t rec = 0; rec < nrec && p + 46 <= cd.size(); ++rec) {
         if (std::memcmp(cd.data() + p, "PK\x01\x02", 4) != 0) break;
         const uint16_t method = (uint16_t)(cd[p + 10] | (cd[p + 11] << 8));
-        const uint32_t csz =
+        uint32_t csz =
             (uint32_t)(cd[p + 20] | (cd[p + 21] << 8) | (cd[p + 22] << 16) | (cd[p + 23] << 24));
         const uint16_t namelen = (uint16_t)(cd[p + 28] | (cd[p + 29] << 8));
         const uint16_t extra = (uint16_t)(cd[p + 30] | (cd[p + 31] << 8));
         const uint16_t comm = (uint16_t)(cd[p + 32] | (cd[p + 33] << 8));
-        const uint32_t localOff =
+        uint32_t localOff =
             (uint32_t)(cd[p + 42] | (cd[p + 43] << 8) | (cd[p + 44] << 16) | (cd[p + 45] << 24));
         if (p + 46 + namelen > cd.size()) break;
         std::string name((const char*)cd.data() + p + 46, namelen);
@@ -1262,6 +1324,9 @@ bool extractZipArchive(const char* zipPath, const std::string& destDir, int& wro
         if (std::fread(lh, 1, 30, f) != 30) continue;
         const uint16_t lname = (uint16_t)(lh[26] | (lh[27] << 8));
         const uint16_t lextra = (uint16_t)(lh[28] | (lh[29] << 8));
+        const uint32_t lcsz =
+            (uint32_t)(lh[18] | (lh[19] << 8) | (lh[20] << 16) | (lh[21] << 24));
+        if (csz == 0 && lcsz > 0) csz = lcsz;
         std::fseek(f, (long)localOff + 30 + lname + lextra, SEEK_SET);
         std::vector<uint8_t> payload(csz);
         if (csz && std::fread(payload.data(), 1, csz, f) != csz) continue;
@@ -1329,20 +1394,24 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         }
     } else {
         collect(root);
-        bool hasPcm = false;
-        for (const auto& path : files) {
-            const std::string ext = upperExt(path);
-            if (ext == ".KMP" || ext == ".KSF" || ext == ".PCM" || ext == ".WAV") hasPcm = true;
-        }
-        if (!hasPcm) {
+        auto hasSampleFiles = [&]() {
             for (const auto& path : files) {
+                const std::string ext = upperExt(path);
+                if (ext == ".KMP" || ext == ".KSF" || ext == ".PCM" || ext == ".WAV" || isPcmBankPath(path))
+                    return true;
+            }
+            return false;
+        };
+        if (!hasSampleFiles()) {
+            std::vector<std::string> archives = files;
+            for (const auto& path : archives) {
                 if (!looksLikeZipFile(path.c_str())) continue;
                 const std::string unpacked = path + "_unpacked";
                 int wrote = 0;
                 if (extractZipArchive(path.c_str(), unpacked, wrote, reason) && wrote > 0) {
                     reason += "Unzipped " + std::to_string(wrote) + " files. ";
                     collect(unpacked);
-                    break;
+                    if (hasSampleFiles()) break;
                 }
             }
         }
@@ -1403,23 +1472,28 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             } else {
                 skipped++;
             }
-        } else if (ext == ".KSF") {
+        } else if (ext == ".KSF" || ext == ".KSC") {
             Sample s;
             bool comp = false;
             std::vector<uint8_t> bytes;
             if (readFileBytes(path.c_str(), bytes) && loadKsfBytes(bytes.data(), bytes.size(), s, &comp) > 0) {
                 if (!s.name[0]) copyName40(s.name, sizeof(s.name), fileStem(path));
                 addLoaded(std::move(s), path, comp);
-            } else {
-                skipped++;
-                if (reason.size() < 180) reason += "KSF decode failed (" + fileStem(path) + "). ";
+            } else if (ext == ".KSF") {
+                std::vector<Sample> found;
+                scanPcmBank(path.c_str(), found);
+                if (found.empty()) {
+                    skipped++;
+                    if (reason.size() < 180) reason += "KSF decode failed (" + fileStem(path) + "). ";
+                }
+                for (auto& s : found) addLoaded(std::move(s), path, false);
             }
-        } else if (ext == ".PCM") {
+        } else if (ext == ".PCM" || isPcmBankPath(path)) {
             std::vector<Sample> found;
             scanPcmBank(path.c_str(), found);
             if (found.empty()) {
                 skipped++;
-                if (reason.size() < 180) reason += "PCM bank had no SMP1/SMD1 (" + fileStem(path) + "). ";
+                if (reason.size() < 220) reason += "PCM bank had no SMP1/SMD1 (" + fileStem(path) + "). ";
             }
             for (auto& s : found) addLoaded(std::move(s), path, false);
         }
