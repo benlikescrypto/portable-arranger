@@ -1,16 +1,31 @@
 import { audio, isAudioNativeAvailable } from "arrangerbox-audio"
 import { midi } from "arrangerbox-midi"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Alert } from "react-native"
 
-import { importPa4xSet, type ImportMode } from "@/lib/library/setImporter"
-import type { ArrangerUiState, Mode, SoundItem, StyleItem } from "@/lib/types"
+import {
+  loadDiskCatalog,
+  loadDiskItem,
+  mergePads,
+  mergeSounds,
+  mergeStyles,
+} from "@/lib/library/diskCatalog"
+import {
+  importPa4xSet,
+  readSavedSelection,
+  restoreSavedSets,
+  writeSavedSelection,
+  type ImportMode,
+} from "@/lib/library/setImporter"
+import type { ArrangerUiState, LibraryKind, Mode, PadItem, SoundItem, StyleItem } from "@/lib/types"
 
 function catalogSounds(): SoundItem[] {
   return audio.listSounds().map((item) => ({
     ...item,
     bank: item.source === "FACTORY" || !item.source ? "FACTORY" : item.source,
     source: item.source ?? "FACTORY",
+    loaded: true,
+    engineId: item.id,
   }))
 }
 
@@ -24,6 +39,18 @@ function findSoundId(sounds: SoundItem[], names: string[], fallback = 0) {
   return fallback
 }
 
+function findStyleId(styles: StyleItem[], names: string[], fallback = 0) {
+  for (const name of names) {
+    const hit = styles.find((item) => item.name === name)
+    if (hit) return hit.id
+  }
+  return fallback
+}
+
+function isImportedSound(item: SoundItem) {
+  return (item.source ?? "FACTORY").toUpperCase() !== "FACTORY"
+}
+
 function catalogStyles(): StyleItem[] {
   return audio.listStyles().map((item) => {
     const imported = factoryStyleCount > 0 && item.id >= factoryStyleCount
@@ -32,8 +59,17 @@ function catalogStyles(): StyleItem[] {
       bank: imported ? "IMPORTED" : "FACTORY",
       source: imported ? "IMPORTED" : "FACTORY",
       category: imported && item.category === "Style" ? "Imported" : item.category,
+      loaded: true,
+      engineId: item.id,
     }
   })
+}
+
+function engineProgram(item?: { loaded?: boolean; engineId?: number; id: number } | null) {
+  if (!item) return -1
+  if (item.engineId != null && item.engineId >= 0) return item.engineId
+  if (item.loaded !== false) return item.id
+  return -1
 }
 
 const initial: ArrangerUiState = {
@@ -42,6 +78,7 @@ const initial: ArrangerUiState = {
   adapterName: "ArrangerBox",
   sounds: [],
   styles: [],
+  pads: [],
   query: "",
   category: "All",
   upper1: 0,
@@ -53,6 +90,7 @@ const initial: ArrangerUiState = {
   lowerOn: false,
   split: 54,
   styleId: 0,
+  padId: 0,
   tempo: 112,
   transpose: 0,
   variation: 1,
@@ -67,8 +105,9 @@ const initial: ArrangerUiState = {
   midiName: "MIDI",
   latencyMs: 8,
   nativeReady: false,
-  importMessage: "",
-  importing: false,
+  arrangerReady: false,
+  importMessage: "Loading arranger…",
+  importing: true,
   importProgress: 0,
   setFiles: [],
   sts: 1,
@@ -81,6 +120,9 @@ const initial: ArrangerUiState = {
   recentStyles: [],
   libraryFilter: "all",
   importReport: "",
+  loadingId: null,
+  loadingKind: null,
+  loadingProgress: 0,
 }
 
 export function useArranger() {
@@ -90,22 +132,83 @@ export function useArranger() {
     let alive = true
     ;(async () => {
       if (!isAudioNativeAvailable) {
-        setState((s) => ({ ...s, importMessage: "Native audio requires an Expo development build." }))
+        setState((s) => ({
+          ...s,
+          arrangerReady: true,
+          importing: false,
+          importMessage: "Native audio requires an Expo development build.",
+        }))
         return
       }
       const started = await audio.start()
       if (!alive) return
-      const sounds = catalogSounds()
-      const styles = catalogStyles()
-      factoryStyleCount = styles.length
-      const upper1 = findSoundId(sounds, ["Concert Grand"])
-      const upper2 = findSoundId(sounds, ["Warm Pad", "Atmosphere"], 11)
-      const upper3 = findSoundId(sounds, ["Concert Strings", "Chamber Strings"], 10)
-      const lower = findSoundId(sounds, ["Cinematic Strings", "Symphonic Strings", "Concert Strings"], 10)
-      audio.setPartProgram(0, upper1)
-      audio.setPartProgram(1, upper2)
-      audio.setPartProgram(2, upper3)
-      audio.setPartProgram(3, lower)
+      factoryStyleCount = catalogStyles().length
+      setState((s) => ({
+        ...s,
+        nativeReady: started,
+        importing: true,
+        importProgress: 0.08,
+        importMessage: "Reading library names…",
+      }))
+      try {
+        await restoreSavedSets(() => undefined)
+      } catch (error) {
+        console.log("[import] restore failed", error)
+      }
+      if (!alive) return
+      const disk = await loadDiskCatalog()
+      const saved = await readSavedSelection()
+      let sounds = mergeSounds(catalogSounds(), disk.sounds)
+      let styles = mergeStyles(catalogStyles(), disk.styles)
+      let pads = mergePads(catalogStyles(), disk.pads)
+      const importedSounds = sounds.filter(isImportedSound)
+      const importedStyles = styles.filter((item) => item.source === "IMPORTED")
+      const upper1 = findSoundId(
+        sounds,
+        [saved.upper1Name, importedSounds.at(-1)?.name, "Concert Grand"].filter(Boolean) as string[]
+      )
+      const upper2 = findSoundId(
+        sounds,
+        [saved.upper2Name, "Warm Pad", "Atmosphere"].filter(Boolean) as string[],
+        11
+      )
+      const upper3 = findSoundId(
+        sounds,
+        [saved.upper3Name, "Concert Strings", "Chamber Strings"].filter(Boolean) as string[],
+        10
+      )
+      const lower = findSoundId(
+        sounds,
+        [saved.lowerName, "Cinematic Strings", "Symphonic Strings", "Concert Strings"].filter(
+          Boolean
+        ) as string[],
+        10
+      )
+      const styleId = findStyleId(
+        styles,
+        [saved.styleName, importedStyles.at(-1)?.name, styles[0]?.name].filter(Boolean) as string[],
+        styles[0]?.id ?? 0
+      )
+      const loadIfNeeded = async (kind: LibraryKind, item?: SoundItem | StyleItem) => {
+        if (!item || item.loaded !== false) return
+        setState((s) => ({ ...s, importMessage: `Loading ${item.name}…`, importProgress: 0.45 }))
+        await loadDiskItem({ kind, name: item.name, setPath: item.setPath, fileName: item.fileName })
+        sounds = mergeSounds(catalogSounds(), disk.sounds)
+        styles = mergeStyles(catalogStyles(), disk.styles)
+        pads = mergePads(catalogStyles(), disk.pads)
+      }
+      await loadIfNeeded("sound", sounds.find((item) => item.id === upper1))
+      await loadIfNeeded("style", styles.find((item) => item.id === styleId))
+      if (!alive) return
+      const style = styles.find((item) => item.id === styleId)
+      const program = (id: number, fallback: number) => {
+        const prog = engineProgram(sounds.find((item) => item.id === id))
+        return prog >= 0 ? prog : fallback
+      }
+      audio.setPartProgram(0, program(upper1, 0))
+      audio.setPartProgram(1, program(upper2, 7))
+      audio.setPartProgram(2, program(upper3, 11))
+      audio.setPartProgram(3, program(lower, 21))
       audio.setPartEnable(1, false)
       audio.setPartEnable(2, false)
       audio.setPartEnable(3, true)
@@ -113,15 +216,23 @@ export function useArranger() {
       audio.setSynchro(false)
       audio.setFx(0, 0.18)
       audio.setFx(1, 0.08)
-      if (styles.length > 0) {
-        audio.setStyle(0)
-        audio.setTempo(styles[0].tempo || 112)
+      const styleProg = engineProgram(style)
+      if (styleProg >= 0) {
+        audio.setStyle(styleProg)
+        audio.setTempo(style?.tempo || 112)
       }
+      const userOnDisk = disk.sounds.length + disk.styles.length + disk.pads.length
+      const restoreReport = userOnDisk
+        ? `${disk.sounds.length} User sounds · ${disk.styles.length} styles · ${disk.pads.length} pads — tap to load`
+        : ""
       setState((s) => ({
         ...s,
         sounds,
         styles,
+        pads,
         nativeReady: started,
+        arrangerReady: true,
+        setName: saved.setName || disk.setName || "",
         upper1,
         upper2,
         upper3,
@@ -129,9 +240,12 @@ export function useArranger() {
         upper2On: false,
         upper3On: false,
         lowerOn: true,
-        styleId: styles[0]?.id ?? 0,
-        tempo: styles[0]?.tempo || 112,
-        importMessage: "",
+        styleId,
+        tempo: style?.tempo || 112,
+        importing: false,
+        importProgress: 1,
+        importMessage: restoreReport,
+        importReport: restoreReport,
       }))
       await midi.start()
     })()
@@ -166,17 +280,115 @@ export function useArranger() {
     setState((s) => ({ ...s, libraryFilter }))
   }, [])
 
-  const selectSound = useCallback((id: number, part = 0) => {
-    setState((s) => {
-      audio.setPartProgram(part, id)
-      if (part > 0) audio.setPartEnable(part, true)
-      const recentSounds = [id, ...s.recentSounds.filter((x) => x !== id)].slice(0, 12)
-      if (part === 1) return { ...s, upper2: id, upper2On: true, recentSounds }
-      if (part === 2) return { ...s, upper3: id, upper3On: true, recentSounds }
-      if (part === 3) return { ...s, lower: id, recentSounds }
-      return { ...s, upper1: id, recentSounds }
-    })
+  const loadingLock = useRef(false)
+
+  const refreshLibrary = useCallback(async () => {
+    const disk = await loadDiskCatalog()
+    return {
+      disk,
+      sounds: mergeSounds(catalogSounds(), disk.sounds),
+      styles: mergeStyles(catalogStyles(), disk.styles),
+      pads: mergePads(catalogStyles(), disk.pads),
+    }
   }, [])
+
+  const assignSound = useCallback((s: ArrangerUiState, id: number, part: number, sounds: SoundItem[]) => {
+    const item = sounds.find((row) => row.id === id)
+    const prog = engineProgram(item)
+    if (prog >= 0) {
+      audio.setPartProgram(part, prog)
+      if (part > 0) audio.setPartEnable(part, true)
+    }
+    if (item?.name) {
+      void writeSavedSelection(
+        part === 1
+          ? { upper2Name: item.name }
+          : part === 2
+            ? { upper3Name: item.name }
+            : part === 3
+              ? { lowerName: item.name }
+              : { upper1Name: item.name }
+      )
+    }
+    const recentSounds = [id, ...s.recentSounds.filter((x) => x !== id)].slice(0, 12)
+    if (part === 1) return { ...s, sounds, upper2: id, upper2On: true, recentSounds }
+    if (part === 2) return { ...s, sounds, upper3: id, upper3On: true, recentSounds }
+    if (part === 3) return { ...s, sounds, lower: id, recentSounds }
+    return { ...s, sounds, upper1: id, recentSounds }
+  }, [])
+
+  const ensureLoaded = useCallback(
+    async (kind: LibraryKind, id: number, item: SoundItem | StyleItem | PadItem | undefined) => {
+      if (!item) return { ok: false, reason: "Missing." }
+      if (item.loaded !== false && engineProgram(item) >= 0) return { ok: true, reason: "" }
+      if (loadingLock.current) return { ok: false, reason: "Busy." }
+      loadingLock.current = true
+      const tick = setInterval(() => {
+        setState((s) => ({ ...s, loadingProgress: Math.min(0.9, s.loadingProgress + 0.05) }))
+      }, 160)
+      setState((s) => ({ ...s, loadingId: id, loadingKind: kind, loadingProgress: 0.08 }))
+      try {
+        const result = await loadDiskItem({
+          kind,
+          name: item.name,
+          setPath: item.setPath,
+          fileName: item.fileName,
+        })
+        const lib = await refreshLibrary()
+        const next =
+          kind === "sound"
+            ? lib.sounds.find((row) => row.name === item.name)
+            : kind === "pad"
+              ? lib.pads.find((row) => row.name === item.name)
+              : lib.styles.find((row) => row.name === item.name)
+        const ok = result.ok || engineProgram(next) >= 0
+        setState((s) => ({
+          ...s,
+          sounds: lib.sounds,
+          styles: lib.styles,
+          pads: lib.pads,
+          loadingProgress: 1,
+          importMessage: ok ? "" : result.reason,
+        }))
+        return { ok, reason: result.reason, sounds: lib.sounds, styles: lib.styles, pads: lib.pads }
+      } finally {
+        clearInterval(tick)
+        loadingLock.current = false
+        setTimeout(() => {
+          setState((s) => ({ ...s, loadingId: null, loadingKind: null, loadingProgress: 0 }))
+        }, 250)
+      }
+    },
+    [refreshLibrary]
+  )
+
+  const selectSound = useCallback(
+    (id: number, part = 0) => {
+      void (async () => {
+        const current = await new Promise<ArrangerUiState>((resolve) => {
+          setState((s) => {
+            resolve(s)
+            return s
+          })
+        })
+        const item = current.sounds.find((row) => row.id === id)
+        if (item?.loaded !== false && engineProgram(item) >= 0) {
+          setState((s) => assignSound(s, id, part, s.sounds))
+          return
+        }
+        const loaded = await ensureLoaded("sound", id, item)
+        if (!loaded.ok) {
+          setState((s) => ({
+            ...s,
+            sounds: s.sounds.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
+          }))
+          return
+        }
+        setState((s) => assignSound(s, id, part, loaded.sounds ?? s.sounds))
+      })()
+    },
+    [assignSound, ensureLoaded]
+  )
 
   const togglePart = useCallback((part: number) => {
     setState((s) => {
@@ -189,20 +401,78 @@ export function useArranger() {
     })
   }, [])
 
-  const selectStyle = useCallback((id: number) => {
-    setState((s) => {
-      const style = s.styles.find((item) => item.id === id)
-      audio.setStyle(id)
-      const tempo = style?.tempo || 100
-      audio.setTempo(tempo)
-      return {
-        ...s,
-        styleId: id,
-        tempo,
-        recentStyles: [id, ...s.recentStyles.filter((x) => x !== id)].slice(0, 12),
-      }
-    })
-  }, [])
+  const selectStyle = useCallback(
+    (id: number) => {
+      void (async () => {
+        const current = await new Promise<ArrangerUiState>((resolve) => {
+          setState((s) => {
+            resolve(s)
+            return s
+          })
+        })
+        const apply = (s: ArrangerUiState, styles: StyleItem[]) => {
+          const style = styles.find((item) => item.id === id)
+          const prog = engineProgram(style)
+          const tempo = style?.tempo || s.tempo || 100
+          if (prog >= 0) {
+            audio.setStyle(prog)
+            if (style?.tempo) audio.setTempo(tempo)
+          }
+          if (style?.name) void writeSavedSelection({ styleName: style.name })
+          return {
+            ...s,
+            styles,
+            styleId: id,
+            tempo,
+            recentStyles: [id, ...s.recentStyles.filter((x) => x !== id)].slice(0, 12),
+          }
+        }
+        const item = current.styles.find((row) => row.id === id)
+        if (item?.loaded !== false && engineProgram(item) >= 0) {
+          setState((s) => apply(s, s.styles))
+          return
+        }
+        const loaded = await ensureLoaded("style", id, item)
+        if (!loaded.ok) {
+          setState((s) => ({
+            ...s,
+            styles: s.styles.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
+          }))
+          return
+        }
+        setState((s) => apply(s, loaded.styles ?? s.styles))
+      })()
+    },
+    [ensureLoaded]
+  )
+
+  const selectPad = useCallback(
+    (id: number) => {
+      void (async () => {
+        const current = await new Promise<ArrangerUiState>((resolve) => {
+          setState((s) => {
+            resolve(s)
+            return s
+          })
+        })
+        const item = current.pads.find((row) => row.id === id)
+        if (item?.loaded !== false && engineProgram(item) >= 0) {
+          setState((s) => ({ ...s, padId: id }))
+          return
+        }
+        const loaded = await ensureLoaded("pad", id, item)
+        if (!loaded.ok) {
+          setState((s) => ({
+            ...s,
+            pads: s.pads.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
+          }))
+          return
+        }
+        setState((s) => ({ ...s, pads: loaded.pads ?? s.pads, padId: id }))
+      })()
+    },
+    [ensureLoaded]
+  )
 
   const book = useCallback((section: number) => {
     audio.bookSection(section)
@@ -249,54 +519,39 @@ export function useArranger() {
         setState((s) => ({ ...s, importing: false, importMessage: "Load cancelled." }))
         return
       }
-      const sounds = catalogSounds()
-      const styles = catalogStyles()
+      const disk = await loadDiskCatalog()
+      const sounds = mergeSounds(catalogSounds(), disk.sounds)
+      const styles = mergeStyles(catalogStyles(), disk.styles)
+      const pads = mergePads(catalogStyles(), disk.pads)
       const importedStyles = styles.filter((item) => item.source === "IMPORTED")
-      const importedSounds = sounds.filter((item) => {
-        const src = (item.source ?? "FACTORY").toUpperCase()
-        return src !== "FACTORY"
-      })
-      const next = importedStyles[importedStyles.length - 1]
-      const nextSound = importedSounds[importedSounds.length - 1]
-      const loaded = next ? 1 : lib.stylesLoaded
-      const instrumentCount = Math.max(importedSounds.length, lib.patchesLoaded, lib.samplesLoaded > 0 ? 1 : 0)
+      const importedSounds = sounds.filter(isImportedSound)
+      void writeSavedSelection({ setName: lib.setName || disk.setName })
       const report = [
-        instrumentCount
-          ? `${importedSounds.length || lib.patchesLoaded || lib.samplesLoaded} instruments — open Sound Select, tap User`
-          : "0 instruments (need PCM/KMP in the SET, or unzip the archive first)",
-        loaded ? `${importedStyles.length || lib.stylesLoaded} imported style${importedStyles.length === 1 ? "" : "s"}` : "0 styles (native STY is packed; use Export SMF)",
-        lib.samplesLoaded ? `${lib.samplesLoaded} samples` : "",
+        `${importedSounds.length} User sound${importedSounds.length === 1 ? "" : "s"}`,
+        `${importedStyles.length} style${importedStyles.length === 1 ? "" : "s"}`,
+        `${pads.length} pad${pads.length === 1 ? "" : "s"}`,
+        "tap a User square to load it into RAM",
         lib.reason?.trim(),
       ]
         .filter(Boolean)
         .join(" · ")
       console.log("[import] done", report, {
         set: lib.setName,
-        styles: lib.stylesLoaded,
-        patches: lib.patchesLoaded,
         files: lib.files.slice(0, 12).map((f) => f.relativePath),
       })
-      if (next) {
-        audio.setStyle(next.id)
-        if (next.tempo) audio.setTempo(next.tempo)
-      }
-      if (nextSound) audio.setPartProgram(0, nextSound.id)
       setState((s) => ({
         ...s,
         importing: false,
         importProgress: 1,
-        setName: lib.setName,
+        setName: lib.setName || disk.setName,
         adapterName: lib.adapterName,
         sounds,
         styles,
-        styleId: next ? next.id : s.styleId,
-        upper1: nextSound ? nextSound.id : s.upper1,
-        tempo: next?.tempo || s.tempo,
+        pads,
         setFiles: lib.files.map((f) => f.relativePath),
         importReport: report,
         importMessage: report || "Import finished.",
-        libraryFilter: next ? "imported" : s.libraryFilter,
-        category: next ? "World" : s.category,
+        libraryFilter: "imported",
         mode: "STYLE",
       }))
       Alert.alert("Import", report || "Import finished.")
@@ -333,12 +588,19 @@ export function useArranger() {
       selectSound,
       togglePart,
       selectStyle,
+      selectPad,
       book,
       setMixer,
       setAccVolume,
       importSet,
       toggleStart: () => {
         if (isAudioNativeAvailable) audio.arrangerToggle()
+      },
+      playNote: (note: number, vel = 100) => {
+        audio.noteOn(0, note, vel)
+      },
+      releaseNote: (note: number) => {
+        audio.noteOff(0, note)
       },
       nudgeTempo: (delta: number) => {
         setState((s) => {
@@ -390,7 +652,8 @@ export function useArranger() {
                   ? ["Concert Grand", "Pop Piano"]
                   : ["Accordion", "Kanun"]
           const id = findSoundId(s.sounds, names, s.upper1)
-          audio.setPartProgram(0, id)
+          const prog = engineProgram(s.sounds.find((item) => item.id === id))
+          if (prog >= 0) audio.setPartProgram(0, prog)
           return { ...s, sts: n, variation: n, upper1: id }
         })
       },
@@ -405,7 +668,20 @@ export function useArranger() {
           favorites: s.favorites.includes(id) ? s.favorites.filter((x) => x !== id) : [...s.favorites, id],
         })),
     }),
-    [book, importSet, selectSound, selectStyle, setAccVolume, setCategory, setLibraryFilter, setMixer, setMode, setQuery, togglePart]
+    [
+      book,
+      importSet,
+      selectPad,
+      selectSound,
+      selectStyle,
+      setAccVolume,
+      setCategory,
+      setLibraryFilter,
+      setMixer,
+      setMode,
+      setQuery,
+      togglePart,
+    ]
   )
 
   return { state, ...actions }

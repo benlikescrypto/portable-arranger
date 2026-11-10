@@ -1,4 +1,3 @@
-import { audio } from "arrangerbox-audio"
 import { device } from "arrangerbox-device"
 import { Directory, File, Paths } from "expo-file-system"
 import { Platform } from "react-native"
@@ -21,12 +20,6 @@ export type ImportMode = "folder" | "files"
 
 function logImport(...args: unknown[]) {
   console.log("[import]", ...args)
-}
-
-function nativePath(file: File | Directory): string {
-  const uri = file.uri
-  if (uri.startsWith("file://")) return decodeURIComponent(uri.replace(/^file:\/\//, ""))
-  return uri
 }
 
 function safeName(name: string) {
@@ -55,21 +48,6 @@ function isSampleFileName(name: string) {
 function diskInventory(files: { kind: string; relativePath: string }[]) {
   const n = (kind: string) => files.filter((f) => f.kind === kind).length
   return `on disk: ${files.length} files, ${n("MULTISAMPLE")} KMP, ${n("SAMPLE")} KSF, ${n("PCM")} PCM, ${n("WAV")} WAV, ${n("STYLE")} STY, ${n("ARCHIVE")} archives, ${n("SET")} SET, ${n("FILE")} other`
-}
-
-function* walkStyleFiles(dir: Directory): Generator<File> {
-  try {
-    for (const child of dir.list()) {
-      if (child.name.startsWith(".")) continue
-      if (isDirectory(child)) {
-        yield* walkStyleFiles(asDirectory(child))
-        continue
-      }
-      if (isStyleFileName(child.name) || isSampleFileName(child.name) || /\.(ZIP|SET)$/i.test(child.name)) yield child as File
-    }
-  } catch (error) {
-    logImport("walkStyleFiles failed", dir.uri, error)
-  }
 }
 
 function asciiMagic(bytes: Uint8Array, n = 8) {
@@ -129,6 +107,7 @@ function parseReport(raw: string) {
       pcgFiles?: number
       pcgNames?: number
       missing?: number
+      cached?: number
       reason?: string
     }
   } catch {
@@ -155,31 +134,18 @@ function finishImport(
   }
 }
 
-function* walkArchives(dir: Directory): Generator<File> {
-  try {
-    for (const child of dir.list()) {
-      if (child.name.startsWith(".")) continue
-      if (isDirectory(child)) {
-        yield* walkArchives(asDirectory(child))
-        continue
-      }
-      if (/\.(ZIP|SET|KSC)$/i.test(child.name)) yield child as File
-    }
-  } catch (error) {
-    logImport("walkArchives failed", dir.uri, error)
-  }
-}
-
 async function loadCopiedFolder(
   dest: Directory,
   setName: string,
-  onProgress: (progress: ImportProgress) => void
+  onProgress: (progress: ImportProgress) => void,
+  opts: { restore?: boolean } = {}
 ): Promise<ImportedLibrary> {
   const setFolder = findSetFolder(dest)
   logImport("load", {
     dest: dest.uri,
     set: setFolder.uri,
     name: setFolder.name,
+    restore: !!opts.restore,
     listing: (() => {
       try {
         return setFolder.list().map((item) => `${item.name}${isDirectory(item) ? "/" : ""}`)
@@ -188,53 +154,127 @@ async function loadCopiedFolder(
       }
     })(),
   })
-  onProgress({ message: `Reading ${setFolder.name}…`, fraction: 0.62 })
-  const inspected = await inspectPa4x(setFolder)
-  const peeks = await peekFolder(setFolder)
-  onProgress({ message: "Loading STY, PCM, KMP and PCG into the engine…", fraction: 0.72 })
-  const targets = [nativePath(setFolder)]
-  for (const archive of walkArchives(setFolder)) {
-    const path = nativePath(archive)
-    if (!targets.includes(path)) targets.push(path)
-  }
-  let raw = '{"ok":0}'
-  let report = parseReport(raw)
-  for (const target of targets) {
-    const again = await audio.loadPa4xSet(target)
-    logImport("engine", target, again)
-    const next = parseReport(again)
-    const better =
-      (next.patches ?? 0) > (report.patches ?? 0) ||
-      (next.samples ?? 0) > (report.samples ?? 0) ||
-      (next.styles ?? 0) > (report.styles ?? 0) ||
-      ((report.patches ?? 0) === 0 && (report.samples ?? 0) === 0 && (next.ok ?? 0) === 1)
-    if (better) {
-      raw = again
-      report = next
-    }
-    if ((report.patches ?? 0) > 0 && (report.samples ?? 0) > 0) break
-  }
-  if ((report.styles ?? 0) === 0 || (report.patches ?? 0) === 0) {
-    try {
-      for (const child of walkStyleFiles(setFolder)) {
-        const again = await audio.loadPa4xSet(nativePath(child))
-        logImport("engine-file", child.name, again)
-        const next = parseReport(again)
-        const betterStyles = (next.styles ?? 0) > (report.styles ?? 0)
-        const betterPatches = (next.patches ?? 0) > (report.patches ?? 0)
-        const betterSamples = (next.samples ?? 0) > (report.samples ?? 0)
-        if (betterStyles || betterPatches || betterSamples) {
-          raw = again
-          report = next
-        }
-      }
-    } catch (error) {
-      logImport("per-file retry failed", error)
-    }
-  }
+  onProgress({ message: `Opening ${setFolder.name}…`, fraction: 0.62 })
+  const inspected = opts.restore
+    ? await Promise.resolve({
+        setName,
+        adapterId: "korg-pa4x",
+        adapterName: "Korg PA4X",
+        sounds: [],
+        styles: [],
+        samplesLoaded: 0,
+        skippedSamples: 0,
+        patchesLoaded: 0,
+        stylesLoaded: 0,
+        compressedDecoded: 0,
+        reason: "",
+        files: [],
+      } satisfies ImportedLibrary)
+    : await inspectPa4x(setFolder)
+  const peeks = opts.restore ? [] : await peekFolder(setFolder)
+  onProgress({
+    message: "Reading names on disk…",
+    fraction: 0.82,
+  })
   onProgress({ message: "Ready", fraction: 1 })
-  const extra = [diskInventory(inspected.files), peeks.length ? peeks.join(" · ") : ""].filter(Boolean).join(" · ")
-  return finishImport(inspected, setName, report, extra)
+  const extra = [
+    diskInventory(inspected.files),
+    peeks.length ? peeks.join(" · ") : "",
+    "Tap a User sound, style, or pad to load it into RAM.",
+  ]
+    .filter(Boolean)
+    .join(" · ")
+  return finishImport(inspected, setName, { ok: 1, reason: extra }, extra)
+}
+
+export type SavedSelection = {
+  setName?: string
+  upper1Name?: string
+  upper2Name?: string
+  upper3Name?: string
+  lowerName?: string
+  styleName?: string
+}
+
+function selectionFile() {
+  return new File(Paths.document, "library-state.json")
+}
+
+export async function readSavedSelection(): Promise<SavedSelection> {
+  try {
+    const file = selectionFile()
+    if (!file.exists) return {}
+    const text = await Promise.resolve(file.text())
+    if (!text) return {}
+    return JSON.parse(text) as SavedSelection
+  } catch (error) {
+    logImport("read library-state failed", error)
+    return {}
+  }
+}
+
+export async function writeSavedSelection(patch: SavedSelection) {
+  try {
+    const prev = await readSavedSelection()
+    const next = { ...prev, ...patch }
+    const file = selectionFile()
+    if (!file.exists) file.create({ intermediates: true, idempotent: true })
+    file.write(JSON.stringify(next))
+  } catch (error) {
+    logImport("write library-state failed", error)
+  }
+}
+
+function savedSetsRoot() {
+  return new Directory(Paths.document, "sets")
+}
+
+function listSavedSetDirs(): Directory[] {
+  const root = savedSetsRoot()
+  if (!root.exists) return []
+  const out: Directory[] = []
+  try {
+    for (const child of root.list()) {
+      if (!child.name || child.name.startsWith(".")) continue
+      if (isDirectory(child) || isSetName(child.name)) out.push(asDirectory(child))
+    }
+  } catch (error) {
+    logImport("list saved sets failed", error)
+  }
+  return out
+}
+
+function blankLibrary(setName: string): ImportedLibrary {
+  return {
+    setName,
+    adapterId: "korg-pa4x",
+    adapterName: "Korg PA4X",
+    sounds: [],
+    styles: [],
+    samplesLoaded: 0,
+    skippedSamples: 0,
+    patchesLoaded: 0,
+    stylesLoaded: 0,
+    compressedDecoded: 0,
+    reason: "",
+    files: [],
+  }
+}
+
+export async function restoreSavedSets(
+  onProgress: (progress: ImportProgress) => void
+): Promise<ImportedLibrary | null> {
+  const dirs = listSavedSetDirs()
+  if (!dirs.length) {
+    logImport("restore", "no saved SET folders")
+    return null
+  }
+  logImport(
+    "restore names only",
+    dirs.map((dir) => dir.uri)
+  )
+  onProgress({ message: "Ready", fraction: 1 })
+  return blankLibrary(safeName(dirs[0].name))
 }
 
 function prepareDest(setName: string) {

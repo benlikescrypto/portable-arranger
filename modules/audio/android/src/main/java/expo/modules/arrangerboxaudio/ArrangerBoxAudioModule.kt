@@ -138,6 +138,14 @@ class ArrangerBoxAudioModule : Module() {
       EngineNative.nativeLoadPa4xSet(path)
     }
 
+    AsyncFunction("loadPa4xNamed") { path: String, kind: String, name: String ->
+      EngineNative.nativeLoadPa4xNamed(path, kind, name)
+    }
+
+    AsyncFunction("listPa4xCatalog") { path: String ->
+      EngineNative.nativeListPa4xCatalog(path)
+    }
+
     AsyncFunction("loadSfz") { path: String ->
       EngineNative.nativeLoadSfz(path)
     }

@@ -54,6 +54,8 @@ type AudioNative = {
   loadKsf: (path: string, name: string, category: string) => Promise<number>
   scanPcmBank: (path: string) => Promise<number>
   loadPa4xSet?: (path: string) => Promise<string>
+  loadPa4xNamed?: (path: string, kind: string, name: string) => Promise<string>
+  listPa4xCatalog?: (path: string) => Promise<string>
   loadSfz?: (path: string) => Promise<string>
   loadAbStyle?: (path: string) => Promise<string>
 }
@@ -147,6 +149,14 @@ export const audio = {
   loadPa4xSet(path: string) {
     const load = native?.loadPa4xSet
     return load ? load(path) : Promise.resolve('{"ok":0}')
+  },
+  loadPa4xNamed(path: string, kind: string, name: string) {
+    const load = native?.loadPa4xNamed
+    return load ? load(path, kind, name) : Promise.resolve('{"ok":0,"reason":"This app build cannot load one item at a time."}')
+  },
+  listPa4xCatalog(path: string) {
+    const list = native?.listPa4xCatalog
+    return list ? list(path) : Promise.resolve('{"ok":0}')
   },
   loadSfz(path: string) {
     const load = native?.loadSfz

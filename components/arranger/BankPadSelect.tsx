@@ -9,6 +9,8 @@ export type PadEntry = {
   name: string
   category: string
   source?: string
+  loaded?: boolean
+  loadError?: string
 }
 
 type Props = {
@@ -21,6 +23,9 @@ type Props = {
   categorize: (item: PadEntry) => string
   onSelect: (id: number) => void
   onClose: () => void
+  emptyHint?: string
+  loadingId?: number | null
+  loadingProgress?: number
 }
 
 function inBank(items: PadEntry[], bank: SoundBank) {
@@ -48,6 +53,9 @@ export function BankPadSelect({
   categorize,
   onSelect,
   onClose,
+  emptyHint,
+  loadingId = null,
+  loadingProgress = 0,
 }: Props) {
   const current = items.find((item) => item.id === activeId)
   const initialBank: SoundBank = (current?.source ?? "FACTORY").toUpperCase() === "FACTORY" ? "Factory" : "User"
@@ -117,6 +125,8 @@ export function BankPadSelect({
                   {[0, 1].map((col) => {
                     const i = row * 2 + col
                     const pad = pads[i]
+                    const loading = pad != null && pad.id === loadingId
+                    const loaded = pad?.loaded !== false
                     return (
                       <Pressable
                         key={i}
@@ -127,13 +137,31 @@ export function BankPadSelect({
                         style={({ pressed }) => [
                           styles.pad,
                           !pad && styles.padEmpty,
+                          pad && !loaded && styles.padUnloaded,
                           pad?.id === activeId && styles.padOn,
+                          loading && styles.padLoading,
                           pressed && pad && styles.pressed,
                         ]}
                       >
+                        {loading ? (
+                          <View
+                            pointerEvents="none"
+                            style={[styles.padFill, { height: `${Math.max(8, Math.round(loadingProgress * 100))}%` }]}
+                          />
+                        ) : null}
                         <Text style={[styles.padName, !pad && styles.padNameEmpty]} numberOfLines={2}>
                           {pad?.name ?? ""}
                         </Text>
+                        {pad && !loaded && !loading ? (
+                          <Text style={styles.padMeta} numberOfLines={1}>
+                            {pad.loadError ? "Need SMF" : "Tap to load"}
+                          </Text>
+                        ) : null}
+                        {loading ? (
+                          <Text style={styles.padMeta} numberOfLines={1}>
+                            {`${Math.round(loadingProgress * 100)}%`}
+                          </Text>
+                        ) : null}
                       </Pressable>
                     )
                   })}
@@ -149,6 +177,8 @@ export function BankPadSelect({
             </View>
             {bank === "Legacy" || bank === "GM/XG" ? (
               <Text style={styles.emptyBank}>No {bank} bank in ArrangerBox.</Text>
+            ) : bank === "User" && categoryItems.length === 0 && emptyHint ? (
+              <Text style={styles.emptyBank}>{emptyHint}</Text>
             ) : null}
           </View>
 
@@ -246,11 +276,22 @@ const styles = StyleSheet.create({
     borderColor: "#9A3535",
     borderTopColor: "#E07A7A",
     borderLeftColor: "#D66A6A",
+    overflow: "hidden",
   },
   padEmpty: { backgroundColor: "#8A3A3A", borderTopColor: "#A05050", borderLeftColor: "#944848" },
+  padUnloaded: { opacity: 0.78 },
   padOn: { backgroundColor: Lcd.padOn, borderColor: Lcd.tabOn },
-  padName: { color: Lcd.text, fontSize: 15, fontWeight: "800", textAlign: "center" },
+  padLoading: { borderColor: Lcd.tabOn },
+  padFill: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(232, 196, 90, 0.55)",
+  },
+  padName: { color: Lcd.text, fontSize: 15, fontWeight: "800", textAlign: "center", zIndex: 1 },
   padNameEmpty: { color: "transparent" },
+  padMeta: { color: Lcd.muted, fontSize: 10, fontWeight: "700", marginTop: 4, zIndex: 1 },
   pages: { flexDirection: "row", justifyContent: "center", gap: 10, height: 22, alignItems: "center" },
   pageTab: { paddingHorizontal: 6, paddingVertical: 2 },
   pageTabOn: { borderBottomWidth: 2, borderBottomColor: Lcd.tabOn },

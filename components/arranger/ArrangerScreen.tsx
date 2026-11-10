@@ -12,8 +12,10 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { LibrarySheet } from "@/components/arranger/LibrarySheet"
+import { MiniKeyboard } from "@/components/arranger/MiniKeyboard"
 import { SoundSelect } from "@/components/arranger/SoundSelect"
 import { StylePlayHome } from "@/components/arranger/StylePlayHome"
+import { PadSelect } from "@/components/arranger/PadSelect"
 import { StyleSelect } from "@/components/arranger/StyleSelect"
 import { Lcd, Pa } from "@/constants/theme"
 import { useArranger } from "@/hooks/useArranger"
@@ -37,7 +39,7 @@ export function ArrangerScreen() {
   const s = vm.state
   const insets = useSafeAreaInsets()
   const { width } = useWindowDimensions()
-  const [picker, setPicker] = useState<"sound" | "style" | null>(null)
+  const [picker, setPicker] = useState<"sound" | "style" | "pad" | null>(null)
   const [soundPart, setSoundPart] = useState<0 | 1 | 2 | 3>(0)
   const [page, setPage] = useState(0)
   const [pagerW, setPagerW] = useState(0)
@@ -74,8 +76,15 @@ export function ArrangerScreen() {
   const openStyle = () => {
     vm.setQuery("")
     vm.setCategory("All")
-    vm.setMode("PAD")
+    vm.setMode("STYLE")
     setPicker("style")
+    showLeft()
+  }
+  const openPads = () => {
+    vm.setQuery("")
+    vm.setCategory("All")
+    vm.setMode("PAD")
+    setPicker("pad")
     showLeft()
   }
   const closePicker = () => {
@@ -85,7 +94,7 @@ export function ArrangerScreen() {
   }
 
   useEffect(() => {
-    if (s.mode === "PAD") setPicker("style")
+    if (s.mode === "PAD") setPicker("pad")
     if (s.mode === "SOUND") setPicker("sound")
   }, [s.mode])
 
@@ -95,6 +104,30 @@ export function ArrangerScreen() {
   }
 
   const activeSoundId = soundPart === 1 ? s.upper2 : soundPart === 2 ? s.upper3 : soundPart === 3 ? s.lower : s.upper1
+
+  if (!s.arrangerReady) {
+    return (
+      <View
+        style={[
+          styles.root,
+          styles.boot,
+          {
+            paddingTop: padYTop,
+            paddingBottom: padYBot,
+            paddingLeft: padX,
+            paddingRight: Math.max(insets.right, 10),
+          },
+        ]}
+      >
+        <Text style={styles.bootBrand}>ArrangerBox</Text>
+        <Text style={styles.bootTitle}>Loading arranger</Text>
+        <Text style={styles.bootMsg}>{s.importMessage || "Loading sounds into memory…"}</Text>
+        <View style={styles.bootTrack}>
+          <View style={[styles.bootFill, { width: `${Math.max(8, Math.round(s.importProgress * 100))}%` }]} />
+        </View>
+      </View>
+    )
+  }
 
   return (
     <View
@@ -145,11 +178,30 @@ export function ArrangerScreen() {
               part={soundPart}
               sounds={s.sounds}
               activeId={typeof activeSoundId === "number" ? activeSoundId : s.upper1}
+              loadingId={s.loadingKind === "sound" ? s.loadingId : null}
+              loadingProgress={s.loadingProgress}
               onSelect={(id) => vm.selectSound(id, soundPart)}
               onClose={closePicker}
+              emptyHint="Import a SET, then tap a User sound to load it into RAM."
             />
           ) : picker === "style" ? (
-            <StyleSelect styles={s.styles} activeId={s.styleId} onSelect={vm.selectStyle} onClose={closePicker} />
+            <StyleSelect
+              styles={s.styles}
+              activeId={s.styleId}
+              loadingId={s.loadingKind === "style" ? s.loadingId : null}
+              loadingProgress={s.loadingProgress}
+              onSelect={vm.selectStyle}
+              onClose={closePicker}
+            />
+          ) : picker === "pad" ? (
+            <PadSelect
+              pads={s.pads}
+              activeId={s.padId}
+              loadingId={s.loadingKind === "pad" ? s.loadingId : null}
+              loadingProgress={s.loadingProgress}
+              onSelect={vm.selectPad}
+              onClose={closePicker}
+            />
           ) : (
             <StylePlayHome
               style={style}
@@ -168,6 +220,7 @@ export function ArrangerScreen() {
               mixer={s.mixer}
               stsPads={stsPads}
               onOpenStyle={openStyle}
+              onOpenPads={openPads}
               onOpenSound={openSound}
               onTogglePart={vm.togglePart}
               onSts={vm.setSts}
@@ -197,6 +250,7 @@ export function ArrangerScreen() {
               {s.playing ? "Stop" : "Start"}
             </Text>
           </Pressable>
+          <MiniKeyboard onNoteOn={vm.playNote} onNoteOff={vm.releaseNote} />
         </View>
       </ScrollView>
 
@@ -258,7 +312,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingBottom: 4,
   },
-  playSlide: { alignItems: "center", justifyContent: "center" },
+  playSlide: { alignItems: "center", justifyContent: "center", paddingHorizontal: 6 },
   playKicker: {
     color: Pa.muted,
     fontSize: 15,
@@ -287,4 +341,24 @@ const styles = StyleSheet.create({
   dotOn: { backgroundColor: Pa.text, width: 18 },
   pressed: { opacity: 0.82 },
   empty: { color: Pa.muted, fontSize: 15, padding: 8 },
+  boot: { alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
+  bootBrand: {
+    color: Pa.text,
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    marginBottom: 28,
+  },
+  bootTitle: { color: Pa.text, fontSize: 20, fontWeight: "700", marginBottom: 10 },
+  bootMsg: { color: Pa.muted, fontSize: 15, textAlign: "center", marginBottom: 28, minHeight: 22 },
+  bootTrack: {
+    width: "100%",
+    maxWidth: 320,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Pa.stroke,
+    overflow: "hidden",
+  },
+  bootFill: { height: "100%", backgroundColor: Pa.orange },
 })

@@ -38,6 +38,7 @@ type Props = {
   mixer: MixerState
   stsPads: StsPad[]
   onOpenStyle: () => void
+  onOpenPads: () => void
   onOpenSound: (part: 0 | 1 | 2 | 3) => void
   onTogglePart: (part: number) => void
   onSts: (n: number) => void
@@ -64,6 +65,7 @@ export function StylePlayHome({
   mixer,
   stsPads,
   onOpenStyle,
+  onOpenPads,
   onOpenSound,
   onTogglePart,
   onSts,
@@ -207,7 +209,7 @@ export function StylePlayHome({
         {TABS.map((item) => (
           <Pressable
             key={item.id}
-            onPress={() => setTab(item.id)}
+            onPress={() => (item.id === "pad" ? onOpenPads() : setTab(item.id))}
             style={[styles.tab, tab === item.id && styles.tabOn]}
           >
             <Text style={[styles.tabLabel, tab === item.id && styles.tabLabelOn]} numberOfLines={1}>
@@ -372,7 +374,7 @@ function TabPage({
 
   const copy =
     tab === "pad"
-      ? "Pads are not playable yet."
+      ? "Tap a User pad to load it into RAM. Native PAD files need Pad Record > Export SMF."
       : tab === "scale"
         ? "Sub scale is not implemented."
         : "Mic input is not implemented."

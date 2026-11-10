@@ -120,6 +120,12 @@ func arrangerbox_scan_pcm_bank(_ path: UnsafePointer<CChar>) -> Int32
 @_silgen_name("arrangerbox_load_pa4x_set")
 func arrangerbox_load_pa4x_set(_ folder: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
 
+@_silgen_name("arrangerbox_load_pa4x_named")
+func arrangerbox_load_pa4x_named(_ folder: UnsafePointer<CChar>, _ kind: UnsafePointer<CChar>, _ name: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
+
+@_silgen_name("arrangerbox_list_pa4x_catalog")
+func arrangerbox_list_pa4x_catalog(_ folder: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
+
 @_silgen_name("arrangerbox_load_sfz")
 func arrangerbox_load_sfz(_ path: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
 
@@ -296,6 +302,24 @@ public class ArrangerBoxAudioModule: Module {
     AsyncFunction("loadPa4xSet") { (path: String) in
       loadReport(path, capacity: 2048) { p, report, len in
         _ = arrangerbox_load_pa4x_set(p, report, len)
+      }
+    }
+
+    AsyncFunction("loadPa4xNamed") { (path: String, kind: String, name: String) in
+      path.withCString { p in
+        kind.withCString { k in
+          name.withCString { n in
+            stringFromCBuffer(capacity: 2048) { ptr, len in
+              _ = arrangerbox_load_pa4x_named(p, k, n, ptr, len)
+            }
+          }
+        }
+      }
+    }
+
+    AsyncFunction("listPa4xCatalog") { (path: String) in
+      loadReport(path, capacity: 2048) { p, report, len in
+        _ = arrangerbox_list_pa4x_catalog(p, report, len)
       }
     }
 

@@ -5,11 +5,13 @@ import type { StyleItem } from "@/lib/types"
 type Props = {
   styles: StyleItem[]
   activeId: number
+  loadingId?: number | null
+  loadingProgress?: number
   onSelect: (id: number) => void
   onClose: () => void
 }
 
-export function StyleSelect({ styles, activeId, onSelect, onClose }: Props) {
+export function StyleSelect({ styles, activeId, loadingId, loadingProgress, onSelect, onClose }: Props) {
   return (
     <BankPadSelect
       title="STYLE SELECT"
@@ -18,8 +20,11 @@ export function StyleSelect({ styles, activeId, onSelect, onClose }: Props) {
       items={styles}
       activeId={activeId}
       categorize={paStyleCategory}
+      loadingId={loadingId}
+      loadingProgress={loadingProgress}
       onSelect={onSelect}
       onClose={onClose}
+      emptyHint="Import a Style Record SMF, then tap a User style to load it."
     />
   )
 }

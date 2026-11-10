@@ -213,6 +213,30 @@ int arrangerbox_load_pa4x_set(const char* folder, char* report, int reportLen) {
     return e->loadPa4xSet(folder, report, reportLen);
 }
 
+int arrangerbox_load_pa4x_named(const char* folder, const char* kind, const char* name, char* report, int reportLen) {
+    auto* e = live();
+    if (!e || !folder) {
+        if (report && reportLen > 0) {
+            std::strncpy(report, "{\"ok\":0}", static_cast<size_t>(reportLen - 1));
+            report[reportLen - 1] = 0;
+        }
+        return -1;
+    }
+    return e->loadPa4xNamed(folder, kind, name, report, reportLen);
+}
+
+int arrangerbox_list_pa4x_catalog(const char* folder, char* report, int reportLen) {
+    auto* e = live();
+    if (!e || !folder) {
+        if (report && reportLen > 0) {
+            std::strncpy(report, "{\"ok\":0}", static_cast<size_t>(reportLen - 1));
+            report[reportLen - 1] = 0;
+        }
+        return -1;
+    }
+    return e->listPa4xCatalog(folder, report, reportLen);
+}
+
 int arrangerbox_load_sfz(const char* path, char* report, int reportLen) {
     auto* e = live();
     if (!e || !path) {

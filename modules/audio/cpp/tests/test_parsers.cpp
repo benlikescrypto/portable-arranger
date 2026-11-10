@@ -17,6 +17,20 @@ int Engine::loadPa4xSet(const char*, char* report, int reportLen) {
     }
     return -1;
 }
+int Engine::loadPa4xNamed(const char*, const char*, const char*, char* report, int reportLen) {
+    if (report && reportLen > 0) {
+        std::strncpy(report, "{\"ok\":0}", (size_t)reportLen - 1);
+        report[reportLen - 1] = 0;
+    }
+    return -1;
+}
+int Engine::listPa4xCatalog(const char*, char* report, int reportLen) {
+    if (report && reportLen > 0) {
+        std::strncpy(report, "{\"ok\":0}", (size_t)reportLen - 1);
+        report[reportLen - 1] = 0;
+    }
+    return -1;
+}
 }
 
 namespace {

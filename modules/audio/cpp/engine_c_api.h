@@ -66,6 +66,8 @@ int arrangerbox_load_wav(const char* path, const char* name, const char* categor
 int arrangerbox_load_ksf(const char* path, const char* name, const char* category);
 int arrangerbox_scan_pcm_bank(const char* path);
 int arrangerbox_load_pa4x_set(const char* folder, char* report, int reportLen);
+int arrangerbox_load_pa4x_named(const char* folder, const char* kind, const char* name, char* report, int reportLen);
+int arrangerbox_list_pa4x_catalog(const char* folder, char* report, int reportLen);
 int arrangerbox_load_sfz(const char* path, char* report, int reportLen);
 int arrangerbox_load_abstyle(const char* path, char* report, int reportLen);
 int arrangerbox_load_soundfont(const char* path);

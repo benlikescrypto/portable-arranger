@@ -8,11 +8,23 @@ type Props = {
   part: 0 | 1 | 2 | 3
   sounds: SoundItem[]
   activeId: number
+  loadingId?: number | null
+  loadingProgress?: number
   onSelect: (id: number) => void
   onClose: () => void
+  emptyHint?: string
 }
 
-export function SoundSelect({ part, sounds, activeId, onSelect, onClose }: Props) {
+export function SoundSelect({
+  part,
+  sounds,
+  activeId,
+  loadingId,
+  loadingProgress,
+  onSelect,
+  onClose,
+  emptyHint,
+}: Props) {
   return (
     <BankPadSelect
       title="SOUND SELECT"
@@ -22,8 +34,11 @@ export function SoundSelect({ part, sounds, activeId, onSelect, onClose }: Props
       items={sounds}
       activeId={activeId}
       categorize={paSoundCategory}
+      loadingId={loadingId}
+      loadingProgress={loadingProgress}
       onSelect={onSelect}
       onClose={onClose}
+      emptyHint={emptyHint}
     />
   )
 }

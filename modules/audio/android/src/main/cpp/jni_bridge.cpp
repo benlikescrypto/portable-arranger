@@ -211,6 +211,23 @@ Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadPa4xSet(JNIEnv* env, j
     return jutf(env, buf);
 }
 JNIEXPORT jstring JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadPa4xNamed(JNIEnv* env, jclass, jstring path, jstring kind,
+                                                                  jstring name) {
+    const auto p = jstr(env, path);
+    const auto k = jstr(env, kind);
+    const auto n = jstr(env, name);
+    char buf[2048];
+    arrangerbox_load_pa4x_named(p.c_str(), k.c_str(), n.c_str(), buf, sizeof(buf));
+    return jutf(env, buf);
+}
+JNIEXPORT jstring JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeListPa4xCatalog(JNIEnv* env, jclass, jstring path) {
+    const auto p = jstr(env, path);
+    char buf[2048];
+    arrangerbox_list_pa4x_catalog(p.c_str(), buf, sizeof(buf));
+    return jutf(env, buf);
+}
+JNIEXPORT jstring JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadSfz(JNIEnv* env, jclass, jstring path) {
     const auto p = jstr(env, path);
     char buf[1024];

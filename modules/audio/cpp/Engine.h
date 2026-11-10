@@ -287,6 +287,8 @@ public:
     int addSample(Sample&& s);
     int addStyle(Arranger::Style style);
     int loadPa4xSet(const char* folder, char* report, int reportLen);
+    int loadPa4xNamed(const char* folder, const char* kind, const char* name, char* report, int reportLen);
+    int listPa4xCatalog(const char* folder, char* report, int reportLen);
     int loadSfz(const char* path, char* report, int reportLen);
     int loadAbStyle(const char* path, char* report, int reportLen);
     int loadSoundfont(const char* path);

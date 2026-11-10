@@ -285,6 +285,38 @@ int main() {
     expect(patchesAdded(report) >= 1, "folder_patches");
     expect(eng.soundCount() > factorySounds, "folder_catalog");
 
+    FILE* cacheMan = std::fopen("tmp/KApro.SET/.arrangerbox-cache/manifest.txt", "rb");
+    expect(cacheMan != nullptr, "writes_converted_cache");
+    if (cacheMan) std::fclose(cacheMan);
+    auto engCached = std::make_unique<pa::Engine>();
+    engCached->prepare(44100.0f);
+    const int factoryCached = engCached->soundCount();
+    report[0] = 0;
+    engCached->loadPa4xSet("tmp/KApro.SET", report, (int)sizeof(report));
+    std::printf("CACHE report=%s\n", report);
+    expect(std::strstr(report, "\"cached\":1") != nullptr, "reloads_converted_cache");
+    expect(samplesAdded(report) >= 1, "cache_samples");
+    expect(patchesAdded(report) >= 1, "cache_patches");
+    expect(engCached->soundCount() > factoryCached, "cache_catalog");
+
+    auto engNamed = std::make_unique<pa::Engine>();
+    engNamed->prepare(44100.0f);
+    const int factoryNamed = engNamed->soundCount();
+    report[0] = 0;
+    engNamed->listPa4xCatalog("tmp/KApro.SET", report, (int)sizeof(report));
+    std::printf("CATALOG report=%s\n", report);
+    expect(std::strstr(report, "\"sounds\":") != nullptr, "catalog_json");
+    FILE* catalogFile = std::fopen("tmp/KApro.SET/.arrangerbox-cache/catalog.json", "rb");
+    expect(catalogFile != nullptr, "writes_catalog_json");
+    if (catalogFile) std::fclose(catalogFile);
+    report[0] = 0;
+    const int namedId =
+        engNamed->loadPa4xNamed("tmp/KApro.SET", "sound", "KApro Piano", report, (int)sizeof(report));
+    std::printf("NAMED report=%s\n", report);
+    expect(namedId >= 0, "named_engine_id");
+    expect(std::strstr(report, "\"ok\":1") != nullptr, "named_ok");
+    expect(engNamed->soundCount() == factoryNamed + 1, "named_one_patch");
+
     const auto zip = storeZip("PCM/RAM01.PCM", ksf);
     writeFile("tmp/KAproOnline.SET", zip);
     auto eng2 = std::make_unique<pa::Engine>();

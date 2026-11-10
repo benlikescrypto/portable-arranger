@@ -2,12 +2,15 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <new>
+#include <set>
 #include <string>
 #include <sys/stat.h>
 #include <vector>
@@ -1191,6 +1194,106 @@ void mkdirParents(const std::string& path) {
     if (!cur.empty()) paMkdir(cur.c_str());
 }
 
+std::string decodedCacheDir(const std::string& root) { return root + "/.arrangerbox-cache"; }
+
+void wr16le(FILE* f, uint16_t v) {
+    uint8_t b[2] = {(uint8_t)v, (uint8_t)(v >> 8)};
+    std::fwrite(b, 1, 2, f);
+}
+
+void wr32le(FILE* f, uint32_t v) {
+    uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
+    std::fwrite(b, 1, 4, f);
+}
+
+bool writeWav16File(const char* path, const Sample& s) {
+    const int ch = std::max(1, s.channels);
+    const int frames = s.frames();
+    if (frames <= 0) return false;
+    const int sr = s.sampleRate > 0 ? s.sampleRate : 44100;
+    const uint16_t blockAlign = (uint16_t)(ch * 2);
+    const uint32_t byteRate = (uint32_t)sr * blockAlign;
+    const uint32_t dataBytes = (uint32_t)frames * blockAlign;
+    const uint32_t smplSize = 60;
+    FILE* f = std::fopen(path, "wb");
+    if (!f) return false;
+    std::fwrite("RIFF", 1, 4, f);
+    wr32le(f, 4 + (8 + 16) + (8 + smplSize) + (8 + dataBytes));
+    std::fwrite("WAVE", 1, 4, f);
+    std::fwrite("fmt ", 1, 4, f);
+    wr32le(f, 16);
+    wr16le(f, 1);
+    wr16le(f, (uint16_t)ch);
+    wr32le(f, (uint32_t)sr);
+    wr32le(f, byteRate);
+    wr16le(f, blockAlign);
+    wr16le(f, 16);
+    std::fwrite("smpl", 1, 4, f);
+    wr32le(f, smplSize);
+    wr32le(f, 0);
+    wr32le(f, 0);
+    wr32le(f, 0);
+    wr32le(f, (uint32_t)std::max(0, std::min(127, s.rootNote)));
+    wr32le(f, 0);
+    wr32le(f, 0);
+    wr32le(f, 0);
+    wr32le(f, s.loop && s.loopEnd > s.loopStart ? 1u : 0u);
+    wr32le(f, 0);
+    wr32le(f, 0);
+    wr32le(f, 0);
+    wr32le(f, (uint32_t)std::max(0, s.loopStart));
+    wr32le(f, (uint32_t)std::max(s.loopStart, s.loopEnd));
+    wr32le(f, 0);
+    wr32le(f, 0);
+    std::fwrite("data", 1, 4, f);
+    wr32le(f, dataBytes);
+    for (int i = 0; i < frames; ++i) {
+        for (int c = 0; c < ch; ++c) {
+            const float x = s.data[(size_t)i * (size_t)ch + (size_t)c];
+            int v = (int)std::lrintf(x * 32767.0f);
+            if (v > 32767) v = 32767;
+            if (v < -32768) v = -32768;
+            wr16le(f, (uint16_t)(int16_t)v);
+        }
+    }
+    std::fclose(f);
+    return true;
+}
+
+bool readCacheLine(std::istream& in, std::string& line) {
+    if (!std::getline(in, line)) return false;
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    return true;
+}
+
+bool decodedCacheReady(const std::string& dir, int* sampleCount, int* patchCount) {
+    std::ifstream in(dir + "/manifest.txt");
+    if (!in) return false;
+    std::string magic, ver;
+    in >> magic >> ver;
+    if (magic != "ARRANGERBOX_CACHE" || ver != "1") return false;
+    std::string tag;
+    int nS = 0, nP = 0;
+    in >> tag >> nS;
+    if (tag != "S" || nS <= 0 || nS > 8000) return false;
+    std::string rest;
+    readCacheLine(in, rest);
+    for (int i = 0; i < nS; ++i) {
+        std::string wavName, sampleName, nums;
+        if (!readCacheLine(in, wavName) || wavName.empty()) return false;
+        if (!readCacheLine(in, sampleName)) return false;
+        if (!readCacheLine(in, nums)) return false;
+        const std::string wav = dir + "/" + wavName;
+        struct stat st {};
+        if (stat(wav.c_str(), &st) != 0 || st.st_size < 44) return false;
+    }
+    in >> tag >> nP;
+    if (tag != "P" || nP <= 0 || nP > 8000) return false;
+    if (sampleCount) *sampleCount = nS;
+    if (patchCount) *patchCount = nP;
+    return true;
+}
+
 bool peekMagic(const char* path, uint8_t mag[8], size_t* nread) {
     FILE* f = std::fopen(path, "rb");
     if (!f) return false;
@@ -1410,8 +1513,28 @@ bool extractZipArchive(const char* zipPath, const std::string& destDir, int& wro
 }  // namespace
 
 int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
+    return loadPa4xNamed(folder, "", "", report, reportLen);
+}
+
+int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name, char* report, int reportLen) {
     if (report && reportLen > 0) report[0] = 0;
     if (!folder || !folder[0]) return -1;
+
+    const std::string wantKind = kind && kind[0] ? std::string(kind) : std::string();
+    const std::string wantName = name && name[0] ? std::string(name) : std::string();
+    const bool named = !wantName.empty();
+    auto matchesWant = [&](const std::string& n) {
+        if (!named) return true;
+        return normName(n.c_str()) == normName(wantName.c_str());
+    };
+    auto kindIs = [&](const char* k) {
+        if (wantKind.empty()) return true;
+        return normName(wantKind.c_str()) == normName(k);
+    };
+    const bool wantSound = !named || kindIs("sound");
+    const bool wantStyle = !named || kindIs("style");
+    const bool wantPad = named && kindIs("pad");
+    int lastEngineId = -1;
 
     std::vector<std::string> files;
     std::string reason;
@@ -1519,14 +1642,334 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         return rec.index;
     };
 
+    const std::string cacheDir = rootIsFile ? std::string() : decodedCacheDir(root);
+    bool usedCache = false;
+    std::vector<int> addedPatchIds;
+    auto rememberPatch = [&](int id, bool drum) {
+        addedPatchIds.push_back(id);
+        kmpPatchIds.push_back(id);
+        if (drum) drumPatchIds.push_back(id);
+        if (firstSampled < 0) firstSampled = id;
+        lastEngineId = id;
+        patchesAdded++;
+    };
+
+    auto loadDecodedCache = [&]() -> bool {
+        int wantS = 0, wantP = 0;
+        if (cacheDir.empty() || !decodedCacheReady(cacheDir, &wantS, &wantP)) return false;
+        std::ifstream in(cacheDir + "/manifest.txt");
+        if (!in) return false;
+        std::string magic, ver, tag, rest;
+        in >> magic >> ver >> tag >> wantS;
+        if (!readCacheLine(in, rest)) return false;
+        std::vector<Sample> pending;
+        std::vector<std::string> pendingNames;
+        pending.reserve((size_t)wantS);
+        for (int i = 0; i < wantS; ++i) {
+            std::string wavName, sampleName, nums;
+            if (!readCacheLine(in, wavName) || !readCacheLine(in, sampleName) || !readCacheLine(in, nums)) return false;
+            Sample s;
+            if (loadWav((cacheDir + "/" + wavName).c_str(), s) <= 0) return false;
+            copyName40(s.name, sizeof(s.name), sampleName);
+            int sr = 0, ch = 0, rootNote = 60, loopS = 0, loopE = 0, loopOn = 0;
+            std::sscanf(nums.c_str(), "%d %d %d %d %d %d", &sr, &ch, &rootNote, &loopS, &loopE, &loopOn);
+            if (sr > 0) s.sampleRate = sr;
+            if (ch > 0) s.channels = ch;
+            if (rootNote > 0) s.rootNote = rootNote;
+            if (loopOn) {
+                s.loop = true;
+                s.loopStart = loopS;
+                s.loopEnd = loopE > loopS ? loopE : s.frames();
+            }
+            pending.push_back(std::move(s));
+            pendingNames.push_back(sampleName.empty() ? wavName : sampleName);
+        }
+        if ((int)pending.size() != wantS) return false;
+        in >> tag >> wantP;
+        if (tag != "P" || wantP <= 0) return false;
+        if (!readCacheLine(in, rest)) return false;
+        struct PendingPatch {
+            std::string name;
+            std::string cat;
+            int drum = 0;
+            std::vector<Zone> zones;
+        };
+        std::vector<PendingPatch> pendingPatches;
+        for (int i = 0; i < wantP; ++i) {
+            PendingPatch inst;
+            if (!readCacheLine(in, inst.name) || !readCacheLine(in, inst.cat)) return false;
+            int nZ = 0;
+            in >> inst.drum >> nZ;
+            if (!readCacheLine(in, rest)) return false;
+            if (nZ < 0 || nZ > 512) return false;
+            for (int z = 0; z < nZ; ++z) {
+                int sampleIdx = -1, keyLow = 0, keyHigh = 127, velLow = 0, velHigh = 127, rootNote = 60;
+                int offset = 0, end = 0, loopS = -1, loopE = -1, loopMode = -1;
+                float tune = 0, gain = 1, pan = 0;
+                in >> sampleIdx >> keyLow >> keyHigh >> velLow >> velHigh >> rootNote >> tune >> gain >> pan >> offset >>
+                    end >> loopS >> loopE >> loopMode;
+                if (!readCacheLine(in, rest)) return false;
+                if (sampleIdx < 0 || sampleIdx >= wantS) continue;
+                Zone zone;
+                zone.sampleIndex = sampleIdx;
+                zone.keyLow = keyLow;
+                zone.keyHigh = keyHigh;
+                zone.velLow = velLow;
+                zone.velHigh = velHigh;
+                zone.root = rootNote;
+                zone.tuneCents = tune;
+                zone.gain = gain;
+                zone.pan = pan;
+                zone.offset = offset;
+                zone.end = end;
+                zone.loopStart = loopS;
+                zone.loopEnd = loopE;
+                zone.loopMode = loopMode;
+                inst.zones.push_back(zone);
+            }
+            if (!inst.zones.empty()) pendingPatches.push_back(std::move(inst));
+        }
+        if (pendingPatches.empty()) return false;
+        std::vector<int> cacheToEngine((size_t)wantS, -1);
+        for (int i = 0; i < wantS; ++i) {
+            cacheToEngine[(size_t)i] = addLoaded(std::move(pending[(size_t)i]), pendingNames[(size_t)i], false);
+        }
+        for (auto& inst : pendingPatches) {
+            std::vector<Zone> zones;
+            for (Zone z : inst.zones) {
+                if (z.sampleIndex < 0 || z.sampleIndex >= wantS || cacheToEngine[(size_t)z.sampleIndex] < 0) continue;
+                z.sampleIndex = cacheToEngine[(size_t)z.sampleIndex];
+                zones.push_back(z);
+            }
+            if (zones.empty()) continue;
+            Patch p = makeSamplePatch(inst.name.c_str(),
+                                      guessCat(inst.name.c_str(), inst.cat.empty() ? "Imported" : inst.cat.c_str()), zones,
+                                      inst.drum != 0);
+            p.source = PatchSource::Korg;
+            rememberPatch(addSampledInstrument(p), inst.drum != 0);
+        }
+        if (loaded.empty()) return false;
+        reason += "Loaded converted sounds (skipped SET decode). ";
+        return true;
+    };
+
+    auto loadDecodedCacheNamed = [&]() -> bool {
+        int wantS = 0, wantP = 0;
+        if (!named || !wantSound || cacheDir.empty() || !decodedCacheReady(cacheDir, &wantS, &wantP)) return false;
+        std::ifstream in(cacheDir + "/manifest.txt");
+        if (!in) return false;
+        std::string magic, ver, tag, rest;
+        in >> magic >> ver >> tag >> wantS;
+        if (!readCacheLine(in, rest)) return false;
+        struct CacheSample {
+            std::string wavName;
+            std::string sampleName;
+            int sr = 0, ch = 0, rootNote = 60, loopS = 0, loopE = 0, loopOn = 0;
+        };
+        std::vector<CacheSample> cacheSamples;
+        cacheSamples.reserve((size_t)wantS);
+        for (int i = 0; i < wantS; ++i) {
+            CacheSample s;
+            std::string nums;
+            if (!readCacheLine(in, s.wavName) || !readCacheLine(in, s.sampleName) || !readCacheLine(in, nums)) return false;
+            std::sscanf(nums.c_str(), "%d %d %d %d %d %d", &s.sr, &s.ch, &s.rootNote, &s.loopS, &s.loopE, &s.loopOn);
+            cacheSamples.push_back(std::move(s));
+        }
+        if ((int)cacheSamples.size() != wantS) return false;
+        in >> tag >> wantP;
+        if (tag != "P" || wantP <= 0) return false;
+        if (!readCacheLine(in, rest)) return false;
+        bool found = false;
+        for (int i = 0; i < wantP; ++i) {
+            std::string instName, cat;
+            int drum = 0, nZ = 0;
+            if (!readCacheLine(in, instName) || !readCacheLine(in, cat)) return false;
+            in >> drum >> nZ;
+            if (!readCacheLine(in, rest)) return false;
+            if (nZ < 0 || nZ > 512) return false;
+            std::vector<Zone> zones;
+            std::vector<int> sampleIdx;
+            for (int z = 0; z < nZ; ++z) {
+                int si = -1, keyLow = 0, keyHigh = 127, velLow = 0, velHigh = 127, rootNote = 60;
+                int offset = 0, end = 0, loopS = -1, loopE = -1, loopMode = -1;
+                float tune = 0, gain = 1, pan = 0;
+                in >> si >> keyLow >> keyHigh >> velLow >> velHigh >> rootNote >> tune >> gain >> pan >> offset >> end >>
+                    loopS >> loopE >> loopMode;
+                if (!readCacheLine(in, rest)) return false;
+                Zone zone;
+                zone.sampleIndex = si;
+                zone.keyLow = keyLow;
+                zone.keyHigh = keyHigh;
+                zone.velLow = velLow;
+                zone.velHigh = velHigh;
+                zone.root = rootNote;
+                zone.tuneCents = tune;
+                zone.gain = gain;
+                zone.pan = pan;
+                zone.offset = offset;
+                zone.end = end;
+                zone.loopStart = loopS;
+                zone.loopEnd = loopE;
+                zone.loopMode = loopMode;
+                zones.push_back(zone);
+                sampleIdx.push_back(si);
+            }
+            if (found || !matchesWant(instName)) continue;
+            std::map<int, int> cacheToEngine;
+            for (int si : sampleIdx) {
+                if (si < 0 || si >= wantS || cacheToEngine.count(si)) continue;
+                const CacheSample& cs = cacheSamples[(size_t)si];
+                Sample s;
+                if (loadWav((cacheDir + "/" + cs.wavName).c_str(), s) <= 0) continue;
+                copyName40(s.name, sizeof(s.name), cs.sampleName);
+                if (cs.sr > 0) s.sampleRate = cs.sr;
+                if (cs.ch > 0) s.channels = cs.ch;
+                if (cs.rootNote > 0) s.rootNote = cs.rootNote;
+                if (cs.loopOn) {
+                    s.loop = true;
+                    s.loopStart = cs.loopS;
+                    s.loopEnd = cs.loopE > cs.loopS ? cs.loopE : s.frames();
+                }
+                cacheToEngine[si] = addLoaded(std::move(s), cs.sampleName, false);
+            }
+            std::vector<Zone> mapped;
+            for (Zone z : zones) {
+                auto it = cacheToEngine.find(z.sampleIndex);
+                if (it == cacheToEngine.end() || it->second < 0) continue;
+                z.sampleIndex = it->second;
+                mapped.push_back(z);
+            }
+            if (mapped.empty()) continue;
+            Patch p = makeSamplePatch(instName.c_str(), guessCat(instName.c_str(), cat.empty() ? "Imported" : cat.c_str()),
+                                      mapped, drum != 0);
+            p.source = PatchSource::Korg;
+            rememberPatch(addSampledInstrument(p), drum != 0);
+            found = true;
+        }
+        if (!found || loaded.empty()) return false;
+        reason += "Loaded one converted sound. ";
+        return true;
+    };
+
+    auto writeDecodedCache = [&]() {
+        if (cacheDir.empty() || loaded.empty() || addedPatchIds.empty()) return;
+        mkdirParents(cacheDir);
+        std::map<int, int> engineToCache;
+        for (int i = 0; i < (int)loaded.size(); ++i) {
+            if (loaded[(size_t)i].index >= 0) engineToCache[loaded[(size_t)i].index] = i;
+        }
+        for (int i = 0; i < (int)loaded.size(); ++i) {
+            char wavName[32];
+            std::snprintf(wavName, sizeof(wavName), "s%04d.wav", i);
+            const std::string wavPath = cacheDir + "/" + wavName;
+            std::lock_guard<std::mutex> g(loadMu);
+            if (loaded[(size_t)i].index < 0 || loaded[(size_t)i].index >= (int)samples.size()) continue;
+            writeWav16File(wavPath.c_str(), samples[(size_t)loaded[(size_t)i].index]);
+        }
+        FILE* mf = std::fopen((cacheDir + "/manifest.txt").c_str(), "wb");
+        if (!mf) return;
+        std::fprintf(mf, "ARRANGERBOX_CACHE 1\nS %d\n", (int)loaded.size());
+        for (int i = 0; i < (int)loaded.size(); ++i) {
+            char wavName[32];
+            std::snprintf(wavName, sizeof(wavName), "s%04d.wav", i);
+            int sr = 44100, ch = 1, rootNote = 60, loopS = 0, loopE = 0, loopOn = 0;
+            {
+                std::lock_guard<std::mutex> g(loadMu);
+                if (loaded[(size_t)i].index >= 0 && loaded[(size_t)i].index < (int)samples.size()) {
+                    const Sample& s = samples[(size_t)loaded[(size_t)i].index];
+                    sr = s.sampleRate;
+                    ch = s.channels;
+                    rootNote = s.rootNote;
+                    loopS = s.loopStart;
+                    loopE = s.loopEnd;
+                    loopOn = s.loop ? 1 : 0;
+                }
+            }
+            std::string nm = loaded[(size_t)i].name;
+            for (char& c : nm)
+                if (c == '\n' || c == '\r') c = ' ';
+            std::fprintf(mf, "%s\n%s\n%d %d %d %d %d %d\n", wavName, nm.c_str(), sr, ch, rootNote, loopS, loopE, loopOn);
+        }
+        std::fprintf(mf, "P %d\n", (int)addedPatchIds.size());
+        for (int id : addedPatchIds) {
+            std::string name, cat;
+            int drum = 0, nZ = 0;
+            std::vector<Zone> zones;
+            {
+                std::lock_guard<std::mutex> g(loadMu);
+                if (id < 0 || id >= (int)patches.size()) continue;
+                const Patch& p = patches[(size_t)id];
+                name = p.name;
+                cat = p.category;
+                drum = isKit(p.model) ? 1 : 0;
+                zones = p.zones;
+                nZ = (int)zones.size();
+            }
+            for (char& c : name)
+                if (c == '\n' || c == '\r') c = ' ';
+            for (char& c : cat)
+                if (c == '\n' || c == '\r') c = ' ';
+            std::fprintf(mf, "%s\n%s\n%d\n%d\n", name.c_str(), cat.c_str(), drum, nZ);
+            for (const Zone& z : zones) {
+                auto it = engineToCache.find(z.sampleIndex);
+                const int sampleIdx = it == engineToCache.end() ? -1 : it->second;
+                std::fprintf(mf, "%d %d %d %d %d %d %.6f %.6f %.6f %d %d %d %d %d\n", sampleIdx, z.keyLow, z.keyHigh,
+                             z.velLow, z.velHigh, z.root, z.tuneCents, z.gain, z.pan, z.offset, z.end, z.loopStart,
+                             z.loopEnd, z.loopMode);
+            }
+        }
+        std::fclose(mf);
+    };
+
     try {
+    usedCache = named && wantSound ? loadDecodedCacheNamed() : (!named ? loadDecodedCache() : false);
+    bool ramFull = false;
+    std::set<std::string> neededSampleKeys;
+    if (!usedCache && named && wantSound) {
+        for (const auto& path : files) {
+            if (upperExt(path) != ".KMP") continue;
+            std::vector<uint8_t> bytes;
+            if (!readFileBytes(path.c_str(), bytes)) continue;
+            std::vector<KmpInst> insts;
+            parseKmpBytes(bytes.data(), bytes.size(), insts);
+            for (const auto& inst : insts) {
+                if (!matchesWant(inst.name) && !matchesWant(fileStem(path))) continue;
+                for (const auto& r : inst.regions) {
+                    const std::string key = normName(r.sampleName.c_str());
+                    if (!key.empty()) neededSampleKeys.insert(key);
+                }
+            }
+        }
+    }
+    auto sampleWanted = [&](const Sample& s, const std::string& from) {
+        if (!named || !wantSound) return true;
+        if (neededSampleKeys.empty()) return matchesWant(s.name) || matchesWant(fileStem(from)) || matchesWant(s.sourceId);
+        const std::string keys[] = {normName(s.name), normName(s.sourceId.c_str()), normName(fileStem(from).c_str()),
+                                    normName(baseName(from).c_str())};
+        for (const auto& key : keys) {
+            if (!key.empty() && neededSampleKeys.count(key)) return true;
+        }
+        return matchesWant(s.name);
+    };
+    if (!usedCache && wantSound)
     for (const auto& path : files) {
+        if (ramFull) break;
         const std::string ext = upperExt(path);
+        auto takeSamples = [&](std::vector<Sample>& found, const std::string& from, bool compressed) {
+            for (auto& s : found) {
+                if (!sampleWanted(s, from)) continue;
+                if (addLoaded(std::move(s), from, compressed) < 0) {
+                    ramFull = true;
+                    return;
+                }
+            }
+        };
         if (ext == ".WAV") {
             Sample s;
             if (loadWav(path.c_str(), s) > 0) {
                 copyName40(s.name, sizeof(s.name), fileStem(path));
-                addLoaded(std::move(s), path, false);
+                if (!sampleWanted(s, path)) continue;
+                if (addLoaded(std::move(s), path, false) < 0) ramFull = true;
             } else {
                 skipped++;
             }
@@ -1536,7 +1979,8 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             std::vector<uint8_t> bytes;
             if (readFileBytes(path.c_str(), bytes) && loadKsfBytes(bytes.data(), bytes.size(), s, &comp) > 0) {
                 if (!s.name[0]) copyName40(s.name, sizeof(s.name), fileStem(path));
-                addLoaded(std::move(s), path, comp);
+                if (!sampleWanted(s, path)) continue;
+                if (addLoaded(std::move(s), path, comp) < 0) ramFull = true;
             } else if (ext == ".KSF") {
                 std::vector<Sample> found;
                 scanPcmBank(path.c_str(), found);
@@ -1544,7 +1988,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
                     skipped++;
                     if (reason.size() < 180) reason += "KSF decode failed (" + fileStem(path) + "). ";
                 }
-                for (auto& s : found) addLoaded(std::move(s), path, false);
+                takeSamples(found, path, false);
             }
         } else if (ext == ".PCM" || isPcmBankPath(path)) {
             std::vector<Sample> found;
@@ -1553,10 +1997,11 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
                 skipped++;
                 if (reason.size() < 220) reason += "PCM bank had no playable samples (" + fileStem(path) + "). ";
             }
-            for (auto& s : found) addLoaded(std::move(s), path, false);
+            takeSamples(found, path, false);
         }
     }
 
+    if (!usedCache && wantSound)
     for (const auto& path : files) {
         if (upperExt(path) != ".KMP") continue;
         kmpFiles++;
@@ -1573,6 +2018,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             continue;
         }
         for (const auto& inst : insts) {
+            if (named && !matchesWant(inst.name) && !matchesWant(fileStem(path))) continue;
             auto zones = zonesFromKmp(inst, loaded);
             int mapped = 0;
             for (const auto& z : zones)
@@ -1590,16 +2036,17 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             const std::string nm = inst.name.empty() ? fileStem(path) : inst.name;
             Patch p = makeSamplePatch(nm.c_str(), guessCat(nm.c_str(), drum ? "Percussion" : "Imported"), zones, drum);
             p.source = PatchSource::Korg;
-            const int id = addSampledInstrument(p);
-            kmpPatchIds.push_back(id);
-            if (drum) drumPatchIds.push_back(id);
-            if (firstSampled < 0) firstSampled = id;
-            patchesAdded++;
+            rememberPatch(addSampledInstrument(p), drum);
         }
     }
 
-    if (kmpPatchIds.empty() && !loaded.empty()) {
+    if (!usedCache && named) {
+        // One-at-a-time loads must not overwrite a full converted-sound cache.
+    } else if (!usedCache) writeDecodedCache();
+
+    if (!usedCache && kmpPatchIds.empty() && !loaded.empty() && wantSound) {
         for (const auto& rec : loaded) {
+            if (named && !matchesWant(rec.name) && !matchesWant(fileStem(rec.file))) continue;
             Zone z;
             z.sampleIndex = rec.index;
             z.root = 60;
@@ -1610,9 +2057,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             }
             Patch p = makeSamplePatch(rec.name.c_str(), guessCat(rec.name.c_str(), "Imported"), {z}, false);
             p.source = PatchSource::Korg;
-            const int id = addSampledInstrument(p);
-            if (firstSampled < 0) firstSampled = id;
-            patchesAdded++;
+            rememberPatch(addSampledInstrument(p), false);
         }
         if (kmpFiles > 0) reason += "KMP names did not match PCM; loaded raw samples. Look in User. ";
     }
@@ -1621,6 +2066,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
     int pcgNames = 0;
     std::vector<std::string> pcgMissing;
     for (const auto& path : files) {
+        if (named) break;
         if (upperExt(path) != ".PCG") continue;
         pcgFiles++;
         std::vector<uint8_t> bytes;
@@ -1807,6 +2253,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
                 }
             }
             if (!hasNotes) continue;
+            if (named && !matchesWant(name) && !matchesWant(fileName)) continue;
             const int* pc = smfs[i].program;
             const int d = pickGm(pc[9] >= 0 ? pc[9] : pc[10], true, drumProg);
             const int b = pickGm(pc[8], false, bassProg);
@@ -1814,7 +2261,7 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
             const int a2 = pickGm(pc[12], false, acc2);
             const int a3 = pickGm(pc[13] >= 0 ? pc[13] : pc[14], false, acc3);
             applyPrograms(style, d, b, a1, a2, a3);
-            addStyle(completeStyle(std::move(style)));
+            lastEngineId = addStyle(completeStyle(std::move(style)));
             stylesAdded++;
             addedHere++;
         }
@@ -1830,11 +2277,15 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
                ext == ".JPG" || ext == ".JPEG" || ext == ".ZIP" || ext == ".PAD" || ext == ".SET" || ext == ".7Z" ||
                ext == ".RAR";
     };
+    if (wantStyle || wantPad)
     for (const auto& path : files) {
         const std::string ext = upperExt(path);
+        const bool padExt = ext == ".PAD";
         const bool styleExt = ext == ".STY" || ext == ".STG" || ext == ".MID" || ext == ".SMF";
-        if (styleExt || ext.empty() || !skipStyleExt(ext)) {
-            if (!styleExt && !ext.empty()) {
+        if (padExt && !wantPad) continue;
+        if (ext == ".STY" && patchesAdded > 0 && !named) continue;
+        if (styleExt || padExt || ext.empty() || !skipStyleExt(ext)) {
+            if (!styleExt && !padExt && !ext.empty()) {
                 std::vector<uint8_t> peek;
                 if (!readFileBytes(path.c_str(), peek) || peek.size() < 8) continue;
                 bool maybe = std::memcmp(peek.data(), "MThd", 4) == 0 || std::memcmp(peek.data(), "KORF", 4) == 0;
@@ -1854,14 +2305,19 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         reason += "No SET PCM; style uses factory GM backing. ";
     }
 
+    const int ok = (!named || patchesAdded > 0 || stylesAdded > 0) ? 1 : 0;
+    if (named && ok == 0 && reason.find("matching") == std::string::npos && reason.size() < 180) {
+        reason += "Nothing matching that name. Native STY/PAD needs Style/Pad Record > Export SMF. ";
+    }
     if (report && reportLen > 0) {
         std::snprintf(report, (size_t)reportLen,
-                      "{\"ok\":1,\"samples\":%d,\"patches\":%d,\"styles\":%d,\"compressed\":%d,\"skipped\":%d,"
-                      "\"pcgFiles\":%d,\"pcgNames\":%d,\"missing\":%d,\"files\":%d,\"reason\":\"%s\"}",
-                      (int)loaded.size(), patchesAdded, stylesAdded, compressed, skipped, pcgFiles, pcgNames,
-                      (int)pcgMissing.size(), (int)files.size(), jsonSafe(reason).c_str());
+                      "{\"ok\":%d,\"samples\":%d,\"patches\":%d,\"styles\":%d,\"compressed\":%d,\"skipped\":%d,"
+                      "\"pcgFiles\":%d,\"pcgNames\":%d,\"missing\":%d,\"files\":%d,\"cached\":%d,\"engineId\":%d,"
+                      "\"reason\":\"%s\"}",
+                      ok, (int)loaded.size(), patchesAdded, stylesAdded, compressed, skipped, pcgFiles, pcgNames,
+                      (int)pcgMissing.size(), (int)files.size(), usedCache ? 1 : 0, lastEngineId, jsonSafe(reason).c_str());
     }
-    return (int)loaded.size();
+    return named ? lastEngineId : (int)loaded.size();
     } catch (const std::bad_alloc&) {
         reason += "Out of memory loading this SET (KApro PCM is ~250MB compressed). ";
         if (report && reportLen > 0) {
@@ -1871,6 +2327,88 @@ int Engine::loadPa4xSet(const char* folder, char* report, int reportLen) {
         }
         return (int)loaded.size();
     }
+}
+
+int Engine::listPa4xCatalog(const char* folder, char* report, int reportLen) {
+    if (report && reportLen > 0) report[0] = 0;
+    if (!folder || !folder[0]) return -1;
+    std::vector<std::string> files;
+    std::string root = folder;
+    struct stat rootSt {};
+    if (stat(folder, &rootSt) == 0 && S_ISREG(rootSt.st_mode)) {
+        files.push_back(folder);
+        root = parentDir(folder);
+    } else {
+        walkFiles(folder, files);
+    }
+    struct CatItem {
+        const char* kind;
+        std::string name;
+        std::string file;
+    };
+    std::vector<CatItem> items;
+    auto have = [&](const char* kind, const std::string& name) {
+        const std::string n = normName(name.c_str());
+        for (const auto& it : items)
+            if (it.kind == kind && normName(it.name.c_str()) == n) return true;
+        return false;
+    };
+    auto push = [&](const char* kind, const std::string& name, const std::string& file) {
+        if (name.size() < 2 || have(kind, name)) return;
+        items.push_back({kind, name, baseName(file)});
+    };
+    auto korfNames = [&](const std::vector<uint8_t>& bytes, std::vector<std::string>& names) {
+        size_t dataOff = 0;
+        return korfStyleIndex(bytes.data(), bytes.size(), dataOff, names);
+    };
+    for (const auto& path : files) {
+        const std::string ext = upperExt(path);
+        if (ext == ".KMP") {
+            std::vector<uint8_t> bytes;
+            if (!readFileBytes(path.c_str(), bytes)) continue;
+            std::vector<KmpInst> insts;
+            parseKmpBytes(bytes.data(), bytes.size(), insts);
+            if (insts.empty()) push("sound", fileStem(path), path);
+            for (const auto& inst : insts) push("sound", inst.name.empty() ? fileStem(path) : inst.name, path);
+        } else if (ext == ".WAV" || ext == ".KSF") {
+            push("sound", fileStem(path), path);
+        } else if (ext == ".STY" || ext == ".STG" || ext == ".MID" || ext == ".SMF" || ext == ".PAD") {
+            const char* kind = ext == ".PAD" ? "pad" : "style";
+            std::vector<uint8_t> bytes;
+            std::vector<std::string> names;
+            if (readFileBytes(path.c_str(), bytes) && korfNames(bytes, names)) {
+                for (const auto& n : names) push(kind, n, path);
+            } else {
+                push(kind, fileStem(path), path);
+            }
+        }
+    }
+    const std::string cacheDir = root.empty() ? std::string() : decodedCacheDir(root);
+    if (!cacheDir.empty()) mkdirParents(cacheDir);
+    const std::string outPath = cacheDir.empty() ? std::string(folder) + ".catalog.json" : cacheDir + "/catalog.json";
+    FILE* out = std::fopen(outPath.c_str(), "wb");
+    int sounds = 0, styles = 0, pads = 0;
+    if (out) {
+        std::fputs("{\"ok\":1,\"items\":[", out);
+        for (size_t i = 0; i < items.size(); ++i) {
+            const auto& it = items[i];
+            if (std::strcmp(it.kind, "sound") == 0) sounds++;
+            else if (std::strcmp(it.kind, "pad") == 0) pads++;
+            else styles++;
+            const char* cat = std::strcmp(it.kind, "sound") == 0 ? guessCat(it.name.c_str(), "Imported")
+                                                                 : guessCat(it.name.c_str(), "Style");
+            std::fprintf(out, "%s{\"kind\":\"%s\",\"name\":\"%s\",\"category\":\"%s\",\"file\":\"%s\"}", i ? "," : "",
+                         it.kind, jsonSafe(it.name).c_str(), cat, jsonSafe(it.file).c_str());
+        }
+        std::fputs("]}", out);
+        std::fclose(out);
+    }
+    if (report && reportLen > 0) {
+        std::snprintf(report, (size_t)reportLen,
+                      "{\"ok\":1,\"file\":\"%s\",\"sounds\":%d,\"styles\":%d,\"pads\":%d,\"items\":%d}",
+                      jsonSafe(outPath).c_str(), sounds, styles, pads, (int)items.size());
+    }
+    return (int)items.size();
 }
 
 }  // namespace pa

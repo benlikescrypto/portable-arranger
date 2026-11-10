@@ -1,11 +1,18 @@
 export type Mode = "STYLE" | "SOUND" | "PAD" | "MIXER" | "PERF" | "SET"
 
+export type LibraryKind = "sound" | "style" | "pad"
+
 export type SoundItem = {
   id: number
   name: string
   category: string
   bank?: string
   source?: string
+  loaded?: boolean
+  engineId?: number
+  setPath?: string
+  fileName?: string
+  loadError?: string
 }
 
 export type StyleItem = {
@@ -15,6 +22,24 @@ export type StyleItem = {
   tempo: number
   bank?: string
   source?: string
+  loaded?: boolean
+  engineId?: number
+  setPath?: string
+  fileName?: string
+  loadError?: string
+}
+
+export type PadItem = {
+  id: number
+  name: string
+  category: string
+  bank?: string
+  source?: string
+  loaded?: boolean
+  engineId?: number
+  setPath?: string
+  fileName?: string
+  loadError?: string
 }
 
 export type MixerState = {
@@ -32,6 +57,7 @@ export type ArrangerUiState = {
   adapterName: string
   sounds: SoundItem[]
   styles: StyleItem[]
+  pads: PadItem[]
   query: string
   category: string
   upper1: number
@@ -43,6 +69,7 @@ export type ArrangerUiState = {
   lowerOn: boolean
   split: number
   styleId: number
+  padId: number
   tempo: number
   transpose: number
   variation: number
@@ -57,6 +84,7 @@ export type ArrangerUiState = {
   midiName: string
   latencyMs: number
   nativeReady: boolean
+  arrangerReady: boolean
   importMessage: string
   importing: boolean
   importProgress: number
@@ -71,4 +99,7 @@ export type ArrangerUiState = {
   recentStyles: number[]
   libraryFilter: "all" | "factory" | "imported"
   importReport: string
+  loadingId: number | null
+  loadingKind: LibraryKind | null
+  loadingProgress: number
 }
