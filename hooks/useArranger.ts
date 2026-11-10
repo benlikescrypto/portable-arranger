@@ -382,9 +382,7 @@ export function useArranger() {
             ...s,
             sounds: s.sounds.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
           }))
-          return
         }
-        setState((s) => assignSound(s, id, part, loaded.sounds ?? s.sounds))
       })()
     },
     [assignSound, ensureLoaded]
@@ -438,9 +436,7 @@ export function useArranger() {
             ...s,
             styles: s.styles.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
           }))
-          return
         }
-        setState((s) => apply(s, loaded.styles ?? s.styles))
       })()
     },
     [ensureLoaded]
@@ -466,9 +462,7 @@ export function useArranger() {
             ...s,
             pads: s.pads.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
           }))
-          return
         }
-        setState((s) => ({ ...s, pads: loaded.pads ?? s.pads, padId: id }))
       })()
     },
     [ensureLoaded]

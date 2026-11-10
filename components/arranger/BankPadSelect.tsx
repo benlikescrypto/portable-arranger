@@ -127,18 +127,23 @@ export function BankPadSelect({
                     const pad = pads[i]
                     const loading = pad != null && pad.id === loadingId
                     const loaded = pad?.loaded !== false
+                    const selected = loaded && pad?.id === activeId
                     return (
                       <Pressable
                         key={i}
                         disabled={!pad}
                         onPress={() => pad && onSelect(pad.id)}
                         accessibilityRole="button"
-                        accessibilityLabel={pad?.name ?? "Empty"}
+                        accessibilityLabel={
+                          pad
+                            ? `${pad.name}${loaded ? "" : ", not loaded"}${loading ? ", loading" : ""}`
+                            : "Empty"
+                        }
                         style={({ pressed }) => [
                           styles.pad,
                           !pad && styles.padEmpty,
                           pad && !loaded && styles.padUnloaded,
-                          pad?.id === activeId && styles.padOn,
+                          selected && styles.padOn,
                           loading && styles.padLoading,
                           pressed && pad && styles.pressed,
                         ]}
@@ -149,7 +154,14 @@ export function BankPadSelect({
                             style={[styles.padFill, { height: `${Math.max(8, Math.round(loadingProgress * 100))}%` }]}
                           />
                         ) : null}
-                        <Text style={[styles.padName, !pad && styles.padNameEmpty]} numberOfLines={2}>
+                        <Text
+                          style={[
+                            styles.padName,
+                            !pad && styles.padNameEmpty,
+                            pad && !loaded && styles.padNameUnloaded,
+                          ]}
+                          numberOfLines={2}
+                        >
                           {pad?.name ?? ""}
                         </Text>
                         {pad && !loaded && !loading ? (
@@ -279,7 +291,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   padEmpty: { backgroundColor: "#8A3A3A", borderTopColor: "#A05050", borderLeftColor: "#944848" },
-  padUnloaded: { opacity: 0.78 },
+  padUnloaded: {
+    backgroundColor: "#5A6168",
+    borderColor: "#3E454C",
+    borderTopColor: "#7A8188",
+    borderLeftColor: "#6A7178",
+  },
   padOn: { backgroundColor: Lcd.padOn, borderColor: Lcd.tabOn },
   padLoading: { borderColor: Lcd.tabOn },
   padFill: {
@@ -291,7 +308,8 @@ const styles = StyleSheet.create({
   },
   padName: { color: Lcd.text, fontSize: 15, fontWeight: "800", textAlign: "center", zIndex: 1 },
   padNameEmpty: { color: "transparent" },
-  padMeta: { color: Lcd.muted, fontSize: 10, fontWeight: "700", marginTop: 4, zIndex: 1 },
+  padNameUnloaded: { color: "#B4BCC4" },
+  padMeta: { color: "#C5CDD4", fontSize: 10, fontWeight: "700", marginTop: 4, zIndex: 1 },
   pages: { flexDirection: "row", justifyContent: "center", gap: 10, height: 22, alignItems: "center" },
   pageTab: { paddingHorizontal: 6, paddingVertical: 2 },
   pageTabOn: { borderBottomWidth: 2, borderBottomColor: Lcd.tabOn },
