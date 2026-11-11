@@ -348,7 +348,7 @@ async function namesFromManifest(setFolder: Directory, setName: string, setPath:
     const count = parseInt(lines[i]?.match(/^P\s+(\d+)/)?.[1] || "0", 10)
     i++
     for (let p = 0; p < count && i < lines.length; p++) {
-      const name = (lines[i++] || "").trim()
+      let name = instrumentName((lines[i++] || "").trim())
       const cat = (lines[i++] || "").trim() || "Imported"
       i++
       const zones = parseInt(lines[i++] || "0", 10)
@@ -427,7 +427,7 @@ function parseCatalogFile(raw: string, setName: string, setPath: string): DiskCa
     const out: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
     for (const item of json.items) {
       const kind = item.kind === "pad" ? "pad" : item.kind === "sound" ? "sound" : "style"
-      const name = item.name?.trim()
+      const name = kind === "sound" ? instrumentName(item.name?.trim() || "") : item.name?.trim()
       if (!name || isGenericStem(name)) continue
       pushItem(kind === "sound" ? out.sounds : kind === "pad" ? out.pads : out.styles, {
         kind,
@@ -525,7 +525,10 @@ async function catalogOneSet(dir: Directory): Promise<DiskCatalog> {
     pcg: pcgs.map((file) => file.name),
     kmp: kmps.map((file) => file.name),
   })
-  await walkDiskSet(setFolder, setName, setPath, into, true)
+  await namesFromManifest(setFolder, setName, setPath, into)
+  if (soundDir) await namesFromManifest(soundDir, setName, setPath, into)
+  await mergeCachedCatalog(setFolder, setName, setPath, into)
+  if (into.sounds.length === 0) await walkDiskSet(setFolder, setName, setPath, into, true)
   if (into.sounds.length === 0) {
     for (const kmp of kmps.slice(0, 8)) await ingestNativeCatalog(nativePath(kmp), setName, setPath, into)
   }

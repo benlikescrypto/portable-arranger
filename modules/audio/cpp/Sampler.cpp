@@ -423,11 +423,8 @@ static bool looksLikePaKorf(const uint8_t* b, size_t n) {
     return false;
 }
 
-static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& out,
-                              bool (*keep)(const char*, const char*, void*), void* user) {
-    if (!looksLikePaKorf(b, n)) return 0;
-    std::map<std::string, std::string> names;
-    const size_t dirEnd = std::min<size_t>(n, 32u * 1024u);
+static void parseKorfNames(const uint8_t* b, size_t n, std::map<std::string, std::string>& names) {
+    const size_t dirEnd = std::min<size_t>(n, 256u * 1024u);
     for (size_t i = 0; i + 96 <= dirEnd; ++i) {
         if (!(b[i] == 0x00 && b[i + 2] == 0x00 && b[i + 3] == 0x06 && b[i + 1] >= 0x50 && b[i + 1] <= 0x70))
             continue;
@@ -441,6 +438,53 @@ static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& o
         }
         i += 90;
     }
+}
+
+static bool korfKeepAny(const std::map<std::string, std::string>& names, bool (*keep)(const char*, const char*, void*),
+                        void* user) {
+    if (!keep) return true;
+    if (names.empty()) return true;
+    for (const auto& kv : names)
+        if (keep(kv.second.c_str(), kv.first.c_str(), user)) return true;
+    return false;
+}
+
+static bool takeKorfSample(const uint8_t* payload, uint32_t sz, const std::map<std::string, std::string>& names,
+                           bool (*keep)(const char*, const char*, void*), void* user, std::vector<Sample>& out) {
+    if (sz < 66) return false;
+    const std::string id = hex8(payload);
+    const int sr = (int)((payload[12] << 8) | payload[13]);
+    const uint32_t dataLen = ru32be(payload + 14);
+    const uint32_t loopStart = ru32be(payload + 50);
+    if (dataLen < 32 || 66 + (size_t)dataLen > (size_t)sz) return false;
+    const auto itName = names.find(id);
+    const std::string nm = itName != names.end() ? itName->second : id;
+    if (keep && !keep(nm.c_str(), id.c_str(), user)) return false;
+    auto decoded = decodeBest(payload + 66, (size_t)dataLen, 16, (int)dataLen, true);
+    if (decoded.empty()) return false;
+    Sample s;
+    s.channels = 1;
+    s.sampleRate = (sr >= 4000 && sr <= 192000) ? sr : 44100;
+    s.data = std::move(decoded);
+    s.sourceId = id;
+    std::memset(s.name, 0, sizeof(s.name));
+    std::strncpy(s.name, nm.c_str(), sizeof(s.name) - 1);
+    const int frames = s.frames();
+    if (loopStart > 0 && (int)loopStart < frames) {
+        s.loop = true;
+        s.loopStart = (int)loopStart;
+        s.loopEnd = frames;
+    }
+    out.push_back(std::move(s));
+    return true;
+}
+
+static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& out,
+                              bool (*keep)(const char*, const char*, void*), void* user) {
+    if (!looksLikePaKorf(b, n)) return 0;
+    std::map<std::string, std::string> names;
+    parseKorfNames(b, n, names);
+    if (!korfKeepAny(names, keep, user)) return 0;
     int found = 0;
     size_t pos = 0;
     const uint8_t marker[4] = {0x12, 0x00, 0x00, 0x18};
@@ -458,43 +502,67 @@ static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& o
             pos = hit + 4;
             continue;
         }
-        const uint8_t* payload = b + hit + 8;
-        const std::string id = hex8(payload);
-        const int sr = (int)((payload[12] << 8) | payload[13]);
-        const uint32_t dataLen = ru32be(payload + 14);
-        const uint32_t loopStart = ru32be(payload + 50);
-        if (dataLen < 32 || 66 + (size_t)dataLen > (size_t)sz) {
-            pos = hit + 8 + (size_t)sz;
+        if (takeKorfSample(b + hit + 8, sz, names, keep, user, out)) found++;
+        pos = hit + 8 + (size_t)sz;
+    }
+    return found;
+}
+
+static int scanPaKorfPcmFile(FILE* f, long fileSize, std::vector<Sample>& out, bool (*keep)(const char*, const char*, void*),
+                             void* user) {
+    const long headN = std::min(fileSize, 256L * 1024L);
+    std::vector<uint8_t> head((size_t)headN);
+    std::fseek(f, 0, SEEK_SET);
+    if (std::fread(head.data(), 1, head.size(), f) != head.size()) return 0;
+    if (!looksLikePaKorf(head.data(), head.size())) return 0;
+    std::map<std::string, std::string> names;
+    parseKorfNames(head.data(), head.size(), names);
+    if (!korfKeepAny(names, keep, user)) return 0;
+    if (!keep && fileSize <= headN)
+        return scanPaKorfPcmBytes(head.data(), head.size(), out, keep, user);
+
+    int found = 0;
+    long pos = 0;
+    std::vector<uint8_t> window(1024u * 1024u);
+    const uint8_t marker[4] = {0x12, 0x00, 0x00, 0x18};
+    while (pos + 74 < fileSize) {
+        std::fseek(f, pos, SEEK_SET);
+        const size_t n = std::fread(window.data(), 1, window.size(), f);
+        if (n < 8) break;
+        size_t hit = (size_t)-1;
+        for (size_t i = 0; i + 4 <= n; ++i) {
+            if (std::memcmp(window.data() + i, marker, 4) == 0) {
+                hit = i;
+                break;
+            }
+        }
+        if (hit == (size_t)-1) {
+            pos += n > 4 ? (long)(n - 3) : (long)n;
             continue;
         }
-        const uint8_t* audio = payload + 66;
+        const long start = pos + (long)hit;
+        uint8_t hdr[8];
+        std::fseek(f, start, SEEK_SET);
+        if (std::fread(hdr, 1, 8, f) != 8) break;
+        const uint32_t sz = ru32be(hdr + 4);
+        if (sz < 66 || start + 8 + (long)sz > fileSize) {
+            pos = start + 4;
+            continue;
+        }
+        uint8_t idb[8];
+        if (std::fread(idb, 1, 8, f) != 8) break;
+        const std::string id = hex8(idb);
         const auto itName = names.find(id);
         const std::string nm = itName != names.end() ? itName->second : id;
         if (keep && !keep(nm.c_str(), id.c_str(), user)) {
-            pos = hit + 8 + (size_t)sz;
+            pos = start + 8 + (long)sz;
             continue;
         }
-        Sample s;
-        auto decoded = decodeBest(audio, (size_t)dataLen, 16, (int)dataLen, true);
-        if (decoded.empty()) {
-            pos = hit + 8 + (size_t)sz;
-            continue;
-        }
-        s.channels = 1;
-        s.sampleRate = (sr >= 4000 && sr <= 192000) ? sr : 44100;
-        s.data = std::move(decoded);
-        s.sourceId = id;
-        std::memset(s.name, 0, sizeof(s.name));
-        std::strncpy(s.name, nm.c_str(), sizeof(s.name) - 1);
-        const int frames = s.frames();
-        if (loopStart > 0 && (int)loopStart < frames) {
-            s.loop = true;
-            s.loopStart = (int)loopStart;
-            s.loopEnd = frames;
-        }
-        out.push_back(std::move(s));
-        found++;
-        pos = hit + 8 + (size_t)sz;
+        std::vector<uint8_t> payload((size_t)sz);
+        std::fseek(f, start + 8, SEEK_SET);
+        if (std::fread(payload.data(), 1, payload.size(), f) != payload.size()) break;
+        if (takeKorfSample(payload.data(), sz, names, keep, user, out)) found++;
+        pos = start + 8 + (long)sz;
     }
     return found;
 }
@@ -512,14 +580,9 @@ int scanPcmBank(const char* path, std::vector<Sample>& out, bool (*keep)(const c
     std::fseek(f, 0, SEEK_SET);
     const size_t magN = std::fread(mag, 1, sizeof(mag), f);
     if (looksLikePaKorf(mag, magN)) {
-        std::vector<uint8_t> bytes((size_t)fileSize);
-        std::fseek(f, 0, SEEK_SET);
-        if (std::fread(bytes.data(), 1, bytes.size(), f) != bytes.size()) {
-            std::fclose(f);
-            return 0;
-        }
+        const int found = scanPaKorfPcmFile(f, fileSize, out, keep, user);
         std::fclose(f);
-        return scanPaKorfPcmBytes(bytes.data(), bytes.size(), out, keep, user);
+        return found;
     }
     auto readChunk = [&](long off, std::vector<uint8_t>& buf) -> bool {
         if (off < 0 || off + 8 > fileSize) return false;

@@ -328,6 +328,16 @@ int main() {
     expect(std::strstr(report, "\"ok\":1") != nullptr, "loose_named_ok");
     expect(engLoose->soundCount() == factoryLoose + 1, "loose_named_one_patch");
 
+    auto engFromCache = std::make_unique<pa::Engine>();
+    engFromCache->prepare(44100.0f);
+    report[0] = 0;
+    const int cacheId =
+        engFromCache->loadPa4xNamed("tmp/KApro.SET", "sound", "KApro Piano Stage", report, (int)sizeof(report));
+    std::printf("CACHE_NAMED report=%s\n", report);
+    expect(cacheId >= 0, "cache_named_engine_id");
+    expect(std::strstr(report, "\"cached\":1") != nullptr, "cache_named_uses_wav");
+    expect(patchesAdded(report) == 1, "cache_named_one_patch");
+
     mkdirs("tmp/Layers.SET/PCM");
     mkdirs("tmp/Layers.SET/MULTISMP");
     auto layerPcm = makeKsf("PianoC2", 512, 48);

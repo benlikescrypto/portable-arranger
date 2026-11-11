@@ -1883,16 +1883,22 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         in >> tag >> wantP;
         if (tag != "P" || wantP <= 0) return false;
         if (!readCacheLine(in, rest)) return false;
-        bool found = false;
+        struct CachePatch {
+            std::string name;
+            std::string cat;
+            std::string group;
+            int drum = 0;
+            int score = 0;
+            std::vector<Zone> zones;
+        };
+        std::vector<CachePatch> cached;
         for (int i = 0; i < wantP; ++i) {
-            std::string instName, cat;
-            int drum = 0, nZ = 0;
-            if (!readCacheLine(in, instName) || !readCacheLine(in, cat)) return false;
-            in >> drum >> nZ;
+            CachePatch inst;
+            if (!readCacheLine(in, inst.name) || !readCacheLine(in, inst.cat)) return false;
+            int nZ = 0;
+            in >> inst.drum >> nZ;
             if (!readCacheLine(in, rest)) return false;
             if (nZ < 0 || nZ > 512) return false;
-            std::vector<Zone> zones;
-            std::vector<int> sampleIdx;
             for (int z = 0; z < nZ; ++z) {
                 int si = -1, keyLow = 0, keyHigh = 127, velLow = 0, velHigh = 127, rootNote = 60;
                 int offset = 0, end = 0, loopS = -1, loopE = -1, loopMode = -1;
@@ -1900,6 +1906,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
                 in >> si >> keyLow >> keyHigh >> velLow >> velHigh >> rootNote >> tune >> gain >> pan >> offset >> end >>
                     loopS >> loopE >> loopMode;
                 if (!readCacheLine(in, rest)) return false;
+                if (si < 0 || si >= wantS) continue;
                 Zone zone;
                 zone.sampleIndex = si;
                 zone.keyLow = keyLow;
@@ -1915,42 +1922,59 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
                 zone.loopStart = loopS;
                 zone.loopEnd = loopE;
                 zone.loopMode = loopMode;
-                zones.push_back(zone);
-                sampleIdx.push_back(si);
+                inst.zones.push_back(zone);
             }
-            if (found || !matchesWant(instName)) continue;
-            std::map<int, int> cacheToEngine;
-            for (int si : sampleIdx) {
-                if (si < 0 || si >= wantS || cacheToEngine.count(si)) continue;
-                const CacheSample& cs = cacheSamples[(size_t)si];
-                Sample s;
-                if (loadWav((cacheDir + "/" + cs.wavName).c_str(), s) <= 0) continue;
-                copyName40(s.name, sizeof(s.name), cs.sampleName);
-                if (cs.sr > 0) s.sampleRate = cs.sr;
-                if (cs.ch > 0) s.channels = cs.ch;
-                if (cs.rootNote > 0) s.rootNote = cs.rootNote;
-                if (cs.loopOn) {
-                    s.loop = true;
-                    s.loopStart = cs.loopS;
-                    s.loopEnd = cs.loopE > cs.loopS ? cs.loopE : s.frames();
+            if (inst.zones.empty()) continue;
+            inst.group = instrumentGroup(inst.name);
+            inst.score = std::max(scoreName(inst.name, wantName), scoreName(inst.group, wantName));
+            if (normName(inst.group.c_str()) == normName(wantName.c_str())) inst.score = std::max(inst.score, 800);
+            cached.push_back(std::move(inst));
+        }
+        int bestScore = 0;
+        std::string bestGroup;
+        for (const auto& inst : cached) {
+            if (inst.score > bestScore) {
+                bestScore = inst.score;
+                bestGroup = inst.group.empty() ? inst.name : inst.group;
+            }
+        }
+        if (bestScore < 100) return false;
+        std::map<int, int> cacheToEngine;
+        std::vector<Zone> mapped;
+        bool drum = false;
+        for (const auto& inst : cached) {
+            const std::string group = inst.group.empty() ? inst.name : inst.group;
+            if (inst.score < 100 || group != bestGroup) continue;
+            if (inst.drum) drum = true;
+            for (const Zone& z : inst.zones) {
+                if (!cacheToEngine.count(z.sampleIndex)) {
+                    if (z.sampleIndex < 0 || z.sampleIndex >= wantS) continue;
+                    const CacheSample& cs = cacheSamples[(size_t)z.sampleIndex];
+                    Sample s;
+                    if (loadWav((cacheDir + "/" + cs.wavName).c_str(), s) <= 0) continue;
+                    copyName40(s.name, sizeof(s.name), cs.sampleName);
+                    if (cs.sr > 0) s.sampleRate = cs.sr;
+                    if (cs.ch > 0) s.channels = cs.ch;
+                    if (cs.rootNote > 0) s.rootNote = cs.rootNote;
+                    if (cs.loopOn) {
+                        s.loop = true;
+                        s.loopStart = cs.loopS;
+                        s.loopEnd = cs.loopE > cs.loopS ? cs.loopE : s.frames();
+                    }
+                    cacheToEngine[z.sampleIndex] = addLoaded(std::move(s), cs.sampleName, false);
                 }
-                cacheToEngine[si] = addLoaded(std::move(s), cs.sampleName, false);
-            }
-            std::vector<Zone> mapped;
-            for (Zone z : zones) {
                 auto it = cacheToEngine.find(z.sampleIndex);
                 if (it == cacheToEngine.end() || it->second < 0) continue;
-                z.sampleIndex = it->second;
-                mapped.push_back(z);
+                Zone zone = z;
+                zone.sampleIndex = it->second;
+                mapped.push_back(zone);
             }
-            if (mapped.empty()) continue;
-            Patch p = makeSamplePatch(instName.c_str(), guessCat(instName.c_str(), cat.empty() ? "Imported" : cat.c_str()),
-                                      mapped, drum != 0);
-            p.source = PatchSource::Korg;
-            rememberPatch(addSampledInstrument(p), drum != 0);
-            found = true;
         }
-        if (!found || loaded.empty()) return false;
+        if (mapped.empty() || loaded.empty()) return false;
+        Patch p = makeSamplePatch(wantName.c_str(), guessCat(wantName.c_str(), drum ? "Percussion" : "Imported"), mapped,
+                                  drum);
+        p.source = PatchSource::Korg;
+        rememberPatch(addSampledInstrument(p), drum);
         reason += "Loaded one converted sound. ";
         return true;
     };
