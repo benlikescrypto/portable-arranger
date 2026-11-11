@@ -13,6 +13,7 @@ export type SoundItem = {
   setPath?: string
   fileName?: string
   loadError?: string
+  loadingProgress?: number
 }
 
 export type StyleItem = {
@@ -27,6 +28,7 @@ export type StyleItem = {
   setPath?: string
   fileName?: string
   loadError?: string
+  loadingProgress?: number
 }
 
 export type PadItem = {
@@ -40,6 +42,7 @@ export type PadItem = {
   setPath?: string
   fileName?: string
   loadError?: string
+  loadingProgress?: number
 }
 
 export type MixerState = {
@@ -99,7 +102,4 @@ export type ArrangerUiState = {
   recentStyles: number[]
   libraryFilter: "all" | "factory" | "imported"
   importReport: string
-  loadingId: number | null
-  loadingKind: LibraryKind | null
-  loadingProgress: number
 }

@@ -156,8 +156,6 @@ export function ArrangerScreen() {
               part={soundPart}
               sounds={s.sounds}
               activeId={typeof activeSoundId === "number" ? activeSoundId : s.upper1}
-              loadingId={s.loadingKind === "sound" ? s.loadingId : null}
-              loadingProgress={s.loadingProgress}
               onSelect={(id) => vm.selectSound(id, soundPart)}
               onClose={closePicker}
               emptyHint="Import a SET to fill the User squares. Tap a gray square to load that sound."
@@ -166,8 +164,6 @@ export function ArrangerScreen() {
             <StyleSelect
               styles={s.styles}
               activeId={s.styleId}
-              loadingId={s.loadingKind === "style" ? s.loadingId : null}
-              loadingProgress={s.loadingProgress}
               onSelect={vm.selectStyle}
               onClose={closePicker}
             />
@@ -175,8 +171,6 @@ export function ArrangerScreen() {
             <PadSelect
               pads={s.pads}
               activeId={s.padId}
-              loadingId={s.loadingKind === "pad" ? s.loadingId : null}
-              loadingProgress={s.loadingProgress}
               onSelect={vm.selectPad}
               onClose={closePicker}
             />

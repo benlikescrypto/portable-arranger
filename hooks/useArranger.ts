@@ -126,9 +126,6 @@ const initial: ArrangerUiState = {
   recentStyles: [],
   libraryFilter: "all",
   importReport: "",
-  loadingId: null,
-  loadingKind: null,
-  loadingProgress: 0,
 }
 
 export function useArranger() {
@@ -243,38 +240,44 @@ export function useArranger() {
       }
       if (!alive) return
 
-      const loadedSounds = catalogSounds()
-      const loadedStyles = catalogStyles()
-      const nextUpper1 = findSoundId(loadedSounds, [saved.upper1Name, "Concert Grand"].filter(Boolean) as string[])
-      const nextUpper2 = findSoundId(
-        loadedSounds,
-        [saved.upper2Name, "Warm Pad", "Atmosphere"].filter(Boolean) as string[],
-        11
-      )
+      let disk: Awaited<ReturnType<typeof loadDiskCatalog>> = { setName: "", sounds: [], styles: [], pads: [] }
+      try {
+        disk = await catalogP
+      } catch (error) {
+        console.log("[boot] library catalog failed", error)
+      }
+      if (!alive) return
+
+      const sounds = mergeSounds(catalogSounds(), disk.sounds)
+      const styles = mergeStyles(catalogStyles(), disk.styles)
+      const pads = mergePads(catalogStyles(), disk.pads)
+      const nextUpper1 = findSoundId(sounds, [saved.upper1Name, "Concert Grand"].filter(Boolean) as string[])
+      const nextUpper2 = findSoundId(sounds, [saved.upper2Name, "Warm Pad", "Atmosphere"].filter(Boolean) as string[], 11)
       const nextUpper3 = findSoundId(
-        loadedSounds,
+        sounds,
         [saved.upper3Name, "Concert Strings", "Chamber Strings"].filter(Boolean) as string[],
         10
       )
       const nextLower = findSoundId(
-        loadedSounds,
+        sounds,
         [saved.lowerName, "Cinematic Strings", "Symphonic Strings", "Concert Strings"].filter(Boolean) as string[],
         10
       )
       const nextStyleId = findStyleId(
-        loadedStyles,
-        [saved.styleName, loadedStyles[0]?.name].filter(Boolean) as string[],
-        loadedStyles[0]?.id ?? 0
+        styles,
+        [saved.styleName, styles[0]?.name].filter(Boolean) as string[],
+        styles[0]?.id ?? 0
       )
-      const nextStyle = loadedStyles.find((item) => item.id === nextStyleId)
+      const nextStyle = styles.find((item) => item.id === nextStyleId)
+      const userOnDisk = disk.sounds.length + disk.styles.length + disk.pads.length
       setState((s) => ({
         ...s,
-        sounds: loadedSounds,
-        styles: loadedStyles,
-        pads: [],
+        sounds,
+        styles,
+        pads,
         nativeReady: started,
         arrangerReady: true,
-        setName: saved.setName || "",
+        setName: saved.setName || disk.setName || "",
         upper1: nextUpper1,
         upper2: nextUpper2,
         upper3: nextUpper3,
@@ -286,34 +289,12 @@ export function useArranger() {
         tempo: nextStyle?.tempo || style?.tempo || 112,
         importing: false,
         importProgress: 1,
-        importMessage: "",
+        importMessage: userOnDisk
+          ? `${disk.sounds.length} User sounds · ${disk.styles.length} styles · ${disk.pads.length} pads — tap to load`
+          : "",
       }))
       hideSplash()
       void midi.start()
-
-      void (async () => {
-        try {
-          const disk = await catalogP
-          if (!alive) return
-          const sounds = mergeSounds(catalogSounds(), disk.sounds)
-          const styles = mergeStyles(catalogStyles(), disk.styles)
-          const pads = mergePads(catalogStyles(), disk.pads)
-          const userOnDisk = disk.sounds.length + disk.styles.length + disk.pads.length
-          setState((s) => ({
-            ...s,
-            sounds,
-            styles,
-            pads,
-            setName: saved.setName || disk.setName || s.setName,
-            importMessage: userOnDisk
-              ? `${disk.sounds.length} User sounds · ${disk.styles.length} styles · ${disk.pads.length} pads — tap to load`
-              : "",
-          }))
-        } catch (error) {
-          console.log("[boot] library catalog failed", error)
-          if (alive) setState((s) => ({ ...s, importMessage: "" }))
-        }
-      })()
     })()
     const sub = midi.addDeviceListener((event) => {
       setState((s) => ({ ...s, midiConnected: event.connected, midiName: event.name }))
@@ -346,16 +327,17 @@ export function useArranger() {
     setState((s) => ({ ...s, libraryFilter }))
   }, [])
 
-  const loadingLock = useRef(false)
+  const inFlight = useRef(new Set<string>())
+  const nativeLoad = useRef(Promise.resolve())
 
-  const refreshLibrary = useCallback(async () => {
-    const disk = await loadDiskCatalog()
-    return {
-      disk,
-      sounds: mergeSounds(catalogSounds(), disk.sounds),
-      styles: mergeStyles(catalogStyles(), disk.styles),
-      pads: mergePads(catalogStyles(), disk.pads),
-    }
+  const patchProgress = useCallback((kind: LibraryKind, id: number, progress: number, extra: Record<string, unknown> = {}) => {
+    setState((s) => {
+      const patch = <T extends { id: number; loadingProgress?: number }>(rows: T[]) =>
+        rows.map((row) => (row.id === id ? { ...row, loadingProgress: progress, ...extra } : row))
+      if (kind === "sound") return { ...s, sounds: patch(s.sounds) }
+      if (kind === "pad") return { ...s, pads: patch(s.pads) }
+      return { ...s, styles: patch(s.styles) }
+    })
   }, [])
 
   const assignSound = useCallback((s: ArrangerUiState, id: number, part: number, sounds: SoundItem[]) => {
@@ -387,45 +369,64 @@ export function useArranger() {
     async (kind: LibraryKind, id: number, item: SoundItem | StyleItem | PadItem | undefined) => {
       if (!item) return { ok: false, reason: "Missing." }
       if (item.loaded !== false && engineProgram(item) >= 0) return { ok: true, reason: "" }
-      if (loadingLock.current) return { ok: false, reason: "Busy." }
-      loadingLock.current = true
+      const key = `${kind}:${id}`
+      if (inFlight.current.has(key)) return { ok: false, reason: "" }
+      inFlight.current.add(key)
       const tick = setInterval(() => {
-        setState((s) => ({ ...s, loadingProgress: Math.min(0.9, s.loadingProgress + 0.05) }))
-      }, 160)
-      setState((s) => ({ ...s, loadingId: id, loadingKind: kind, loadingProgress: 0.08 }))
-      try {
-        const result = await loadDiskItem({
-          kind,
-          name: item.name,
-          setPath: item.setPath,
-          fileName: item.fileName,
+        setState((s) => {
+          const bump = <T extends { id: number; loadingProgress?: number }>(rows: T[]) =>
+            rows.map((row) =>
+              row.id === id ? { ...row, loadingProgress: Math.min(0.9, (row.loadingProgress ?? 0.08) + 0.05) } : row
+            )
+          if (kind === "sound") return { ...s, sounds: bump(s.sounds) }
+          if (kind === "pad") return { ...s, pads: bump(s.pads) }
+          return { ...s, styles: bump(s.styles) }
         })
-        const lib = await refreshLibrary()
-        const next =
-          kind === "sound"
-            ? lib.sounds.find((row) => row.name === item.name)
-            : kind === "pad"
-              ? lib.pads.find((row) => row.name === item.name)
-              : lib.styles.find((row) => row.name === item.name)
-        const ok = result.ok || engineProgram(next) >= 0
-        setState((s) => ({
-          ...s,
-          sounds: lib.sounds,
-          styles: lib.styles,
-          pads: lib.pads,
-          loadingProgress: 1,
-          importMessage: ok ? "" : result.reason,
-        }))
-        return { ok, reason: result.reason, sounds: lib.sounds, styles: lib.styles, pads: lib.pads }
+      }, 160)
+      patchProgress(kind, id, 0.08, { loadError: undefined })
+      try {
+        const run = () =>
+          loadDiskItem({
+            kind,
+            name: item.name,
+            setPath: item.setPath,
+            fileName: item.fileName,
+          })
+        const pending = nativeLoad.current.then(run, run)
+        nativeLoad.current = pending.then(
+          () => undefined,
+          () => undefined
+        )
+        const result = await pending
+        const ok = result.ok
+        setState((s) => {
+          const mark = <T extends { id: number; name: string; loaded?: boolean; engineId?: number }>(rows: T[]) =>
+            rows.map((row) =>
+              row.id === id
+                ? {
+                    ...row,
+                    loaded: ok || row.loaded,
+                    engineId: ok ? result.engineId : row.engineId,
+                    loadingProgress: 0,
+                    loadError: ok ? undefined : result.reason,
+                  }
+                : row
+            )
+          return {
+            ...s,
+            sounds: kind === "sound" ? mark(s.sounds) : s.sounds,
+            styles: kind === "style" ? mark(s.styles) : s.styles,
+            pads: kind === "pad" ? mark(s.pads) : s.pads,
+            importMessage: ok ? s.importMessage : result.reason,
+          }
+        })
+        return { ok, reason: result.reason }
       } finally {
         clearInterval(tick)
-        loadingLock.current = false
-        setTimeout(() => {
-          setState((s) => ({ ...s, loadingId: null, loadingKind: null, loadingProgress: 0 }))
-        }, 250)
+        inFlight.current.delete(key)
       }
     },
-    [refreshLibrary]
+    [patchProgress]
   )
 
   const selectSound = useCallback(
@@ -443,7 +444,7 @@ export function useArranger() {
           return
         }
         const loaded = await ensureLoaded("sound", id, item)
-        if (!loaded.ok) {
+        if (!loaded.ok && loaded.reason) {
           setState((s) => ({
             ...s,
             sounds: s.sounds.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
@@ -497,7 +498,7 @@ export function useArranger() {
           return
         }
         const loaded = await ensureLoaded("style", id, item)
-        if (!loaded.ok) {
+        if (!loaded.ok && loaded.reason) {
           setState((s) => ({
             ...s,
             styles: s.styles.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
@@ -523,7 +524,7 @@ export function useArranger() {
           return
         }
         const loaded = await ensureLoaded("pad", id, item)
-        if (!loaded.ok) {
+        if (!loaded.ok && loaded.reason) {
           setState((s) => ({
             ...s,
             pads: s.pads.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),

@@ -5,13 +5,11 @@ import type { PadItem } from "@/lib/types"
 type Props = {
   pads: PadItem[]
   activeId: number
-  loadingId: number | null
-  loadingProgress: number
   onSelect: (id: number) => void
   onClose: () => void
 }
 
-export function PadSelect({ pads, activeId, loadingId, loadingProgress, onSelect, onClose }: Props) {
+export function PadSelect({ pads, activeId, onSelect, onClose }: Props) {
   return (
     <BankPadSelect
       title="PAD SELECT"
@@ -20,8 +18,6 @@ export function PadSelect({ pads, activeId, loadingId, loadingProgress, onSelect
       items={pads}
       activeId={activeId}
       categorize={paPadCategory}
-      loadingId={loadingId}
-      loadingProgress={loadingProgress}
       onSelect={onSelect}
       onClose={onClose}
       emptyHint="Import a SET or Pad Record SMF, then tap a User pad to load it."

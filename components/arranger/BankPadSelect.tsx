@@ -11,6 +11,7 @@ export type PadEntry = {
   source?: string
   loaded?: boolean
   loadError?: string
+  loadingProgress?: number
 }
 
 type Props = {
@@ -24,8 +25,6 @@ type Props = {
   onSelect: (id: number) => void
   onClose: () => void
   emptyHint?: string
-  loadingId?: number | null
-  loadingProgress?: number
 }
 
 function inBank(items: PadEntry[], bank: SoundBank) {
@@ -54,17 +53,19 @@ export function BankPadSelect({
   onSelect,
   onClose,
   emptyHint,
-  loadingId = null,
-  loadingProgress = 0,
 }: Props) {
   const current = items.find((item) => item.id === activeId)
-  const initialBank: SoundBank = (current?.source ?? "FACTORY").toUpperCase() === "FACTORY" ? "Factory" : "User"
+  const hasUser = items.some((item) => (item.source ?? "FACTORY").toUpperCase() !== "FACTORY")
+  const initialBank: SoundBank =
+    (current?.source ?? "FACTORY").toUpperCase() !== "FACTORY" || hasUser ? "User" : "Factory"
   const initialCategory = current ? categorize(current) : catsLeft[0]
   const [bank, setBank] = useState<SoundBank>(initialBank)
   const [category, setCategory] = useState(initialCategory)
   const [page, setPage] = useState(() =>
     pageOf(
-      inBank(items, initialBank).filter((item) => categorize(item) === initialCategory),
+      initialBank === "User"
+        ? inBank(items, initialBank)
+        : inBank(items, initialBank).filter((item) => categorize(item) === initialCategory),
       activeId
     )
   )
@@ -125,7 +126,8 @@ export function BankPadSelect({
                   {[0, 1].map((col) => {
                     const i = row * 2 + col
                     const pad = pads[i]
-                    const loading = pad != null && pad.id === loadingId
+                    const loadingProgress = pad?.loadingProgress ?? 0
+                    const loading = pad != null && pad.loaded === false && loadingProgress > 0
                     const loaded = pad?.loaded !== false
                     const selected = loaded && pad?.id === activeId
                     return (
@@ -164,7 +166,7 @@ export function BankPadSelect({
                         >
                           {pad?.name ?? ""}
                         </Text>
-                        {pad && !loaded && !loading && pad.loadError ? (
+                        {pad && !loaded && !loading && pad.loadError && /smf/i.test(pad.loadError) ? (
                           <Text style={styles.padMeta} numberOfLines={1}>
                             Need SMF
                           </Text>

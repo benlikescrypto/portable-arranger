@@ -48,15 +48,166 @@ function isGenericStem(name: string) {
   return /^(ram|pcm|sound|style|pad|multismp|multisample|samples)$/i.test(name.trim())
 }
 
-function catalogHasRealNames(catalog: DiskCatalog | null) {
-  if (!catalog) return false
-  const items = [...catalog.sounds, ...catalog.styles, ...catalog.pads]
-  return items.some((item) => !isGenericStem(item.name))
-}
-
 function pushItem(items: DiskItem[], item: DiskItem) {
   if (items.some((row) => row.kind === item.kind && norm(row.name) === norm(item.name))) return
   items.push(item)
+}
+
+function asciiName(bytes: Uint8Array, off: number, n: number) {
+  let out = ""
+  for (let i = 0; i < n && off + i < bytes.length; i++) {
+    const c = bytes[off + i]
+    if (c === 0) break
+    if (c >= 32 && c < 127) out += String.fromCharCode(c)
+  }
+  return out.trim()
+}
+
+function u32be(bytes: Uint8Array, off: number) {
+  return ((bytes[off] << 24) | (bytes[off + 1] << 16) | (bytes[off + 2] << 8) | bytes[off + 3]) >>> 0
+}
+
+function parseKmpNames(bytes: Uint8Array) {
+  const names: string[] = []
+  const seen = new Set<string>()
+  for (let i = 0; i + 24 < bytes.length; ) {
+    if (bytes[i] !== 0x4d || bytes[i + 1] !== 0x53 || bytes[i + 2] !== 0x50 || bytes[i + 3] !== 0x31) {
+      i++
+      continue
+    }
+    const sz = u32be(bytes, i + 4)
+    if (sz < 18 || i + 8 + sz > bytes.length) {
+      i++
+      continue
+    }
+    let name = asciiName(bytes, i + 8, 16)
+    const cursor = i + 8 + sz
+    if (
+      cursor + 8 <= bytes.length &&
+      bytes[cursor] === 0x4e &&
+      bytes[cursor + 1] === 0x41 &&
+      bytes[cursor + 2] === 0x4d &&
+      bytes[cursor + 3] === 0x45
+    ) {
+      const nsz = u32be(bytes, cursor + 4)
+      if (cursor + 8 + nsz <= bytes.length) {
+        const longer = asciiName(bytes, cursor + 8, Math.min(24, nsz))
+        if (longer) name = longer
+      }
+    }
+    const key = norm(name)
+    if (name.length >= 2 && !isGenericStem(name) && !seen.has(key)) {
+      seen.add(key)
+      names.push(name)
+    }
+    i = Math.max(cursor, i + 8)
+  }
+  return names
+}
+
+function childNamed(parent: Directory, want: string) {
+  try {
+    for (const child of parent.list()) {
+      if (!child.name || child.name.startsWith(".")) continue
+      if (child.name.toUpperCase() !== want) continue
+      if (isDirectory(child) || isSetName(child.name)) return asDirectory(child)
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+async function namesFromKmp(file: File) {
+  const size = typeof file.size === "number" ? file.size : 0
+  if (size <= 0 || size > 8 * 1024 * 1024) return []
+  try {
+    const bytes = await Promise.resolve(file.bytes())
+    return parseKmpNames(bytes)
+  } catch {
+    return []
+  }
+}
+
+async function namesFromPcg(file: File) {
+  const size = typeof file.size === "number" ? file.size : 0
+  if (size <= 0 || size > 8 * 1024 * 1024) return []
+  try {
+    const bytes = await Promise.resolve(file.bytes())
+    const names: string[] = []
+    const seen = new Set<string>()
+    const push = (name: string) => {
+      const key = norm(name)
+      if (!key || isGenericStem(name) || seen.has(key) || name.length < 3) return
+      seen.add(key)
+      names.push(name)
+    }
+    for (let i = 0; i + 16 < bytes.length; i++) {
+      if (bytes[i] !== 0x50 || bytes[i + 1] !== 0x52 || bytes[i + 2] !== 0x47) continue
+      const sz = u32be(bytes, i + 4)
+      if (sz < 16 || i + 8 + sz > bytes.length) continue
+      const payload = bytes.subarray(i + 8, i + 8 + sz)
+      for (let p = 0; p + 16 < payload.length; p += 16) {
+        const name = asciiName(payload, p, 16)
+        if (name.length >= 3) push(name)
+      }
+    }
+    if (!names.length) {
+      for (let i = 0; i + 24 < bytes.length; i++) {
+        if (!(bytes[i] === 0 && bytes[i + 2] === 0 && bytes[i + 3] === 5 && bytes[i + 6] === 0 && bytes[i + 7] === 0x1c))
+          continue
+        const name = asciiName(bytes, i + 8, 16)
+        if (name.length >= 3) push(name)
+      }
+    }
+    return names
+  } catch {
+    return []
+  }
+}
+
+async function mergeCachedCatalog(
+  folder: Directory,
+  setName: string,
+  setPath: string,
+  into: DiskCatalog
+) {
+  const cached = await readCachedCatalog(folder, setName, setPath)
+  if (!cached) return
+  for (const item of cached.sounds) pushItem(into.sounds, item)
+  for (const item of cached.styles) pushItem(into.styles, item)
+  for (const item of cached.pads) pushItem(into.pads, item)
+}
+
+async function namesFromManifest(setFolder: Directory, setName: string, setPath: string, into: DiskCatalog) {
+  try {
+    const file = new File(new Directory(setFolder, ".arrangerbox-cache"), "manifest.txt")
+    if (!file.exists) return
+    const text = await Promise.resolve(file.text())
+    const lines = text.split(/\r?\n/)
+    let i = 0
+    while (i < lines.length && !/^P\s+\d+/.test(lines[i])) i++
+    const count = parseInt(lines[i]?.match(/^P\s+(\d+)/)?.[1] || "0", 10)
+    i++
+    for (let p = 0; p < count && i < lines.length; p++) {
+      const name = (lines[i++] || "").trim()
+      const cat = (lines[i++] || "").trim() || "Imported"
+      i++
+      const zones = parseInt(lines[i++] || "0", 10)
+      if (zones > 0) i += zones
+      if (!name || isGenericStem(name)) continue
+      pushItem(into.sounds, {
+        kind: "sound",
+        name,
+        category: cat === "Imported" ? categoryGuess(name, "Imported") : cat,
+        fileName: "",
+        setPath,
+        setName,
+      })
+    }
+  } catch {
+    // Catalog still walks SET files below.
+  }
 }
 
 async function walkDiskSet(dir: Directory, setName: string, setPath: string, into: DiskCatalog) {
@@ -74,10 +225,41 @@ async function walkDiskSet(dir: Directory, setName: string, setPath: string, int
     }
     const file = child as File
     const upper = file.name.toUpperCase()
+    if (/\.KMP$/i.test(upper)) {
+      const names = await namesFromKmp(file)
+      const list = names.length ? names : isGenericStem(stem(file.name)) ? [] : [stem(file.name)]
+      for (const name of list) {
+        pushItem(into.sounds, {
+          kind: "sound",
+          name,
+          category: categoryGuess(name, "Imported"),
+          fileName: file.name,
+          setPath,
+          setName,
+        })
+      }
+      continue
+    }
+    if (/\.PCG$/i.test(upper)) {
+      const names = await namesFromPcg(file)
+      const list = names.length ? names : isGenericStem(stem(file.name)) ? [] : [stem(file.name)]
+      for (const name of list) {
+        pushItem(into.sounds, {
+          kind: "sound",
+          name,
+          category: categoryGuess(name, "Imported"),
+          fileName: file.name,
+          setPath,
+          setName,
+        })
+      }
+      continue
+    }
     let kind: LibraryKind | null = null
     if (/\.(WAV|KSF)$/i.test(upper)) kind = "sound"
-    else if (/\.(MID|SMF)$/i.test(upper)) kind = "style"
-    else continue
+    else if (/\.(STY|STG|MID|SMF)$/i.test(upper)) kind = "style"
+    else if (/\.PAD$/i.test(upper)) kind = "pad"
+    if (!kind) continue
     const name = stem(file.name)
     if (isGenericStem(name)) continue
     pushItem(kind === "sound" ? into.sounds : kind === "pad" ? into.pads : into.styles, {
@@ -124,7 +306,7 @@ function listSavedSetDirs() {
   try {
     for (const child of root.list()) {
       if (!child.name || child.name.startsWith(".")) continue
-      if (isDirectory(child) || isSetName(child.name)) out.push(asDirectory(child))
+      out.push(asDirectory(child))
     }
   } catch {
     return out
@@ -146,18 +328,55 @@ async function catalogOneSet(dir: Directory): Promise<DiskCatalog> {
   const setFolder = findSetFolder(dir)
   const setName = setFolder.name.replace(/\.SET$/i, "") || "Imported"
   const setPath = nativePath(setFolder)
-  const empty: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
-  const cached = await readCachedCatalog(setFolder, setName, setPath)
-  if (catalogHasRealNames(cached)) return cached!
-  try {
-    await audio.listPa4xCatalog(setPath)
-  } catch {
-    // Filename fallback below still lists WAV/SMF.
+  const into: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
+  const soundDir = childNamed(setFolder, "SOUND")
+  await mergeCachedCatalog(setFolder, setName, setPath, into)
+  if (soundDir) await mergeCachedCatalog(soundDir, setName, setPath, into)
+  await namesFromManifest(setFolder, setName, setPath, into)
+  if (into.sounds.length === 0) {
+    const targets: Directory[] = []
+    if (soundDir) targets.push(soundDir)
+    else {
+      const seen = new Set<string>()
+      const note = (folder: Directory) => {
+        try {
+          for (const child of folder.list()) {
+            if (!child.name || child.name.startsWith(".")) continue
+            if (isDirectory(child) || isSetName(child.name)) {
+              note(asDirectory(child))
+              continue
+            }
+            if (!/\.KMP$/i.test(child.name)) continue
+            const key = nativePath(folder)
+            if (seen.has(key)) continue
+            if (folder.list().some((item) => /\.(STY|STG)$/i.test(item.name))) continue
+            seen.add(key)
+            targets.push(folder)
+          }
+        } catch {
+          // walkDiskSet still lists WAV/PCG/STY.
+        }
+      }
+      note(setFolder)
+    }
+    for (const target of targets) {
+      try {
+        await audio.listPa4xCatalog(nativePath(target))
+      } catch {
+        // Filename walk below still lists WAV/PCG/STY.
+      }
+      await mergeCachedCatalog(target, setName, setPath, into)
+    }
+    await mergeCachedCatalog(setFolder, setName, setPath, into)
   }
-  const nativeCatalog = await readCachedCatalog(setFolder, setName, setPath)
-  if (catalogHasRealNames(nativeCatalog)) return nativeCatalog!
-  await walkDiskSet(setFolder, setName, setPath, empty)
-  return empty
+  await walkDiskSet(setFolder, setName, setPath, into)
+  console.log("[catalog]", setName, {
+    sounds: into.sounds.length,
+    styles: into.styles.length,
+    pads: into.pads.length,
+    setPath,
+  })
+  return into
 }
 
 export async function cachedFileName(setPath: string | undefined, kind: LibraryKind, name: string) {
@@ -191,6 +410,12 @@ export function setPathForName(setName?: string) {
   }
 }
 
+let lastDiskCatalog: DiskCatalog | null = null
+
+export function lastLoadedDiskCatalog(): DiskCatalog {
+  return lastDiskCatalog ?? { setName: "", sounds: [], styles: [], pads: [] }
+}
+
 export async function loadDiskCatalog(): Promise<DiskCatalog> {
   const dirs = listSavedSetDirs()
   const merged: DiskCatalog = { setName: "", sounds: [], styles: [], pads: [] }
@@ -201,6 +426,7 @@ export async function loadDiskCatalog(): Promise<DiskCatalog> {
     for (const item of next.styles) pushItem(merged.styles, item)
     for (const item of next.pads) pushItem(merged.pads, item)
   }
+  lastDiskCatalog = merged
   return merged
 }
 

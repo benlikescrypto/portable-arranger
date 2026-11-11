@@ -1984,7 +1984,18 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         }
         return matchesWant(s.name);
     };
-    if (!usedCache && wantSound)
+    auto fileMaybeWanted = [&](const std::string& path) {
+        if (!named || !wantSound) return true;
+        if (neededSampleKeys.empty()) return false;
+        const std::string keys[] = {normName(fileStem(path).c_str()), normName(baseName(path).c_str())};
+        for (const auto& key : keys) {
+            if (!key.empty() && neededSampleKeys.count(key)) return true;
+            for (const auto& need : neededSampleKeys)
+                if (!need.empty() && key.find(need) != std::string::npos) return true;
+        }
+        return false;
+    };
+    if (!usedCache && wantSound && !(named && neededSampleKeys.empty()))
     for (const auto& path : files) {
         if (ramFull) break;
         const std::string ext = upperExt(path);
@@ -1998,6 +2009,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
             }
         };
         if (ext == ".WAV") {
+            if (!fileMaybeWanted(path)) continue;
             Sample s;
             if (loadWav(path.c_str(), s) > 0) {
                 copyName40(s.name, sizeof(s.name), fileStem(path));
@@ -2007,6 +2019,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
                 skipped++;
             }
         } else if (ext == ".KSF" || ext == ".KSC") {
+            if (!fileMaybeWanted(path)) continue;
             Sample s;
             bool comp = false;
             std::vector<uint8_t> bytes;
@@ -2024,6 +2037,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
                 takeSamples(found, path, false);
             }
         } else if (ext == ".PCM" || isPcmBankPath(path)) {
+            if (named && wantSound) continue;
             std::vector<Sample> found;
             scanPcmBank(path.c_str(), found);
             if (found.empty()) {
@@ -2408,6 +2422,14 @@ int Engine::listPa4xCatalog(const char* folder, char* report, int reportLen) {
                     if (!inst.name.empty() && !isGenericBankName(inst.name)) names.push_back(inst.name);
             }
             for (const auto& n : names) push("sound", n, path);
+            if (names.empty() && !isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
+        } else if (ext == ".PCG") {
+            std::vector<uint8_t> bytes;
+            if (!readFileBytes(path.c_str(), bytes)) continue;
+            std::vector<std::string> names, missing;
+            parsePcgNames(bytes.data(), bytes.size(), names, missing);
+            for (const auto& n : names)
+                if (!isGenericBankName(n)) push("sound", n, path);
             if (names.empty() && !isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
         } else if (ext == ".WAV" || ext == ".KSF") {
             if (!isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
