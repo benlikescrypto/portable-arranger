@@ -325,6 +325,9 @@ private:
     void startTsfVoice(const Patch& p, int note, int vel, int bus, int ch);
     int tsfChannelFor(int bus, int ch, bool drums) const;
     void applyTsfProgram(int tsfCh, const Patch& p);
+    // SoundFont voices bypass the bus mix, so each TSF channel's volume carries its bus fader.
+    void applyTsfVolume(int tsfCh);
+    void syncTsfMixer();
     void tsfAllNotesOff(int fromCh, int toCh);
 
     MidiQueue<1024> midi;
@@ -354,6 +357,10 @@ private:
     float chanBendRatio[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     float chanVol[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     float chanExpr[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    float tsfBaseVol[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    // Bus per TSF channel: 0-3 keyboard parts, 4-6 acc, 7 pad, 8 bass, 9 drums.
+    int tsfBus[16] = {0, 0, 0, 0, 3, 3, 3, 4, 2, 1, 3, 3, 3, 3, 3, 3};
+    float tsfMixApplied[kBusCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     std::vector<uint8_t> rrPhase;
     uint32_t rng = 0xA341316Cu;
     std::atomic<float> latency{8.0f};

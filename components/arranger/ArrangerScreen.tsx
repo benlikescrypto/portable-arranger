@@ -17,6 +17,7 @@ import { SoundSelect } from "@/components/arranger/SoundSelect"
 import { StylePlayHome } from "@/components/arranger/StylePlayHome"
 import { PadSelect } from "@/components/arranger/PadSelect"
 import { StyleSelect } from "@/components/arranger/StyleSelect"
+import { VolumeFader } from "@/components/arranger/VolumeFader"
 import { Lcd, Pa } from "@/constants/theme"
 import { useArranger } from "@/hooks/useArranger"
 import type { SoundItem } from "@/lib/types"
@@ -214,20 +215,32 @@ export function ArrangerScreen() {
           <Text style={styles.playKicker} numberOfLines={1}>
             {style?.name ?? "Style"}
           </Text>
-          <Pressable
-            onPress={vm.toggleStart}
-            accessibilityRole="button"
-            accessibilityLabel={s.playing ? "Stop style" : "Start style"}
-            style={({ pressed }) => [
-              styles.start,
-              { backgroundColor: s.playing ? Pa.red : Pa.text },
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={[styles.startLabel, { color: s.playing ? Pa.text : Pa.bg }]}>
-              {s.playing ? "Stop" : "Start"}
-            </Text>
-          </Pressable>
+          <View style={styles.playRow}>
+            <View style={styles.playFader}>
+              <VolumeFader
+                label="STYLE"
+                value={Math.max(s.mixer.drums, s.mixer.bass, s.mixer.acc, s.mixer.pad)}
+                onChange={vm.setStyleVolume}
+              />
+            </View>
+            <Pressable
+              onPress={vm.toggleStart}
+              accessibilityRole="button"
+              accessibilityLabel={s.playing ? "Stop style" : "Start style"}
+              style={({ pressed }) => [
+                styles.start,
+                { backgroundColor: s.playing ? Pa.red : Pa.text },
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.startLabel, { color: s.playing ? Pa.text : Pa.bg }]}>
+                {s.playing ? "Stop" : "Start"}
+              </Text>
+            </Pressable>
+            <View style={styles.playFader}>
+              <VolumeFader label="SOUND" value={s.mixer.keyboard} onChange={(v) => vm.setMixer(0, v)} />
+            </View>
+          </View>
           <MiniKeyboard onNoteOn={vm.playNote} onNoteOff={vm.releaseNote} />
         </View>
       </ScrollView>
@@ -287,10 +300,25 @@ const styles = StyleSheet.create({
   pagerContent: { flexGrow: 1 },
   slide: {
     alignSelf: "stretch",
+    height: 210,
+    minHeight: 160,
+    flexShrink: 1,
     flex: 1,
     paddingBottom: 4,
   },
   playSlide: { alignItems: "center", justifyContent: "center", paddingHorizontal: 6 },
+  playRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 18,
+    alignSelf: "stretch",
+    height: 210,
+    minHeight: 160,
+    flexShrink: 1,
+    marginBottom: 18,
+  },
+  playFader: { width: 64, alignSelf: "stretch" },
   playKicker: {
     color: Pa.muted,
     fontSize: 15,
@@ -301,9 +329,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   start: {
-    minWidth: 220,
+    minWidth: 160,
     height: 88,
-    paddingHorizontal: 48,
+    paddingHorizontal: 32,
     borderRadius: 44,
     alignItems: "center",
     justifyContent: "center",

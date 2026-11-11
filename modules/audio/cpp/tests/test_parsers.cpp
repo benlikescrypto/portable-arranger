@@ -376,6 +376,52 @@ int main() {
         }
     }
 
+    {
+        // Bus faders must reach every path: built-in synth (incl. its reverb send) and
+        // the GM SoundFont, which renders outside the bus mix. The Lower part (left of
+        // the split) belongs to the keyboard bus, not the style's bass bus.
+        auto levelFor = [&](pa::Engine& e, int note, float kbd) {
+            e.setMixer(0, kbd);
+            e.noteOn(0, note, 110);
+            buf.assign(9600 * 2, 0.0f);
+            e.render(buf.data(), 9600);
+            const float level = rms(buf.data(), 19200);
+            e.noteOff(0, note);
+            buf.assign(48000 * 2, 0.0f);
+            e.render(buf.data(), 48000);
+            return level;
+        };
+        auto synth = std::make_unique<pa::Engine>();
+        synth->prepare(48000.0f);
+        const float synthOn = levelFor(*synth, 72, 1.0f);
+        const float synthOff = levelFor(*synth, 72, 0.0f);
+        if (synthOff >= synthOn * 0.01f) std::printf("synth kbd on=%.6f off=%.6f\n", synthOn, synthOff);
+        expect(synthOn > 0.001f && synthOff < synthOn * 0.01f, "keyboard_fader_mutes_synth_and_reverb");
+
+        std::string sf2 = __FILE__;
+        sf2 = sf2.substr(0, sf2.find_last_of("/\\")) + "/../../factory/GeneralUser-GS.sf2";
+        auto gm = std::make_unique<pa::Engine>();
+        gm->prepare(48000.0f);
+        if (gm->loadSoundfont(sf2.c_str()) > 0) {
+            const float gmOn = levelFor(*gm, 72, 1.0f);
+            const float gmHalf = levelFor(*gm, 72, 0.5f);
+            const float gmOff = levelFor(*gm, 72, 0.0f);
+            if (!(gmOff < gmOn * 0.01f && gmHalf < gmOn * 0.75f))
+                std::printf("gm kbd on=%.6f half=%.6f off=%.6f\n", gmOn, gmHalf, gmOff);
+            expect(gmOn > 0.001f && gmHalf < gmOn * 0.75f && gmOff < gmOn * 0.01f, "keyboard_fader_scales_soundfont");
+            gm->setPartProgram(3, 0);
+            gm->setPartEnable(3, true);
+            gm->setSplit(60);
+            gm->setSynchro(false);  // a left-hand note would otherwise start the style
+            const float lowOn = levelFor(*gm, 40, 1.0f);
+            const float lowOff = levelFor(*gm, 40, 0.0f);
+            if (!(lowOff < lowOn * 0.01f)) std::printf("lower on=%.6f off=%.6f\n", lowOn, lowOff);
+            expect(lowOn > 0.001f && lowOff < lowOn * 0.01f, "lower_part_follows_keyboard_fader");
+        } else {
+            std::printf("SKIP soundfont fader test (no %s)\n", sf2.c_str());
+        }
+    }
+
     const std::string stylePath = tempDir() + "/arrangerbox_test.abstyle";
     {
         std::ofstream st(stylePath);

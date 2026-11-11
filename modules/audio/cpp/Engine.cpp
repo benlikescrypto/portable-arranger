@@ -348,11 +348,31 @@ void Engine::startTsfVoice(const Patch& p, int note, int vel, int bus, int ch) {
     const bool drums = isKit(p.model);
     const int tch = tsfChannelFor(bus, ch, drums);
     applyTsfProgram(tch, p);
-    const float vol = clampf(chanVol[ch & 15] * chanExpr[ch & 15] * 0.95f, 0.08f, 1.0f);
-    tsf_channel_set_volume(gmFont, tch, vol);
+    tsfBaseVol[tch] = clampf(chanVol[ch & 15] * chanExpr[ch & 15] * 0.95f, 0.08f, 1.0f);
+    tsfBus[tch] = drums ? (int)BusDrums : std::max(0, std::min((int)BusPad, bus));
+    applyTsfVolume(tch);
     const int pw = (int)clampf(8192.0f + chanBend[ch & 15] * 8192.0f, 0.0f, 16383.0f);
     tsf_channel_set_pitchwheel(gmFont, tch, pw);
     tsf_channel_note_on(gmFont, tch, note, clampf((float)vel / 127.0f, 0.0f, 1.0f));
+}
+
+void Engine::applyTsfVolume(int tsfCh) {
+    if (!gmFont || tsfCh < 0 || tsfCh > 15) return;
+    tsf_channel_set_volume(gmFont, tsfCh, tsfBaseVol[tsfCh] * mix.g[tsfBus[tsfCh]]);
+}
+
+// Runs on the audio thread: setMixer only writes mix.g, so pick up fader moves here.
+void Engine::syncTsfMixer() {
+    if (!gmFont) return;
+    bool changed = false;
+    for (int b = 0; b < (int)BusMaster; ++b) {
+        if (tsfMixApplied[b] != mix.g[b]) {
+            tsfMixApplied[b] = mix.g[b];
+            changed = true;
+        }
+    }
+    if (!changed) return;
+    for (int c = 0; c < 16; ++c) applyTsfVolume(c);
 }
 
 void Engine::tsfAllNotesOff(int fromCh, int toCh) {
@@ -701,7 +721,7 @@ void Engine::handle(const MidiEvent& e) {
             if (left && arrSt.synchro && !arrSt.running) arr.start(arrSt);
             const int note = std::max(0, std::min(127, raw + transpose + octave * 12));
             if (left && partOn[3]) {
-                startVoice(partProg[3], note, vel, BusBass, 3);
+                startVoice(partProg[3], note, vel, BusKeyboard, 3);
             } else {
                 if (partOn[0]) startVoice(partProg[0], note, vel, BusKeyboard, 0);
                 if (partOn[1] && partProg[1] >= 0) startVoice(partProg[1], note, vel, BusKeyboard, 1);
@@ -739,7 +759,11 @@ void Engine::handle(const MidiEvent& e) {
                 for (auto& v : voices) v.vibDepth = (e.c / 127.0f) * 0.12f;
             } else if (e.b == 7) {
                 chanVol[e.a & 15] = clampf(e.c / 127.0f, 0.0f, 1.0f);
-                if (gmFont) tsf_channel_set_volume(gmFont, tsfChannelFor(-1, e.a, false), chanVol[e.a & 15]);
+                if (gmFont) {
+                    const int tch = tsfChannelFor(-1, e.a, false);
+                    tsfBaseVol[tch] = chanVol[e.a & 15];
+                    applyTsfVolume(tch);
+                }
             } else if (e.b == 11) {
                 chanExpr[e.a & 15] = clampf(e.c / 127.0f, 0.0f, 1.0f);
             } else if (e.b == 91) {
@@ -1291,12 +1315,14 @@ void Engine::renderVoice(Voice& v, float* buses, float* sends, int) {
     buses[b * 2] += L;
     buses[b * 2 + 1] += R;
     if (sends) {
-        sends[0] += L * v.reverbSend;
-        sends[1] += R * v.reverbSend;
-        sends[2] += L * v.chorusSend;
-        sends[3] += R * v.chorusSend;
-        sends[4] += L * v.delaySend;
-        sends[5] += R * v.delaySend;
+        // Post-fader sends: turning a bus down takes its reverb/chorus/delay with it.
+        const float g = mix.g[b];
+        sends[0] += L * g * v.reverbSend;
+        sends[1] += R * g * v.reverbSend;
+        sends[2] += L * g * v.chorusSend;
+        sends[3] += R * g * v.chorusSend;
+        sends[4] += L * g * v.delaySend;
+        sends[5] += R * g * v.delaySend;
     }
     v.age += 1.0f;
     if (v.amp.idle()) v.active = false;
@@ -1305,6 +1331,7 @@ void Engine::renderVoice(Voice& v, float* buses, float* sends, int) {
 void Engine::render(float* out, int frames) {
     MidiEvent e;
     while (midi.pop(e)) handle(e);
+    syncTsfMixer();
 
     const double ticksPerSample = (arrSt.tempo / 60.0) * (double)kPpq / (double)sampleRate;
     for (int i = 0; i < frames; ++i) {

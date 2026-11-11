@@ -3,6 +3,8 @@ import { StyleSheet, Text, View } from "react-native"
 
 import { Pa } from "@/constants/theme"
 
+const MAX = 1.5
+
 type Props = {
   label: string
   value: number
@@ -11,9 +13,12 @@ type Props = {
 
 export function VolumeFader({ label, value, onChange }: Props) {
   const height = useRef(1)
-  const setFromY = (y: number) => {
-    const next = 1 - y / height.current
-    onChange(Math.max(0, Math.min(1.5, next)))
+  const trackTop = useRef(0)
+  // The track spans 0..MAX (the fill is drawn on that scale), so the cap stays under the finger.
+  const setFromPageY = (pageY: number) => {
+    const y = pageY - trackTop.current
+    const next = (1 - y / height.current) * MAX
+    onChange(Math.round(Math.max(0, Math.min(MAX, next)) * 100) / 100)
   }
 
   return (
@@ -26,11 +31,18 @@ export function VolumeFader({ label, value, onChange }: Props) {
         }}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
-        onResponderGrant={(event) => setFromY(event.nativeEvent.locationY)}
-        onResponderMove={(event) => setFromY(event.nativeEvent.locationY)}
+        // Keep the drag once it starts, so the horizontal pager can't take it mid-move.
+        onResponderTerminationRequest={() => false}
+        onResponderGrant={(event) => {
+          // Children ignore touches, so locationY here is relative to the track.
+          // Anchor to pageY so later moves can't jump if the touch target changes.
+          trackTop.current = event.nativeEvent.pageY - event.nativeEvent.locationY
+          setFromPageY(event.nativeEvent.pageY)
+        }}
+        onResponderMove={(event) => setFromPageY(event.nativeEvent.pageY)}
       >
-        <View style={[styles.fill, { height: `${Math.min(100, (value / 1.5) * 100)}%` }]} />
-        <View style={[styles.cap, { bottom: `${Math.min(96, (value / 1.5) * 100)}%` }]} />
+        <View pointerEvents="none" style={[styles.fill, { height: `${Math.min(100, (value / MAX) * 100)}%` }]} />
+        <View pointerEvents="none" style={[styles.cap, { bottom: `${Math.min(96, (value / MAX) * 100)}%` }]} />
       </View>
       <Text style={styles.label}>{label}</Text>
     </View>

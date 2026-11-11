@@ -602,6 +602,26 @@ export function useArranger() {
     }))
   }, [])
 
+  // One fader for the whole style. It scales DRUM/BASS/ACC/PAD together so the
+  // balance set on the Volume tab is kept; its value is the loudest of the four.
+  const mixerRef = useRef(state.mixer)
+  mixerRef.current = state.mixer
+  const setStyleVolume = useCallback((gain: number) => {
+    const m = mixerRef.current
+    const top = Math.max(m.drums, m.bass, m.acc, m.pad)
+    const scale = (g: number) => (top > 0.001 ? Math.min(1.5, (g / top) * gain) : gain)
+    const next = { ...m, drums: scale(m.drums), bass: scale(m.bass), acc: scale(m.acc), pad: scale(m.pad) }
+    mixerRef.current = next
+    audio.setMixer(1, next.drums)
+    audio.setMixer(2, next.bass)
+    audio.setMixer(3, next.acc)
+    audio.setMixer(4, next.pad)
+    setState((s) => ({
+      ...s,
+      mixer: { ...s.mixer, drums: next.drums, bass: next.bass, acc: next.acc, pad: next.pad },
+    }))
+  }, [])
+
   const runImport = useCallback(async (mode: ImportMode) => {
     setState((s) => ({
       ...s,
@@ -690,6 +710,7 @@ export function useArranger() {
       book,
       setMixer,
       setAccVolume,
+      setStyleVolume,
       importSet,
       toggleStart: () => {
         if (isAudioNativeAvailable) audio.arrangerToggle()
@@ -773,6 +794,7 @@ export function useArranger() {
       selectSound,
       selectStyle,
       setAccVolume,
+      setStyleVolume,
       setCategory,
       setLibraryFilter,
       setMixer,
