@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Pressable, StyleSheet, Text, View } from "react-native"
 
 import { noteName, Pa } from "@/constants/theme"
@@ -13,26 +13,48 @@ type Props = {
 }
 
 export function MiniKeyboard({ onNoteOn, onNoteOff, startNote = 60, octaves = 2 }: Props) {
+  const heldRef = useRef<Set<number>>(new Set())
   const [held, setHeld] = useState<number[]>([])
+  const onNoteOnRef = useRef(onNoteOn)
+  const onNoteOffRef = useRef(onNoteOff)
+  onNoteOnRef.current = onNoteOn
+  onNoteOffRef.current = onNoteOff
   const { whites, blacks } = useMemo(() => buildKeys(startNote, octaves), [octaves, startNote])
   const whiteW = 100 / Math.max(1, whites.length)
   const blackW = whiteW * 0.62
 
+  const sync = () => setHeld([...heldRef.current])
   const down = (note: number) => {
-    setHeld((cur) => (cur.includes(note) ? cur : [...cur, note]))
-    onNoteOn(note)
+    if (heldRef.current.has(note)) return
+    heldRef.current.add(note)
+    sync()
+    onNoteOnRef.current(note)
   }
   const up = (note: number) => {
-    setHeld((cur) => cur.filter((n) => n !== note))
-    onNoteOff(note)
+    if (!heldRef.current.has(note)) return
+    heldRef.current.delete(note)
+    sync()
+    onNoteOffRef.current(note)
+  }
+  const allUp = () => {
+    const notes = [...heldRef.current]
+    if (!notes.length) return
+    heldRef.current.clear()
+    sync()
+    for (const note of notes) onNoteOffRef.current(note)
   }
 
+  useEffect(
+    () => () => {
+      const notes = [...heldRef.current]
+      heldRef.current.clear()
+      for (const note of notes) onNoteOffRef.current(note)
+    },
+    []
+  )
+
   return (
-    <View
-      style={styles.wrap}
-      onStartShouldSetResponder={() => true}
-      onMoveShouldSetResponder={() => true}
-    >
+    <View style={styles.wrap} onResponderTerminate={allUp}>
       <View style={styles.row}>
         {whites.map((note) => {
           const on = held.includes(note)
@@ -42,6 +64,8 @@ export function MiniKeyboard({ onNoteOn, onNoteOff, startNote = 60, octaves = 2 
               key={note}
               onPressIn={() => down(note)}
               onPressOut={() => up(note)}
+              onTouchEnd={() => up(note)}
+              onTouchCancel={() => up(note)}
               accessibilityRole="button"
               accessibilityLabel={noteName(note)}
               style={[styles.white, on && styles.whiteOn]}
@@ -57,6 +81,8 @@ export function MiniKeyboard({ onNoteOn, onNoteOff, startNote = 60, octaves = 2 
               key={note}
               onPressIn={() => down(note)}
               onPressOut={() => up(note)}
+              onTouchEnd={() => up(note)}
+              onTouchCancel={() => up(note)}
               accessibilityRole="button"
               accessibilityLabel={noteName(note)}
               style={[

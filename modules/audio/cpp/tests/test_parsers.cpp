@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -151,7 +152,8 @@ int main() {
     expect(s.sampleRate == 44100, "wav_sample_rate");
     expect(s.frames() == 64, "wav_frames_helper");
 
-    pa::Engine eng;
+    auto engHeap = std::make_unique<pa::Engine>();
+    pa::Engine& eng = *engHeap;
     eng.prepare(48000.0f);
     expect(eng.soundCount() >= 80, "factory_sound_count");
     expect(eng.styleCount() >= 20, "factory_style_count");
@@ -218,6 +220,8 @@ int main() {
     eng.bookSection(5);
     eng.render(buf.data(), 4800);
     eng.arrangerStop();
+    buf.assign(256 * 2, 0.0f);
+    eng.render(buf.data(), 256);
     expect(!eng.isPlaying(), "arranger_stops");
 
     const std::string sfzPath = tempDir() + "/arrangerbox_test.sfz";
@@ -247,6 +251,43 @@ int main() {
         expect(rms(buf.data(), 2048) > 0.0001f, "sfz_velocity_and_key_zones");
         eng.noteOff(0, 40);
         eng.noteOff(0, 80);
+        buf.assign(48000 * 2, 0.0f);
+        eng.render(buf.data(), 48000);
+        const float tail = rms(buf.data() + 40000, 8000);
+        expect(tail < 0.0005f, "sfz_loop_stops_after_key_up");
+    }
+
+    {
+        auto isolated = std::make_unique<pa::Engine>();
+        isolated->prepare(48000.0f);
+        pa::Sample looped;
+        looped.sampleRate = 44100;
+        looped.channels = 1;
+        looped.rootNote = 60;
+        looped.loop = true;
+        looped.loopStart = 64;
+        looped.loopEnd = 2048;
+        looped.data.assign(4096, 0.0f);
+        for (int i = 0; i < 4096; ++i) looped.data[(size_t)i] = std::sin((float)i * 0.12f) * 0.4f;
+        pa::Patch patch;
+        pa::prepareSampledPatch(patch, false);
+        std::snprintf(patch.name, sizeof(patch.name), "Loop Hold");
+        pa::Zone z;
+        z.sampleIndex = isolated->addSample(std::move(looped));
+        z.root = 60;
+        patch.zones.push_back(z);
+        const int id = isolated->addSampledInstrument(patch);
+        isolated->setPartProgram(0, id);
+        isolated->noteOn(0, 72, 110);
+        buf.assign(8192 * 2, 0.0f);
+        isolated->render(buf.data(), 8192);
+        expect(rms(buf.data(), 16384) > 0.01f, "looped_sample_sounds_while_held");
+        isolated->noteOff(0, 72);
+        buf.assign(48000 * 2, 0.0f);
+        isolated->render(buf.data(), 48000);
+        const float tail = rms(buf.data() + 20000, 16000);
+        if (tail >= 0.0005f) std::printf("looped tail rms=%.6f\n", tail);
+        expect(tail < 0.0005f, "looped_sample_stops_after_key_up");
     }
 
     const std::string stylePath = tempDir() + "/arrangerbox_test.abstyle";

@@ -587,7 +587,7 @@ void Engine::stopVoices(int note, int ch, bool matchInst, int instId) {
         v.amp.noteOff();
         v.filtEg.noteOff();
         v.releasing = true;
-        v.active = false;
+        v.sampleLoop = false;
     }
 }
 
@@ -706,7 +706,7 @@ void Engine::handle(const MidiEvent& e) {
                     v.amp.noteOff();
                     v.filtEg.noteOff();
                     v.releasing = true;
-                    v.active = false;
+                    v.sampleLoop = false;
                 }
             }
             break;
@@ -1201,7 +1201,7 @@ void Engine::renderSample(Voice& v, float& L, float& R) {
         L = R = 0;
         return;
     }
-    const bool looping = v.sampleLoop;
+    const bool looping = v.sampleLoop && !v.releasing;
     const int ls = v.loopStart;
     const int le = v.loopEnd > ls ? v.loopEnd : end;
     const float sL = hermiteAt(sm.data.data(), frames, ch, 0, v.samplePos, ls, le, looping);
@@ -1210,12 +1210,18 @@ void Engine::renderSample(Voice& v, float& L, float& R) {
     v.samplePos += v.sampleInc * chanBendRatio[v.chan & 15];
     if (looping && v.samplePos >= le && le > ls) {
         v.samplePos = ls + std::fmod(v.samplePos - ls, (double)(le - ls));
-    } else if (v.samplePos >= (double)end - 2) {
+    } else if (!looping && v.samplePos >= (double)end - 2) {
         v.amp.noteOff();
-        v.active = false;
+        v.releasing = true;
+        if (v.amp.idle()) v.active = false;
     }
     const float aenv = v.amp.process();
     const float fenv = v.filtEg.process();
+    if (!looping && v.samplePos >= (double)end - 2) {
+        L = R = 0;
+        if (v.amp.idle()) v.active = false;
+        return;
+    }
     float yL = sL, yR = sR;
     if (v.cutoff < 18000.0f || v.filtEnvAmt > 0.01f) {
         float cut = v.cutoff * (0.55f + v.brightness * (v.vel / 127.0f) + v.filtEnvAmt * fenv);
