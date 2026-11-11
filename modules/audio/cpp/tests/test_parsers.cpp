@@ -297,6 +297,38 @@ int main() {
         expect(peakStep < 0.12f, "looped_sample_release_has_no_click");
     }
 
+    {
+        // A User sound the loader flagged as a kit (one-key-wide regions) must still
+        // stop on key-up when played from the keyboard.
+        auto isolated = std::make_unique<pa::Engine>();
+        isolated->prepare(48000.0f);
+        pa::Sample longHit;
+        longHit.sampleRate = 48000;
+        longHit.channels = 1;
+        longHit.rootNote = 60;
+        longHit.data.assign(48000 * 10, 0.0f);
+        for (size_t i = 0; i < longHit.data.size(); ++i) longHit.data[i] = std::sin((float)i * 0.05f) * 0.4f;
+        pa::Patch patch;
+        pa::prepareSampledPatch(patch, true);
+        std::snprintf(patch.name, sizeof(patch.name), "Kit Flagged");
+        pa::Zone z;
+        z.sampleIndex = isolated->addSample(std::move(longHit));
+        z.root = 60;
+        patch.zones.push_back(z);
+        const int id = isolated->addSampledInstrument(patch);
+        isolated->setPartProgram(0, id);
+        isolated->noteOn(0, 60, 110);
+        buf.assign(4800 * 2, 0.0f);
+        isolated->render(buf.data(), 4800);
+        expect(rms(buf.data(), 9600) > 0.01f, "kit_flagged_user_sound_plays");
+        isolated->noteOff(0, 60);
+        buf.assign(48000 * 2, 0.0f);
+        isolated->render(buf.data(), 48000);
+        const float tail = rms(buf.data() + 30000, 30000);
+        if (tail >= 0.0005f) std::printf("kit-flagged tail rms=%.6f\n", tail);
+        expect(tail < 0.0005f, "kit_flagged_user_sound_stops_after_key_up");
+    }
+
     const std::string stylePath = tempDir() + "/arrangerbox_test.abstyle";
     {
         std::ofstream st(stylePath);

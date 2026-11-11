@@ -484,7 +484,10 @@ void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note,
     v.phase = 0.02f * (rng & 255);
     v.sampleIndex = -1;
     v.samplePos = z.offset;
-    v.oneShot = p.sampled && (isKit(p.model) || v.bus == BusDrums);
+    // Only the style's drum track ignores note-off. A sound played from the keyboard
+    // must stop on key-up, even when the loader guessed it is a kit: one-key-wide
+    // KMP regions (a chromatically sampled User sound) look like a drum kit.
+    v.oneShot = p.sampled && v.bus == BusDrums;
 
     if (p.sampled && z.sampleIndex >= 0 && z.sampleIndex < (int)samples.size()) {
         const Sample& sm = samples[z.sampleIndex];
