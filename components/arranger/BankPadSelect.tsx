@@ -166,7 +166,12 @@ export function BankPadSelect({
                         >
                           {pad?.name ?? ""}
                         </Text>
-                        {pad && !loaded && !loading && pad.loadError && /smf/i.test(pad.loadError) ? (
+                        {pad &&
+                        !loaded &&
+                        !loading &&
+                        pad.loadError &&
+                        (title === "STYLE SELECT" || title === "PAD SELECT") &&
+                        /smf/i.test(pad.loadError) ? (
                           <Text style={styles.padMeta} numberOfLines={1}>
                             Need SMF
                           </Text>

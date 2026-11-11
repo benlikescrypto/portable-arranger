@@ -129,43 +129,6 @@ async function namesFromKmp(file: File) {
   }
 }
 
-async function namesFromPcg(file: File) {
-  const size = typeof file.size === "number" ? file.size : 0
-  if (size <= 0 || size > 8 * 1024 * 1024) return []
-  try {
-    const bytes = await Promise.resolve(file.bytes())
-    const names: string[] = []
-    const seen = new Set<string>()
-    const push = (name: string) => {
-      const key = norm(name)
-      if (!key || isGenericStem(name) || seen.has(key) || name.length < 3) return
-      seen.add(key)
-      names.push(name)
-    }
-    for (let i = 0; i + 16 < bytes.length; i++) {
-      if (bytes[i] !== 0x50 || bytes[i + 1] !== 0x52 || bytes[i + 2] !== 0x47) continue
-      const sz = u32be(bytes, i + 4)
-      if (sz < 16 || i + 8 + sz > bytes.length) continue
-      const payload = bytes.subarray(i + 8, i + 8 + sz)
-      for (let p = 0; p + 16 < payload.length; p += 16) {
-        const name = asciiName(payload, p, 16)
-        if (name.length >= 3) push(name)
-      }
-    }
-    if (!names.length) {
-      for (let i = 0; i + 24 < bytes.length; i++) {
-        if (!(bytes[i] === 0 && bytes[i + 2] === 0 && bytes[i + 3] === 5 && bytes[i + 6] === 0 && bytes[i + 7] === 0x1c))
-          continue
-        const name = asciiName(bytes, i + 8, 16)
-        if (name.length >= 3) push(name)
-      }
-    }
-    return names
-  } catch {
-    return []
-  }
-}
-
 async function mergeCachedCatalog(
   folder: Directory,
   setName: string,
@@ -240,21 +203,6 @@ async function walkDiskSet(dir: Directory, setName: string, setPath: string, int
       }
       continue
     }
-    if (/\.PCG$/i.test(upper)) {
-      const names = await namesFromPcg(file)
-      const list = names.length ? names : isGenericStem(stem(file.name)) ? [] : [stem(file.name)]
-      for (const name of list) {
-        pushItem(into.sounds, {
-          kind: "sound",
-          name,
-          category: categoryGuess(name, "Imported"),
-          fileName: file.name,
-          setPath,
-          setName,
-        })
-      }
-      continue
-    }
     let kind: LibraryKind | null = null
     if (/\.(WAV|KSF)$/i.test(upper)) kind = "sound"
     else if (/\.(STY|STG|MID|SMF)$/i.test(upper)) kind = "style"
@@ -284,6 +232,7 @@ function parseCatalogFile(raw: string, setName: string, setPath: string): DiskCa
       const kind = item.kind === "pad" ? "pad" : item.kind === "sound" ? "sound" : "style"
       const name = item.name?.trim()
       if (!name || isGenericStem(name)) continue
+      if (kind === "sound" && /\.PCG$/i.test(item.file || "")) continue
       pushItem(kind === "sound" ? out.sounds : kind === "pad" ? out.pads : out.styles, {
         kind,
         name,

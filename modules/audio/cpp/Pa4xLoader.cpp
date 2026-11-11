@@ -2036,7 +2036,15 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
                 }
                 takeSamples(found, path, false);
             }
-        } else if (ext == ".PCM" || isPcmBankPath(path)) {
+        } else if (ext == ".PCM") {
+            std::vector<Sample> found;
+            scanPcmBank(path.c_str(), found);
+            if (found.empty()) {
+                skipped++;
+                if (reason.size() < 220) reason += "PCM bank had no playable samples (" + fileStem(path) + "). ";
+            }
+            takeSamples(found, path, false);
+        } else if (isPcmBankPath(path)) {
             if (named && wantSound) continue;
             std::vector<Sample> found;
             scanPcmBank(path.c_str(), found);
@@ -2354,7 +2362,11 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
 
     const int ok = (!named || patchesAdded > 0 || stylesAdded > 0) ? 1 : 0;
     if (named && ok == 0 && reason.find("matching") == std::string::npos && reason.size() < 180) {
-        reason += "Nothing matching that name. Native STY/PAD needs Style/Pad Record > Export SMF. ";
+        if (wantStyle || wantPad) {
+            reason += "Nothing matching that name. Native STY/PAD needs Style/Pad Record > Export SMF. ";
+        } else {
+            reason += "Could not find that sound in the SET. ";
+        }
     }
     if (report && reportLen > 0) {
         std::snprintf(report, (size_t)reportLen,
@@ -2413,24 +2425,15 @@ int Engine::listPa4xCatalog(const char* folder, char* report, int reportLen) {
         if (ext == ".KMP") {
             std::vector<uint8_t> bytes;
             if (!readFileBytes(path.c_str(), bytes)) continue;
-            std::vector<std::string> names;
-            parseKmpCatalogNames(bytes.data(), bytes.size(), names);
-            if (names.empty()) {
-                std::vector<KmpInst> insts;
-                parseKmpBytes(bytes.data(), bytes.size(), insts);
-                for (const auto& inst : insts)
-                    if (!inst.name.empty() && !isGenericBankName(inst.name)) names.push_back(inst.name);
+            std::vector<KmpInst> insts;
+            parseKmpBytes(bytes.data(), bytes.size(), insts);
+            for (const auto& inst : insts)
+                if (!inst.name.empty() && !isGenericBankName(inst.name)) push("sound", inst.name, path);
+            if (insts.empty()) {
+                std::vector<std::string> names;
+                parseKmpCatalogNames(bytes.data(), bytes.size(), names);
+                for (const auto& n : names) push("sound", n, path);
             }
-            for (const auto& n : names) push("sound", n, path);
-            if (names.empty() && !isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
-        } else if (ext == ".PCG") {
-            std::vector<uint8_t> bytes;
-            if (!readFileBytes(path.c_str(), bytes)) continue;
-            std::vector<std::string> names, missing;
-            parsePcgNames(bytes.data(), bytes.size(), names, missing);
-            for (const auto& n : names)
-                if (!isGenericBankName(n)) push("sound", n, path);
-            if (names.empty() && !isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
         } else if (ext == ".WAV" || ext == ".KSF") {
             if (!isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
         } else if (ext == ".STY" || ext == ".STG" || ext == ".MID" || ext == ".SMF" || ext == ".PAD") {

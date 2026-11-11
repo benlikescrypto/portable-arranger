@@ -399,6 +399,8 @@ export function useArranger() {
         )
         const result = await pending
         const ok = result.ok
+        const failReason =
+          !ok && kind === "sound" && /smf/i.test(result.reason || "") ? "Could not load this sound." : result.reason
         setState((s) => {
           const mark = <T extends { id: number; name: string; loaded?: boolean; engineId?: number }>(rows: T[]) =>
             rows.map((row) =>
@@ -408,7 +410,7 @@ export function useArranger() {
                     loaded: ok || row.loaded,
                     engineId: ok ? result.engineId : row.engineId,
                     loadingProgress: 0,
-                    loadError: ok ? undefined : result.reason,
+                    loadError: ok ? undefined : failReason,
                   }
                 : row
             )
@@ -417,10 +419,10 @@ export function useArranger() {
             sounds: kind === "sound" ? mark(s.sounds) : s.sounds,
             styles: kind === "style" ? mark(s.styles) : s.styles,
             pads: kind === "pad" ? mark(s.pads) : s.pads,
-            importMessage: ok ? s.importMessage : result.reason,
+            importMessage: ok ? s.importMessage : failReason,
           }
         })
-        return { ok, reason: result.reason }
+        return { ok, reason: failReason }
       } finally {
         clearInterval(tick)
         inFlight.current.delete(key)
