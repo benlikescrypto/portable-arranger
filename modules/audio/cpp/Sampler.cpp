@@ -271,23 +271,23 @@ static uint32_t korgChunkSize(const uint8_t* b, size_t i, size_t n) {
 }
 
 static std::vector<float> decodeUncompressed(const uint8_t* pcm, size_t pcmLen, int bits, int frames) {
-    if (bits == 16 && pcmLen >= 2) {
-        auto be = decode16be(pcm, pcmLen, frames);
+        if (bits == 16 && pcmLen >= 2) {
+            auto be = decode16be(pcm, pcmLen, frames);
         if (pcmScore(be) > 1e-8f || be.size() >= 64) return be;
         auto le = decode16le(pcm, pcmLen, frames);
         if (!le.empty()) return le;
         return be;
-    }
-    if (bits == 24 && pcmLen >= 3) {
-        auto be = decode24(pcm, pcmLen, frames, true);
+        }
+        if (bits == 24 && pcmLen >= 3) {
+            auto be = decode24(pcm, pcmLen, frames, true);
         if (pcmScore(be) > 1e-8f || be.size() >= 64) return be;
-        return decode24(pcm, pcmLen, frames, false);
-    }
-    if (bits == 8 && pcmLen >= 1) return decode8u(pcm, pcmLen, frames);
+            return decode24(pcm, pcmLen, frames, false);
+        }
+        if (bits == 8 && pcmLen >= 1) return decode8u(pcm, pcmLen, frames);
     if (pcmLen >= 2) return decode16be(pcm, pcmLen, frames);
     if (pcmLen >= 1) return decode8u(pcm, pcmLen, frames);
-    return {};
-}
+        return {};
+    }
 
 static std::vector<float> decodeBest(const uint8_t* pcm, size_t pcmLen, int bits, int frames, bool compressed) {
     const size_t expect = (size_t)std::max(1, frames) * (size_t)std::max(1, bits / 8);
@@ -500,7 +500,7 @@ static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& o
         const uint32_t sz = ru32be(b + hit + 4);
         if (sz < 66 || hit + 8 + (size_t)sz > n) {
             pos = hit + 4;
-            continue;
+                continue;
         }
         if (takeKorfSample(b + hit + 8, sz, names, keep, user, out)) found++;
         pos = hit + 8 + (size_t)sz;
@@ -526,32 +526,35 @@ static int scanPaKorfPcmFile(FILE* f, long fileSize, std::vector<Sample>& out, b
     std::vector<uint8_t> window(1024u * 1024u);
     const uint8_t marker[4] = {0x12, 0x00, 0x00, 0x18};
     while (pos + 74 < fileSize) {
+        uint8_t hdr[16];
         std::fseek(f, pos, SEEK_SET);
-        const size_t n = std::fread(window.data(), 1, window.size(), f);
-        if (n < 8) break;
-        size_t hit = (size_t)-1;
-        for (size_t i = 0; i + 4 <= n; ++i) {
-            if (std::memcmp(window.data() + i, marker, 4) == 0) {
-                hit = i;
-                break;
+        if (std::fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr)) break;
+        long start = pos;
+        if (std::memcmp(hdr, marker, 4) != 0) {
+            std::fseek(f, pos, SEEK_SET);
+            const size_t n = std::fread(window.data(), 1, window.size(), f);
+            if (n < 8) break;
+            size_t hit = (size_t)-1;
+            for (size_t i = 0; i + 4 <= n; ++i) {
+                if (std::memcmp(window.data() + i, marker, 4) == 0) {
+                    hit = i;
+                    break;
+                }
             }
+            if (hit == (size_t)-1) {
+                pos += n > 4 ? (long)(n - 3) : (long)n;
+                continue;
+            }
+            start = pos + (long)hit;
+            std::fseek(f, start, SEEK_SET);
+            if (std::fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr)) break;
         }
-        if (hit == (size_t)-1) {
-            pos += n > 4 ? (long)(n - 3) : (long)n;
-            continue;
-        }
-        const long start = pos + (long)hit;
-        uint8_t hdr[8];
-        std::fseek(f, start, SEEK_SET);
-        if (std::fread(hdr, 1, 8, f) != 8) break;
         const uint32_t sz = ru32be(hdr + 4);
         if (sz < 66 || start + 8 + (long)sz > fileSize) {
             pos = start + 4;
             continue;
         }
-        uint8_t idb[8];
-        if (std::fread(idb, 1, 8, f) != 8) break;
-        const std::string id = hex8(idb);
+        const std::string id = hex8(hdr + 8);
         const auto itName = names.find(id);
         const std::string nm = itName != names.end() ? itName->second : id;
         if (keep && !keep(nm.c_str(), id.c_str(), user)) {

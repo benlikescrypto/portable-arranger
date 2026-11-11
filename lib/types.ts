@@ -12,6 +12,7 @@ export type SoundItem = {
   engineId?: number
   setPath?: string
   fileName?: string
+  cacheName?: string
   loadError?: string
   loadingProgress?: number
 }
@@ -27,6 +28,7 @@ export type StyleItem = {
   engineId?: number
   setPath?: string
   fileName?: string
+  cacheName?: string
   loadError?: string
   loadingProgress?: number
 }
@@ -41,6 +43,7 @@ export type PadItem = {
   engineId?: number
   setPath?: string
   fileName?: string
+  cacheName?: string
   loadError?: string
   loadingProgress?: number
 }

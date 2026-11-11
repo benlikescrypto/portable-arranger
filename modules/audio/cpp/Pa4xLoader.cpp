@@ -101,13 +101,14 @@ int scoreName(const std::string& haveRaw, const std::string& wantRaw) {
     const std::string b = normName(wantRaw.c_str());
     if (a.empty() || b.empty()) return 0;
     if (a == b) return 1000;
-    if (a.size() >= 4 && b.size() >= 4) {
-        if (a.find(b) != std::string::npos) return 400 + (int)b.size();
-        if (b.find(a) != std::string::npos) return 300 + (int)a.size();
-    }
+    const std::string& shorter = a.size() <= b.size() ? a : b;
+    const std::string& longer = a.size() <= b.size() ? b : a;
+    if (shorter.size() >= 6 && longer.find(shorter) != std::string::npos)
+        return (a.find(b) != std::string::npos ? 400 : 300) + (int)shorter.size();
     size_t p = 0;
     while (p < a.size() && p < b.size() && a[p] == b[p]) ++p;
-    return p >= 4 ? 100 + (int)p : 0;
+    if (p >= 6 && (p == a.size() || p == b.size())) return 100 + (int)p;
+    return 0;
 }
 
 std::string instrumentGroup(std::string name) {
@@ -1398,6 +1399,27 @@ bool decodedCacheReady(const std::string& dir, int* sampleCount, int* patchCount
     return true;
 }
 
+std::string findDecodedCacheDir(const std::string& root, bool rootIsFile) {
+    std::vector<std::string> cands;
+    auto add = [&](const std::string& dir) {
+        if (dir.size() < 20) return;
+        for (const auto& have : cands)
+            if (have == dir) return;
+        cands.push_back(dir);
+    };
+    const std::string folder = rootIsFile ? parentDir(root) : root;
+    add(decodedCacheDir(folder));
+    add(folder + "/SOUND/.arrangerbox-cache");
+    add(decodedCacheDir(parentDir(folder)));
+    add(parentDir(folder) + "/SOUND/.arrangerbox-cache");
+    if (rootIsFile) add(decodedCacheDir(parentDir(parentDir(root))));
+    for (const auto& dir : cands) {
+        int samples = 0, patches = 0;
+        if (decodedCacheReady(dir, &samples, &patches)) return dir;
+    }
+    return folder.empty() ? std::string() : decodedCacheDir(folder);
+}
+
 bool peekMagic(const char* path, uint8_t mag[8], size_t* nread) {
     FILE* f = std::fopen(path, "rb");
     if (!f) return false;
@@ -1746,8 +1768,13 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         return rec.index;
     };
 
-    const std::string cacheDir = rootIsFile ? std::string() : decodedCacheDir(root);
+    const std::string cacheDir = findDecodedCacheDir(root, rootIsFile);
     bool usedCache = false;
+    bool cacheReady = false;
+    {
+        int samples = 0, patches = 0;
+        cacheReady = !cacheDir.empty() && decodedCacheReady(cacheDir, &samples, &patches);
+    }
     std::vector<int> addedPatchIds;
     auto rememberPatch = [&](int id, bool drum) {
         addedPatchIds.push_back(id);
@@ -2050,7 +2077,12 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
     };
 
     try {
+    bool skipPcm = false;
     usedCache = named && wantSound ? loadDecodedCacheNamed() : (!named ? loadDecodedCache() : false);
+    if (named && wantSound && !usedCache && cacheReady) {
+        reason += "Converted WAV cache is here, but that name is not in it. ";
+        skipPcm = true;
+    }
     bool ramFull = false;
     std::set<std::string> neededSampleKeys;
     std::vector<KmpInst> pickedInsts;
@@ -2116,7 +2148,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         }
         return false;
     };
-    if (!usedCache && wantSound && !(named && neededSampleKeys.empty()))
+    if (!skipPcm && !usedCache && wantSound && !(named && neededSampleKeys.empty()))
     for (const auto& path : files) {
         if (ramFull) break;
         const std::string ext = upperExt(path);

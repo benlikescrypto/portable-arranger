@@ -6,6 +6,7 @@ import { Alert } from "react-native"
 
 import {
   cachedFileName,
+  lastLoadedDiskCatalog,
   loadDiskCatalog,
   loadDiskItem,
   mergePads,
@@ -133,6 +134,10 @@ export function useArranger() {
 
   useEffect(() => {
     let alive = true
+    const splashWatch = setTimeout(() => {
+      setState((s) => (s.arrangerReady ? s : { ...s, arrangerReady: true, importing: false }))
+      hideSplash()
+    }, 2500)
     ;(async () => {
       if (!isAudioNativeAvailable) {
         setState((s) => ({
@@ -200,11 +205,57 @@ export function useArranger() {
         audio.setTempo(style?.tempo || 112)
       }
 
+      setState((s) => ({
+        ...s,
+        sounds: factorySounds,
+        styles: factoryStyles,
+        pads: [],
+        nativeReady: started,
+        arrangerReady: true,
+        setName: saved.setName || "",
+        upper1,
+        upper2,
+        upper3,
+        lower,
+        upper2On: false,
+        upper3On: false,
+        lowerOn: true,
+        styleId,
+        tempo: style?.tempo || 112,
+        importing: false,
+        importProgress: 1,
+        importMessage: "",
+      }))
+      hideSplash()
+      void midi.start()
+
       const factoryName = (name?: string) =>
         !!name &&
         (factorySounds.some((item) => item.name === name) || factoryStyles.some((item) => item.name === name))
       const setPath = setPathForName(saved.setName)
-      const catalogP = loadDiskCatalog()
+      try {
+        const disk = await loadDiskCatalog()
+        if (!alive) return
+        const sounds = mergeSounds(catalogSounds(), disk.sounds)
+        const styles = mergeStyles(catalogStyles(), disk.styles)
+        const pads = mergePads(catalogStyles(), disk.pads)
+        setState((s) => ({
+          ...s,
+          sounds,
+          styles,
+          pads,
+          setName: saved.setName || disk.setName || s.setName,
+          importMessage: disk.sounds.length
+            ? `${disk.sounds.length} User sounds · ${disk.styles.length} styles · ${disk.pads.length} pads — tap to load`
+            : disk.setName
+              ? `SET ${disk.setName} is on disk, but no User sound names were listed. Import the SET again.`
+              : s.importMessage,
+        }))
+      } catch (error) {
+        console.log("[boot] library catalog failed", error)
+      }
+      if (!alive) return
+
       const session = [
         { kind: "sound" as const, name: saved.upper1Name, part: 0 as const },
         { kind: "sound" as const, name: saved.upper2Name, part: 1 as const },
@@ -218,7 +269,8 @@ export function useArranger() {
           if (!job.name || factoryName(job.name) || !setPath) continue
           const fileName = await cachedFileName(setPath, job.kind, job.name)
           if (job.kind === "style" && (!fileName || !/\.(MID|SMF)$/i.test(fileName))) continue
-          await loadDiskItem({ kind: job.kind, name: job.name, setPath, fileName })
+          const loaded = await loadDiskItem({ kind: job.kind, name: job.name, setPath, fileName })
+          if (!loaded.ok) continue
           const soundsNow = catalogSounds()
           const stylesNow = catalogStyles()
           if (job.kind === "sound" && job.part != null) {
@@ -239,64 +291,28 @@ export function useArranger() {
         console.log("[boot] session load failed", error)
       }
       if (!alive) return
-
-      let disk: Awaited<ReturnType<typeof loadDiskCatalog>> = { setName: "", sounds: [], styles: [], pads: [] }
-      try {
-        disk = await catalogP
-      } catch (error) {
-        console.log("[boot] library catalog failed", error)
-      }
-      if (!alive) return
-
+      const disk = lastLoadedDiskCatalog()
       const sounds = mergeSounds(catalogSounds(), disk.sounds)
       const styles = mergeStyles(catalogStyles(), disk.styles)
-      const pads = mergePads(catalogStyles(), disk.pads)
-      const nextUpper1 = findSoundId(sounds, [saved.upper1Name, "Concert Grand"].filter(Boolean) as string[])
-      const nextUpper2 = findSoundId(sounds, [saved.upper2Name, "Warm Pad", "Atmosphere"].filter(Boolean) as string[], 11)
-      const nextUpper3 = findSoundId(
-        sounds,
-        [saved.upper3Name, "Concert Strings", "Chamber Strings"].filter(Boolean) as string[],
-        10
-      )
-      const nextLower = findSoundId(
-        sounds,
-        [saved.lowerName, "Cinematic Strings", "Symphonic Strings", "Concert Strings"].filter(Boolean) as string[],
-        10
-      )
-      const nextStyleId = findStyleId(
-        styles,
-        [saved.styleName, styles[0]?.name].filter(Boolean) as string[],
-        styles[0]?.id ?? 0
-      )
-      const nextStyle = styles.find((item) => item.id === nextStyleId)
-      const userOnDisk = disk.sounds.length + disk.styles.length + disk.pads.length
       setState((s) => ({
         ...s,
         sounds,
         styles,
-        pads,
-        nativeReady: started,
-        arrangerReady: true,
-        setName: saved.setName || disk.setName || "",
-        upper1: nextUpper1,
-        upper2: nextUpper2,
-        upper3: nextUpper3,
-        lower: nextLower,
-        upper2On: false,
-        upper3On: false,
-        lowerOn: true,
-        styleId: nextStyleId,
-        tempo: nextStyle?.tempo || style?.tempo || 112,
-        importing: false,
-        importProgress: 1,
-        importMessage: disk.sounds.length
-          ? `${disk.sounds.length} User sounds · ${disk.styles.length} styles · ${disk.pads.length} pads — tap to load`
-          : disk.setName
-            ? `SET ${disk.setName} is on disk, but no User sound names were listed. Import the SET again.`
-            : "No User SET in Documents/sets. Import a PA4X SET.",
+        pads: mergePads(catalogStyles(), disk.pads),
+        upper1: findSoundId(sounds, [saved.upper1Name, "Concert Grand"].filter(Boolean) as string[]),
+        upper2: findSoundId(sounds, [saved.upper2Name, "Warm Pad", "Atmosphere"].filter(Boolean) as string[], 11),
+        upper3: findSoundId(
+          sounds,
+          [saved.upper3Name, "Concert Strings", "Chamber Strings"].filter(Boolean) as string[],
+          10
+        ),
+        lower: findSoundId(
+          sounds,
+          [saved.lowerName, "Cinematic Strings", "Symphonic Strings", "Concert Strings"].filter(Boolean) as string[],
+          10
+        ),
+        styleId: findStyleId(styles, [saved.styleName, styles[0]?.name].filter(Boolean) as string[], styles[0]?.id ?? 0),
       }))
-      hideSplash()
-      void midi.start()
     })()
     const sub = midi.addDeviceListener((event) => {
       setState((s) => ({ ...s, midiConnected: event.connected, midiName: event.name }))
@@ -316,6 +332,7 @@ export function useArranger() {
     }, 50)
     return () => {
       alive = false
+      clearTimeout(splashWatch)
       sub.remove()
       clearInterval(timer)
       midi.stop()
@@ -393,6 +410,7 @@ export function useArranger() {
             name: item.name,
             setPath: item.setPath,
             fileName: item.fileName,
+            cacheName: item.cacheName,
           })
         const pending = nativeLoad.current.then(run, run)
         nativeLoad.current = pending.then(

@@ -9,6 +9,7 @@ export type DiskItem = {
   name: string
   category: string
   fileName: string
+  cacheName?: string
   setPath: string
   setName: string
 }
@@ -31,7 +32,8 @@ const DISK_STYLE = 200000
 const DISK_PAD = 300000
 
 function nativePath(file: File | Directory) {
-  const uri = file.uri
+  let uri = file.uri || ""
+  uri = uri.replace(/^file:\/\/localhost/i, "file://")
   if (uri.startsWith("file://")) return decodeURIComponent(uri.replace(/^file:\/\//, ""))
   return uri
 }
@@ -48,17 +50,60 @@ function isGenericStem(name: string) {
   return /^(ram|pcm|sound|style|pad|multismp|multisample|samples)$/i.test(name.trim())
 }
 
+function isSetLeftover(name: string, setName: string) {
+  const n = norm(name)
+  const s = norm(setName.replace(/\.set$/i, ""))
+  if (!n || n.includes("tmp") || name.includes("/") || name.includes("\\")) return true
+  if (!s || s.length < 3) return false
+  if (n === s) return true
+  if (n.startsWith(s) && n.length - s.length > 0 && n.length - s.length <= 3) return true
+  return false
+}
+
 function instrumentName(raw: string) {
-  let name = raw.trim()
-  for (let pass = 0; pass < 4; pass++) {
-    let next = name.replace(/[\s_-]+(l|r|m|left|right|mono)$/i, "")
-    next = next.replace(/[\s_-]+(v[1-8]|vel[1-8]|ff|mf|mp|pp)$/i, "")
-    next = next.replace(/[\s_-]+[A-G](?:#|b)?[0-8]$/i, "")
+  let name = raw.trim().replace(/\s+/g, " ")
+  for (let pass = 0; pass < 8; pass++) {
+    let next = name.replace(/[\s_\-()]+(l|r|m|left|right|mono)$/i, "")
+    next = next.replace(/[\s_\-()]+(v[1-8]|vel[1-8]|ff|mf|mp|pp)$/i, "")
+    next = next.replace(/[\s_\-()]+[A-G](?:#|b)?[0-8]$/i, "")
+    next = next.replace(/[\s_-]+\d{1,2}$/g, "")
+    const gluedNote = next.replace(/[A-G](?:#|b)?[0-8]$/i, "")
+    if (gluedNote.length >= 4) next = gluedNote
+    const gluedVel = next.replace(/v[1-8]$/i, "")
+    if (gluedVel.length >= 4) next = gluedVel
     next = next.trim()
     if (next.length < 3 || next === name) break
     name = next
   }
   return name
+}
+
+function collapseInstruments(items: DiskItem[]) {
+  const sorted = [...items].sort((a, b) => a.name.length - b.name.length)
+  const out: DiskItem[] = []
+  for (const item of sorted) {
+    const hit = out.find((row) => scoreName(row.name, item.name) >= 400)
+    if (hit) {
+      if (!hit.fileName && item.fileName) hit.fileName = item.fileName
+      continue
+    }
+    out.push({ ...item })
+  }
+  return out
+}
+
+function programName(raw: string) {
+  return raw.replace(/\0/g, " ").replace(/\s+/g, " ").trim()
+}
+
+function packTrim(name: string, setName?: string) {
+  const pack = (setName || "").replace(/\.set$/i, "")
+  let out = programName(name)
+  if (pack && out.toLowerCase().startsWith(pack.toLowerCase())) {
+    const rest = out.slice(pack.length).replace(/^[\s_\-]+/, "")
+    if (rest.length >= 3) out = rest
+  }
+  return out
 }
 
 function pushItem(items: DiskItem[], item: DiskItem) {
@@ -139,7 +184,7 @@ function parsePcgNames(bytes: Uint8Array) {
         const id = String.fromCharCode(bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3])
         if (id === "PRG1" || id === "PBS1" || id === "DKT1" || id === "CMB1" || id === "PRG2" || id === "PCG1") {
           const payload = i + 8
-          for (let p = 0; p + 16 < sz; p += 16) consider(printableName(bytes, payload + p, 24))
+          for (let p = 0; p + 16 < sz; p += 16) consider(printableName(bytes, payload + p, 16))
         }
         i += 8 + sz
         continue
@@ -253,7 +298,7 @@ function childNamed(parent: Directory, want: string) {
 
 async function namesFromKmp(file: File) {
   const size = typeof file.size === "number" ? file.size : 0
-  if (size > 32 * 1024 * 1024) return []
+  if (size <= 0 || size > 8 * 1024 * 1024) return []
   try {
     const bytes = await Promise.resolve(file.bytes())
     return parseKmpNames(bytes)
@@ -339,32 +384,49 @@ async function mergeCachedCatalog(
 
 async function namesFromManifest(setFolder: Directory, setName: string, setPath: string, into: DiskCatalog) {
   try {
-    const file = new File(new Directory(setFolder, ".arrangerbox-cache"), "manifest.txt")
+    const cache = new Directory(setFolder, ".arrangerbox-cache")
+    const file = new File(cache, "manifest.txt")
     if (!file.exists) return
-    const text = await Promise.resolve(file.text())
-    const lines = text.split(/\r?\n/)
-    let i = 0
-    while (i < lines.length && !/^P\s+\d+/.test(lines[i])) i++
-    const count = parseInt(lines[i]?.match(/^P\s+(\d+)/)?.[1] || "0", 10)
-    i++
-    for (let p = 0; p < count && i < lines.length; p++) {
-      let name = instrumentName((lines[i++] || "").trim())
-      const cat = (lines[i++] || "").trim() || "Imported"
-      i++
-      const zones = parseInt(lines[i++] || "0", 10)
-      if (zones > 0) i += zones
+    const parsed = parseConvertedManifest(await Promise.resolve(file.text()))
+    console.log("[catalog] manifest", nativePath(cache), {
+      samples: parsed.samples.length,
+      patches: parsed.patches.length,
+      names: parsed.patches.slice(0, 16).map((patch) => patch.name),
+    })
+    const groups = new Map<string, { name: string; cacheName: string; wav: string; cat: string }>()
+    for (const patch of parsed.patches) {
+      const name = instrumentName(patch.name) || patch.name
       if (!name || isGenericStem(name)) continue
+      const key = norm(name)
+      let wav = ""
+      let dist = 999
+      for (const zone of patch.zones) {
+        const sample = parsed.samples[zone.sampleIdx]
+        if (!sample?.wavName) continue
+        const gap = Math.abs((zone.root || sample.root || 60) - 60)
+        if (gap <= dist) {
+          dist = gap
+          wav = sample.wavName
+        }
+      }
+      if (!wav) continue
+      if (!groups.has(key)) {
+        groups.set(key, { name, cacheName: patch.name, wav, cat: categoryGuess(name, "Imported") })
+      }
+    }
+    for (const item of groups.values()) {
       pushItem(into.sounds, {
         kind: "sound",
-        name,
-        category: cat === "Imported" ? categoryGuess(name, "Imported") : cat,
-        fileName: "",
+        name: item.name,
+        category: item.cat,
+        fileName: item.wav,
+        cacheName: item.cacheName,
         setPath,
         setName,
       })
     }
-  } catch {
-    // Catalog still walks SET files below.
+  } catch (error) {
+    console.log("[catalog] manifest failed", error)
   }
 }
 
@@ -421,19 +483,20 @@ async function walkDiskSet(dir: Directory, setName: string, setPath: string, int
 function parseCatalogFile(raw: string, setName: string, setPath: string): DiskCatalog | null {
   try {
     const json = JSON.parse(raw) as {
-      items?: { kind?: string; name?: string; category?: string; file?: string }[]
+      items?: { kind?: string; name?: string; category?: string; file?: string; cache?: string }[]
     }
     if (!Array.isArray(json.items)) return null
     const out: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
     for (const item of json.items) {
       const kind = item.kind === "pad" ? "pad" : item.kind === "sound" ? "sound" : "style"
-      const name = kind === "sound" ? instrumentName(item.name?.trim() || "") : item.name?.trim()
+      const name = kind === "sound" ? programName(item.name || "") : item.name?.trim()
       if (!name || isGenericStem(name)) continue
       pushItem(kind === "sound" ? out.sounds : kind === "pad" ? out.pads : out.styles, {
         kind,
         name,
         category: item.category || categoryGuess(name, kind === "sound" ? "Imported" : "Style"),
         fileName: item.file || "",
+        cacheName: item.cache,
         setPath,
         setName,
       })
@@ -481,6 +544,7 @@ function writeCatalogJson(folder: Directory, into: DiskCatalog) {
         name: item.name,
         category: item.category,
         file: item.fileName,
+        cache: item.cacheName,
       })),
       ...into.styles.map((item) => ({
         kind: "style",
@@ -506,6 +570,7 @@ async function catalogOneSet(dir: Directory): Promise<DiskCatalog> {
   const setName = setFolder.name.replace(/\.SET$/i, "") || "Imported"
   const setPath = nativePath(setFolder)
   const into: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
+  const fromManifest: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
   const soundDir = childNamed(setFolder, "SOUND")
   const pcgs: File[] = []
   const kmps: File[] = []
@@ -514,6 +579,7 @@ async function catalogOneSet(dir: Directory): Promise<DiskCatalog> {
   console.log("[catalog] set", {
     setName,
     setPath,
+    uri: setFolder.uri,
     listing: (() => {
       try {
         return setFolder.list().map((item) => item.name)
@@ -525,20 +591,98 @@ async function catalogOneSet(dir: Directory): Promise<DiskCatalog> {
     pcg: pcgs.map((file) => file.name),
     kmp: kmps.map((file) => file.name),
   })
-  await namesFromManifest(setFolder, setName, setPath, into)
-  if (soundDir) await namesFromManifest(soundDir, setName, setPath, into)
-  await mergeCachedCatalog(setFolder, setName, setPath, into)
-  if (into.sounds.length === 0) await walkDiskSet(setFolder, setName, setPath, into, true)
-  if (into.sounds.length === 0) {
-    for (const kmp of kmps.slice(0, 8)) await ingestNativeCatalog(nativePath(kmp), setName, setPath, into)
+  await namesFromManifest(setFolder, setName, setPath, fromManifest)
+  if (soundDir) await namesFromManifest(soundDir, setName, setPath, fromManifest)
+
+  const fromPcg: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
+  for (const pcg of pcgs.slice(0, 4)) {
+    const names = await namesFromPcg(pcg)
+    console.log("[catalog] pcg names", pcg.name, names)
+    for (const raw of names) {
+      const name = programName(raw)
+      if (!name || isGenericStem(name) || isSetLeftover(name, setName)) continue
+      pushItem(fromPcg.sounds, {
+        kind: "sound",
+        name,
+        category: categoryGuess(name, "Imported"),
+        fileName: "",
+        setPath,
+        setName,
+      })
+    }
   }
-  console.log("[catalog] pcg files ignored for the sound list", pcgs.map((file) => file.name))
+
+  const native: DiskCatalog = { setName, sounds: [], styles: [], pads: [] }
+  await ingestNativeCatalog(setPath, setName, setPath, native)
+  native.sounds = collapseInstruments(native.sounds)
+  into.styles = native.styles
+  into.pads = native.pads
+
+  const attachWav = (items: DiskItem[]) => {
+    const cache = fromManifest.sounds
+    const used = new Set<number>()
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      let best = 0
+      let bestJ = -1
+      for (let j = 0; j < cache.length; j++) {
+        if (used.has(j)) continue
+        const s = distinctiveScore(cache[j].cacheName || cache[j].name, item.name, setName)
+        if (s > best) {
+          best = s
+          bestJ = j
+        }
+      }
+      const j = best >= 200 && bestJ >= 0 ? bestJ : !used.has(i) && cache[i] ? i : bestJ
+      if (j < 0 || !cache[j]) continue
+      used.add(j)
+      item.fileName = cache[j].fileName
+      item.cacheName = cache[j].cacheName || cache[j].name
+    }
+    const usedKmp = new Set<number>()
+    for (const item of items) {
+      if (item.cacheName) continue
+      let best = 0
+      let bestJ = -1
+      for (let j = 0; j < native.sounds.length; j++) {
+        if (usedKmp.has(j)) continue
+        const s = distinctiveScore(native.sounds[j].name, item.name, setName)
+        if (s > best) {
+          best = s
+          bestJ = j
+        }
+      }
+      if (best < 200 || bestJ < 0) continue
+      usedKmp.add(bestJ)
+      item.cacheName = native.sounds[bestJ].name
+    }
+  }
+
+  const usedPcg = fromPcg.sounds.length >= 8 && fromPcg.sounds.length <= 16
+  if (usedPcg) {
+    into.sounds = fromPcg.sounds
+  } else if (fromManifest.sounds.length) {
+    into.sounds = fromManifest.sounds
+  } else {
+    into.sounds = native.sounds
+  }
+  attachWav(into.sounds)
+  await walkDiskSet(setFolder, setName, setPath, into, into.sounds.length === 0)
+  if (!usedPcg) into.sounds = collapseInstruments(into.sounds)
+  into.styles = collapseInstruments(into.styles)
+  into.pads = collapseInstruments(into.pads)
+  console.log("[catalog] sound sources", {
+    pcg: fromPcg.sounds.map((item) => item.name),
+    manifest: fromManifest.sounds.length,
+    native: native.sounds.length,
+    using: into.sounds.map((item) => item.name),
+  })
   writeCatalogJson(setFolder, into)
   console.log("[catalog] done", setName, {
     sounds: into.sounds.length,
     styles: into.styles.length,
     pads: into.pads.length,
-    sample: into.sounds.slice(0, 8).map((item) => item.name),
+    sample: into.sounds.slice(0, 12).map((item) => `${item.name} [${item.fileName}]`),
   })
   return into
 }
@@ -603,32 +747,36 @@ function isFactory(source?: string) {
 }
 
 export function mergeSounds(engine: SoundItem[], disk: DiskItem[]): SoundItem[] {
-  const out: SoundItem[] = engine.map((item) => ({
-    ...item,
-    loaded: true,
-    engineId: item.id,
-    source: item.source ?? "FACTORY",
-    bank: isFactory(item.source) ? "FACTORY" : item.source,
-  }))
-  let nextId = Math.max(DISK_SOUND, ...out.map((item) => item.id + 1), DISK_SOUND)
-  for (const item of disk) {
-    const hit = out.find((row) => !isFactory(row.source) && norm(row.name) === norm(item.name))
-    if (hit) {
-      hit.setPath = item.setPath
-      hit.fileName = item.fileName
-      continue
-    }
+  const factory = engine
+    .filter((item) => isFactory(item.source))
+    .map((item) => ({
+      ...item,
+      loaded: true,
+      engineId: item.id,
+      source: item.source ?? "FACTORY",
+      bank: "FACTORY",
+    }))
+  const imported = engine.filter((item) => !isFactory(item.source))
+  const out: SoundItem[] = [...factory]
+  disk.forEach((item, index) => {
+    const hit = imported.find(
+      (row) =>
+        norm(row.name) === norm(item.name) ||
+        (!!item.cacheName && norm(row.name) === norm(item.cacheName || ""))
+    )
     out.push({
-      id: nextId++,
+      id: DISK_SOUND + index,
       name: item.name,
       category: item.category,
       source: "IMPORTED",
       bank: "IMPORTED",
-      loaded: false,
+      loaded: !!hit,
+      engineId: hit?.id,
       setPath: item.setPath,
       fileName: item.fileName,
+      cacheName: item.cacheName,
     })
-  }
+  })
   return out
 }
 
@@ -709,13 +857,265 @@ function scoreName(have: string, want: string) {
   const b = norm(want)
   if (!a || !b) return 0
   if (a === b) return 1000
-  if (a.length >= 5 && b.length >= 5) {
-    if (a.includes(b)) return 400 + b.length
-    if (b.includes(a)) return 300 + a.length
+  const shorter = a.length <= b.length ? a : b
+  const longer = a.length <= b.length ? b : a
+  if (shorter.length >= 6 && longer.includes(shorter)) {
+    return (a.includes(b) ? 400 : 300) + shorter.length
   }
   let p = 0
   while (p < a.length && p < b.length && a[p] === b[p]) p++
-  return p >= 5 ? 100 + p : 0
+  if (p < 6) return 0
+  if (p === a.length || p === b.length) return 100 + p
+  return 0
+}
+
+function distinctiveScore(have: string, want: string, setName?: string) {
+  return scoreName(instrumentName(packTrim(have, setName)), instrumentName(packTrim(want, setName)))
+}
+
+function asDir(path: string) {
+  const uri = path.startsWith("file:") ? path : `file://${path.replace(/\\/g, "/")}`
+  return new Directory(uri)
+}
+
+function resolveSetFolder(setPath?: string): Directory | null {
+  const dirs = listSavedSetDirs()
+  const want = (setPath || "").replace(/\\/g, "/").replace(/\/$/, "")
+  const wantName = want.split("/").filter(Boolean).pop()?.replace(/\.SET$/i, "") || ""
+  for (const dir of dirs) {
+    const folder = findSetFolder(asDirectory(dir))
+    const path = nativePath(folder).replace(/\\/g, "/")
+    const uri = (folder.uri || "").replace(/\\/g, "/")
+    if (!want) return folder
+    if (path === want || uri === want) return folder
+    if (path.endsWith(want) || want.endsWith(path) || uri.endsWith(want)) return folder
+    const folderName = folder.name.replace(/\.SET$/i, "")
+    const dirName = dir.name.replace(/\.SET$/i, "")
+    if (wantName && (folderName === wantName || dirName === wantName)) return folder
+  }
+  if (setPath) {
+    try {
+      const folder = findSetFolder(asDir(setPath))
+      if (folder.exists) return folder
+    } catch {
+      // Fall through to the first saved SET.
+    }
+  }
+  return dirs.length ? findSetFolder(asDirectory(dirs[0])) : null
+}
+
+function cacheDirOf(folder: Directory) {
+  const dirs: Directory[] = []
+  const seen = new Set<string>()
+  const add = (dir: Directory) => {
+    try {
+      const key = dir.uri || nativePath(dir)
+      if (!key || seen.has(key) || !dir.exists) return
+      seen.add(key)
+      dirs.push(dir)
+    } catch {
+      // Skip unreadable folders.
+    }
+  }
+  add(new Directory(folder, ".arrangerbox-cache"))
+  const sound = childNamed(folder, "SOUND")
+  if (sound) add(new Directory(sound, ".arrangerbox-cache"))
+  try {
+    for (const child of folder.list()) {
+      if (child.name === ".arrangerbox-cache") add(asDirectory(child))
+      if (!child.name || child.name.startsWith(".")) continue
+      if (isDirectory(child) || isSetName(child.name)) {
+        add(new Directory(asDirectory(child), ".arrangerbox-cache"))
+      }
+    }
+  } catch {
+    // SET listing is enough when the cache sits next to SOUND.
+  }
+  return dirs
+}
+
+function parseConvertedManifest(text: string) {
+  const lines = text.split(/\r?\n/)
+  let i = 0
+  while (i < lines.length && !/^S\s+\d+/.test(lines[i])) i++
+  const nS = parseInt(lines[i++]?.match(/^S\s+(\d+)/)?.[1] || "0", 10)
+  const samples: { wavName: string; sampleName: string; root: number }[] = []
+  for (let s = 0; s < nS && i + 2 < lines.length; s++) {
+    const wavName = (lines[i++] || "").trim()
+    const sampleName = (lines[i++] || "").trim()
+    const nums = (lines[i++] || "").trim().split(/\s+/)
+    samples.push({ wavName, sampleName, root: parseInt(nums[2] || "60", 10) || 60 })
+  }
+  while (i < lines.length && !/^P\s+\d+/.test(lines[i])) i++
+  const nP = parseInt(lines[i++]?.match(/^P\s+(\d+)/)?.[1] || "0", 10)
+  const patches: { name: string; score: number; group: string; zones: { sampleIdx: number; root: number }[] }[] = []
+  for (let p = 0; p < nP && i < lines.length; p++) {
+    const name = (lines[i++] || "").trim()
+    i++
+    i++
+    const nZ = parseInt(lines[i++] || "0", 10)
+    const zones: { sampleIdx: number; root: number }[] = []
+    for (let z = 0; z < nZ && i < lines.length; z++) {
+      const parts = (lines[i++] || "").trim().split(/\s+/)
+      zones.push({ sampleIdx: parseInt(parts[0] || "-1", 10), root: parseInt(parts[5] || "60", 10) || 60 })
+    }
+    if (!name || !zones.length) continue
+    patches.push({ name, score: 0, group: instrumentName(name), zones })
+  }
+  return { samples, patches }
+}
+
+function wavOpenPaths(file: File) {
+  const p = nativePath(file)
+  const uri = file.uri || ""
+  const stripped = uri.replace(/^file:\/\/localhost/i, "file://").replace(/^file:\/\//, "")
+  return [
+    p,
+    p.startsWith("/var/") ? `/private${p}` : "",
+    p.startsWith("/private/") ? p.slice("/private".length) : "",
+    uri,
+    stripped,
+    decodeURIComponent(stripped),
+  ].filter(Boolean)
+}
+
+async function loadWavFile(file: File, name: string) {
+  const staged = new Directory(Paths.cache, "ab-user")
+  try {
+    if (!staged.exists) staged.create({ intermediates: true, idempotent: true })
+  } catch {
+    // Original file path still tried below.
+  }
+  const dest = new File(staged, file.name || `${norm(name) || "tap"}.wav`)
+  try {
+    const small = typeof dest.size === "number" && dest.size < 44
+    if (!dest.exists || small) await Promise.resolve(file.copy(dest, { overwrite: true }))
+  } catch (error) {
+    console.log("[load] wav copy failed", name, error)
+  }
+  const files = dest.exists ? [dest, file] : [file]
+  const paths: string[] = []
+  for (const row of files) paths.push(...wavOpenPaths(row))
+  for (const path of [...new Set(paths)]) {
+    const id = await audio.loadWav(path, name, categoryGuess(name, "Imported"))
+    console.log("[load] wav", name, path, id)
+    if (id >= 0) return id
+  }
+  return -1
+}
+
+function wavInCache(dir: Directory, wavName: string) {
+  try {
+    const want = wavName.toLowerCase()
+    for (const child of dir.list()) {
+      if (child.name?.toLowerCase() === want) return child as File
+    }
+    const direct = new File(dir, wavName)
+    if (direct.exists) return direct
+  } catch {
+    return null
+  }
+  return null
+}
+
+async function resolveCachePatch(folder: Directory, want: string, setName?: string) {
+  for (const dir of cacheDirOf(folder)) {
+    try {
+      const file = new File(dir, "manifest.txt")
+      if (!file.exists) continue
+      const parsed = parseConvertedManifest(await Promise.resolve(file.text()))
+      let best = 0
+      let cacheName = ""
+      let wavName = ""
+      for (const patch of parsed.patches) {
+        const s = distinctiveScore(patch.name, want, setName)
+        if (s <= best) continue
+        best = s
+        cacheName = patch.name
+        let dist = 999
+        wavName = ""
+        for (const zone of patch.zones) {
+          const gap = Math.abs(zone.root - 60)
+          if (zone.sampleIdx >= 0 && gap <= dist) {
+            dist = gap
+            wavName = parsed.samples[zone.sampleIdx]?.wavName || wavName
+          }
+        }
+      }
+      if (best >= 200 && cacheName) return { cacheName, wavName, score: best }
+    } catch (error) {
+      console.log("[load] resolve cache patch failed", dir.uri, error)
+    }
+  }
+  return null
+}
+
+function cacheWavPaths(folder: Directory, wavName: string) {
+  const root = nativePath(folder).replace(/\\/g, "/").replace(/\/$/, "")
+  return [
+    `${root}/.arrangerbox-cache/${wavName}`,
+    `${root}/SOUND/.arrangerbox-cache/${wavName}`,
+    `/private${root}/.arrangerbox-cache/${wavName}`,
+    `/private${root}/SOUND/.arrangerbox-cache/${wavName}`,
+  ]
+}
+
+async function loadWavByPath(path: string, name: string) {
+  const id = await audio.loadWav(path, name, categoryGuess(name, "Imported"))
+  console.log("[load] wav path", name, path, id)
+  return id
+}
+
+async function loadConvertedCacheSound(want: string, folder: Directory, fileName?: string): Promise<LoadResult | null> {
+  const names: string[] = []
+  if (fileName && /\.wav$/i.test(fileName)) names.push(fileName)
+  const slot = lastLoadedDiskCatalog().sounds.findIndex((row) => norm(row.name) === norm(want))
+  if (slot >= 0) names.push(`s${String(slot).padStart(4, "0")}.wav`)
+  const uniq = [...new Set(names)]
+  for (const wavName of uniq) {
+    for (const path of cacheWavPaths(folder, wavName)) {
+      const id = await loadWavByPath(path, want)
+      if (id >= 0) return { ok: true, engineId: id, reason: "" }
+    }
+    for (const dir of cacheDirOf(folder)) {
+      const wav = wavInCache(dir, wavName)
+      if (!wav) continue
+      const id = await loadWavFile(wav, want)
+      if (id >= 0) return { ok: true, engineId: id, reason: "" }
+    }
+  }
+  return null
+}
+
+async function loadUserSound(item: {
+  name: string
+  setPath?: string
+  fileName?: string
+  cacheName?: string
+}): Promise<LoadResult> {
+  const folder = resolveSetFolder(item.setPath)
+  if (!folder) return { ok: false, engineId: -1, reason: "SET folder missing." }
+  const setName = folder.name.replace(/\.SET$/i, "")
+  let fileName = item.fileName?.trim() || ""
+  if (!fileName) {
+    const resolved = await resolveCachePatch(folder, item.name, setName)
+    if (resolved?.wavName) fileName = resolved.wavName
+  }
+  const wav = await loadConvertedCacheSound(item.name, folder, fileName)
+  if (wav) return wav
+  const trimmed = packTrim(item.name, setName)
+  const nativeName = item.cacheName?.trim() || (norm(trimmed).length >= 6 ? trimmed : item.name)
+  try {
+    const started = Date.now()
+    const raw = await audio.loadPa4xNamed(nativePath(folder), "sound", nativeName)
+    console.log("[load] native", item.name, "as", nativeName, `${Date.now() - started}ms`, String(raw).slice(0, 280))
+    const result = parseReport(raw)
+    if (result.ok) return result
+    return { ok: false, engineId: -1, reason: result.reason || "Could not load that User sound from the SET." }
+  } catch (error) {
+    console.log("[load] native threw", item.name, error)
+    return { ok: false, engineId: -1, reason: "Could not load that User sound from the SET." }
+  }
 }
 
 export async function loadDiskItem(item: {
@@ -723,15 +1123,21 @@ export async function loadDiskItem(item: {
   name: string
   setPath?: string
   fileName?: string
+  cacheName?: string
 }): Promise<LoadResult> {
-  if (item.setPath) {
-    const raw = await audio.loadPa4xNamed(item.setPath, item.kind, item.name)
+  const folder = resolveSetFolder(item.setPath)
+  const setPath = folder ? nativePath(folder) : item.setPath || ""
+  if (item.kind === "sound") {
+    return loadUserSound(item)
+  }
+  if (setPath) {
+    const raw = await audio.loadPa4xNamed(setPath, item.kind, item.name)
     console.log("[load]", item.kind, item.name, String(raw).slice(0, 240))
     const result = parseReport(raw)
     if (result.ok || !/cannot load one item/i.test(result.reason)) return result
   }
   const fileName = item.fileName ?? ""
-  const path = item.setPath ? childPath(item.setPath, fileName) : ""
+  const path = setPath ? childPath(setPath, fileName) : ""
   if (/\.(WAV)$/i.test(fileName) && path) {
     const id = await audio.loadWav(path, item.name, categoryGuess(item.name, "Imported"))
     return id >= 0
@@ -754,6 +1160,6 @@ export async function loadDiskItem(item: {
   return {
     ok: false,
     engineId: -1,
-    reason: "This app build cannot load one User sound yet. Keep the old sound playing.",
+    reason: "Could not load this item.",
   }
 }
