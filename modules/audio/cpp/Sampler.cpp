@@ -293,18 +293,22 @@ static std::vector<float> decodeBest(const uint8_t* pcm, size_t pcmLen, int bits
     const size_t expect = (size_t)std::max(1, frames) * (size_t)std::max(1, bits / 8);
     const bool sizeLooksRaw = frames <= 0 || pcmLen >= expect * 9 / 10;
     if (!compressed || sizeLooksRaw) return decodeUncompressed(pcm, pcmLen, bits, frames);
-    std::vector<std::vector<float>> cands;
-    cands.push_back(decodeDpcm(pcm, pcmLen, frames, 1));
-    cands.push_back(decodeDpcm(pcm, pcmLen, frames, 16));
-    cands.push_back(decodeDpcm(pcm, pcmLen, frames, 256));
-    cands.push_back(decodeDpcm4(pcm, pcmLen, frames));
+    for (int scale : {1, 16, 256}) {
+        auto got = decodeDpcm(pcm, pcmLen, frames, scale);
+        if (pcmScore(got) > 1e-8f) return got;
+    }
+    {
+        auto got = decodeDpcm4(pcm, pcmLen, frames);
+        if (pcmScore(got) > 1e-8f) return got;
+    }
     std::vector<uint8_t> inflated;
     if (inflateZlib(pcm, pcmLen, inflated)) {
+        std::vector<std::vector<float>> cands;
         cands.push_back(decode16be(inflated.data(), inflated.size(), frames));
         cands.push_back(decode16le(inflated.data(), inflated.size(), frames));
+        auto got = firstAudible(std::move(cands));
+        if (!got.empty()) return got;
     }
-    auto got = firstAudible(std::move(cands));
-    if (!got.empty()) return got;
     return decodeUncompressed(pcm, pcmLen, bits, frames);
 }
 

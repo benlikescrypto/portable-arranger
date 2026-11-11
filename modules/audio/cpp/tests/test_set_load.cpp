@@ -1,5 +1,6 @@
 #include "../Engine.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -38,7 +39,8 @@ void chunk(std::vector<uint8_t>& o, const char* id, const std::vector<uint8_t>& 
 }
 
 void padName(std::vector<uint8_t>& o, const char* s, int n) {
-    for (int i = 0; i < n; ++i) o.push_back((uint8_t)(s[i] ? s[i] : ' '));
+    const int len = (int)std::strlen(s);
+    for (int i = 0; i < n; ++i) o.push_back((uint8_t)(i < len ? s[i] : ' '));
 }
 
 std::vector<uint8_t> makeKsf(const char* name, int frames, int root) {
@@ -395,6 +397,39 @@ int main() {
         expect(patchesAdded(report) >= 1, "real_ram01_patches");
     } else {
         std::printf("SKIP real_ram01 (SET not on disk)\n");
+    }
+
+    const char* realSets[] = {"tmp/musikant/unpacked/Pa4X_MUSIKANT_Paket_Dezember2020.SET",
+                              "../../../../tmp/musikant/unpacked/Pa4X_MUSIKANT_Paket_Dezember2020.SET"};
+    const char* realSet = nullptr;
+    for (const char* cand : realSets) {
+        std::string probe = std::string(cand) + "/MULTISMP/RAM.KMP";
+        FILE* f = std::fopen(probe.c_str(), "rb");
+        if (f) {
+            std::fclose(f);
+            realSet = cand;
+            break;
+        }
+    }
+    if (realSet) {
+        const char* groups[] = {"KApro Legato O", "KApro Fast Str",  "KApro Solo Cel", "KApro Bayan Disk",
+                                "KApro Alpen Acco", "KApro Orchestr", "KApro Diatonic D", "KApro Dah-Dat",
+                                "KApro Dooeeah", "KApro Bah Fall", "KApro Bap"};
+        for (const char* group : groups) {
+            auto engReal = std::make_unique<pa::Engine>();
+            engReal->prepare(44100.0f);
+            const int before = engReal->soundCount();
+            report[0] = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            const int id = engReal->loadPa4xNamed(realSet, "sound", group, report, (int)sizeof(report));
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+            std::printf("REAL NAMED %s %lldms report=%.240s\n", group, (long long)ms, report);
+            expect(id >= 0 && engReal->soundCount() == before + 1, "real_named_one_patch");
+            expect(samplesAdded(report) >= 4, "real_named_samples");
+            expect(ms < 3000, "real_named_fast");
+        }
+    } else {
+        std::printf("SKIP real_named (SET not on disk)\n");
     }
 
     std::printf("%s\n", fails ? "FAILED" : "ALL PASSED");

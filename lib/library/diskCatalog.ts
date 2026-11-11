@@ -147,6 +147,136 @@ function printableName(bytes: Uint8Array, off: number, n: number) {
   return out
 }
 
+function fixedText(bytes: Uint8Array, off: number, n: number) {
+  let out = ""
+  for (let k = 0; k < n && off + k < bytes.length; k++) {
+    const c = bytes[off + k]
+    if (c === 0) break
+    out += c >= 32 && c < 127 ? String.fromCharCode(c) : "?"
+  }
+  return out.replace(/\s+$/, "")
+}
+
+function hexOf(bytes: Uint8Array, off: number, n: number) {
+  let out = ""
+  for (let k = 0; k < n; k++) out += (bytes[off + k] ?? 0).toString(16).padStart(2, "0")
+  return out
+}
+
+function stereoSide(name: string) {
+  return name.replace(/[\s_-]*(?:-|\s)(L|R|M)$/i, "").replace(/[\s_-]+$/, "")
+}
+
+type KorfMulti = { name: string; id: string; group: string }
+
+// PA4X KORF KMP: zone records (name16 + sampleId8 + ... + rate) come first, in
+// multisample order; each multisample header is 0xA6 bytes with its zone count
+// at +0x9C and a 6-byte id in its last 6 bytes.
+function parseKorfMultisamples(kmp: Uint8Array): KorfMulti[] {
+  const zones: string[] = []
+  for (let i = 0; i + 32 < kmp.length; i++) {
+    const rate = (kmp[i + 28] << 8) | kmp[i + 29]
+    if (rate !== 44100 && rate !== 48000 && rate !== 32000 && rate !== 22050) continue
+    if (kmp[i] < 65 || kmp[i] > 122) continue
+    if (i > 0 && kmp[i - 1] !== 0 && kmp[i - 1] !== 0xff) continue
+    const name = fixedText(kmp, i, 16)
+    if (name.length < 4) continue
+    zones.push(name)
+    i += 24
+  }
+  const multis: KorfMulti[] = []
+  let used = 0
+  for (let i = 0; i + 0xa6 <= kmp.length; i++) {
+    if (kmp[i] !== 0x80 || kmp[i + 1] !== 0 || kmp[i + 2] < 65 || kmp[i + 2] > 122) continue
+    const name = fixedText(kmp, i + 2, 24)
+    if (name.length < 4) continue
+    const count = kmp[i + 2 + 0x9a]
+    const own = zones.slice(used, used + count)
+    used += count
+    multis.push({ name, id: hexOf(kmp, i + 0xa6 - 6, 6), group: own.length ? stereoSide(own[0]) : "" })
+    i += 0xa5
+  }
+  return used === zones.length ? multis : []
+}
+
+function korfProgramChunks(pcg: Uint8Array) {
+  const names: string[] = []
+  const chunks: string[] = []
+  for (let i = 0; i + 40 < pcg.length; i++) {
+    if (pcg[i] === 0 && pcg[i + 2] === 0 && pcg[i + 3] === 5 && pcg[i + 6] === 0 && pcg[i + 7] === 0x1c) {
+      names.push(fixedText(pcg, i + 8, 24))
+    }
+    if (pcg[i + 8] === 0x4f && pcg[i + 9] === 0x43 && pcg[i + 10] === 0x33 && pcg[i + 11] === 0x31) {
+      const sz = u32be(pcg, i + 4)
+      if (sz > 0 && i + 8 + sz <= pcg.length) chunks.push(hexOf(pcg, i + 8, sz))
+    }
+  }
+  return names.length === chunks.length ? names.map((name, k) => ({ name, hex: chunks[k] })) : []
+}
+
+function mainMultisample(program: string, hex: string, multis: KorfMulti[], setName: string) {
+  const hits = multis
+    .map((m) => ({ m, at: hex.indexOf(m.id) }))
+    .filter((x) => x.at >= 0 && x.at % 2 === 0 && x.m.group)
+    .sort((a, b) => a.at - b.at)
+  if (!hits.length) return ""
+  const base = (m: KorfMulti) => norm(stereoSide(packTrim(m.name, setName).replace(/^kapro\s*/i, "")))
+  const paired = hits.filter((x) => {
+    const b = base(x.m)
+    return hits.some((y) => y !== x && base(y.m) === b)
+  })
+  const want = norm(packTrim(program, setName).replace(/^kapro\s*/i, ""))
+  let best = paired[0] ?? hits[0]
+  let bestLen = 0
+  for (const x of hits) {
+    const b = base(x.m)
+    let p = 0
+    while (p < b.length && p < want.length && b[p] === want[p]) p++
+    if (p >= 4 && p > bestLen) {
+      best = x
+      bestLen = p
+    }
+  }
+  return best.m.group
+}
+
+const programGroups = new Map<string, Promise<Map<string, string>>>()
+
+function programSampleGroups(folder: Directory, setName: string) {
+  const key = folder.uri
+  let pending = programGroups.get(key)
+  if (!pending) {
+    pending = (async () => {
+      const out = new Map<string, string>()
+      try {
+        const kmps: File[] = []
+        const pcgs: File[] = []
+        collectFiles(folder, (name) => /\.KMP$/i.test(name), kmps)
+        collectFiles(folder, (name) => /\.PCG$/i.test(name), pcgs)
+        const multis: KorfMulti[] = []
+        for (const kmp of kmps) {
+          if ((kmp.size ?? 0) > 16 * 1024 * 1024) continue
+          multis.push(...parseKorfMultisamples(await Promise.resolve(kmp.bytes())))
+        }
+        if (!multis.length) return out
+        for (const pcg of pcgs) {
+          if ((pcg.size ?? 0) > 32 * 1024 * 1024) continue
+          for (const prog of korfProgramChunks(await Promise.resolve(pcg.bytes()))) {
+            const group = mainMultisample(prog.name, prog.hex, multis, setName)
+            if (group) out.set(norm(prog.name), group)
+          }
+        }
+      } catch (error) {
+        console.log("[load] program map failed", folder.uri, error)
+      }
+      console.log("[load] program map", Object.fromEntries(out))
+      return out
+    })()
+    programGroups.set(key, pending)
+  }
+  return pending
+}
+
 function parsePcgNames(bytes: Uint8Array) {
   const names: string[] = []
   const seen = new Set<string>()
@@ -864,8 +994,8 @@ function scoreName(have: string, want: string) {
   }
   let p = 0
   while (p < a.length && p < b.length && a[p] === b[p]) p++
-  if (p < 6) return 0
-  if (p === a.length || p === b.length) return 100 + p
+  if (p >= 6 && (p === a.length || p === b.length)) return 100 + p
+  if (p >= 8 && p * 10 >= shorter.length * 6) return 100 + p
   return 0
 }
 
@@ -1069,10 +1199,7 @@ async function loadWavByPath(path: string, name: string) {
 async function loadConvertedCacheSound(want: string, folder: Directory, fileName?: string): Promise<LoadResult | null> {
   const names: string[] = []
   if (fileName && /\.wav$/i.test(fileName)) names.push(fileName)
-  const slot = lastLoadedDiskCatalog().sounds.findIndex((row) => norm(row.name) === norm(want))
-  if (slot >= 0) names.push(`s${String(slot).padStart(4, "0")}.wav`)
-  const uniq = [...new Set(names)]
-  for (const wavName of uniq) {
+  for (const wavName of names) {
     for (const path of cacheWavPaths(folder, wavName)) {
       const id = await loadWavByPath(path, want)
       if (id >= 0) return { ok: true, engineId: id, reason: "" }
@@ -1101,10 +1228,11 @@ async function loadUserSound(item: {
     const resolved = await resolveCachePatch(folder, item.name, setName)
     if (resolved?.wavName) fileName = resolved.wavName
   }
-  const wav = await loadConvertedCacheSound(item.name, folder, fileName)
+  const wav = fileName ? await loadConvertedCacheSound(item.name, folder, fileName) : null
   if (wav) return wav
   const trimmed = packTrim(item.name, setName)
-  const nativeName = item.cacheName?.trim() || (norm(trimmed).length >= 6 ? trimmed : item.name)
+  const mapped = (await programSampleGroups(folder, setName)).get(norm(item.name))
+  const nativeName = mapped || item.cacheName?.trim() || (norm(trimmed).length >= 6 ? trimmed : item.name)
   try {
     const started = Date.now()
     const raw = await audio.loadPa4xNamed(nativePath(folder), "sound", nativeName)

@@ -108,6 +108,7 @@ int scoreName(const std::string& haveRaw, const std::string& wantRaw) {
     size_t p = 0;
     while (p < a.size() && p < b.size() && a[p] == b[p]) ++p;
     if (p >= 6 && (p == a.size() || p == b.size())) return 100 + (int)p;
+    if (p >= 8 && p * 10 >= shorter.size() * 6) return 100 + (int)p;
     return 0;
 }
 
