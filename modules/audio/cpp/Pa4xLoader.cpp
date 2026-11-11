@@ -1748,7 +1748,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
     std::vector<int> drumPatchIds;
     int firstSampled = -1;
     size_t sampleBytes = 0;
-    constexpr size_t kMaxSampleBytes = 220ull * 1024ull * 1024ull;
+    constexpr size_t kMaxSampleBytes = 2048ull * 1024ull * 1024ull;
 
     auto addLoaded = [&](Sample&& s, const std::string& path, bool wasCompressed) {
         const size_t add = s.data.size() * sizeof(float);
@@ -1885,6 +1885,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         return true;
     };
 
+    bool cacheMissesSound = false;
     auto loadDecodedCacheNamed = [&]() -> bool {
         int wantS = 0, wantP = 0;
         if (!named || !wantSound || cacheDir.empty() || !decodedCacheReady(cacheDir, &wantS, &wantP)) return false;
@@ -1918,6 +1919,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
             int drum = 0;
             int score = 0;
             std::vector<Zone> zones;
+            int dropped = 0;
         };
         std::vector<CachePatch> cached;
         for (int i = 0; i < wantP; ++i) {
@@ -1934,7 +1936,10 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
                 in >> si >> keyLow >> keyHigh >> velLow >> velHigh >> rootNote >> tune >> gain >> pan >> offset >> end >>
                     loopS >> loopE >> loopMode;
                 if (!readCacheLine(in, rest)) return false;
-                if (si < 0 || si >= wantS) continue;
+                if (si < 0 || si >= wantS) {
+                    inst.dropped++;
+                    continue;
+                }
                 Zone zone;
                 zone.sampleIndex = si;
                 zone.keyLow = keyLow;
@@ -1952,7 +1957,6 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
                 zone.loopMode = loopMode;
                 inst.zones.push_back(zone);
             }
-            if (inst.zones.empty()) continue;
             inst.group = instrumentGroup(inst.name);
             inst.score = std::max(scoreName(inst.name, wantName), scoreName(inst.group, wantName));
             if (normName(inst.group.c_str()) == normName(wantName.c_str())) inst.score = std::max(inst.score, 800);
@@ -1967,6 +1971,16 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
             }
         }
         if (bestScore < 100) return false;
+        // A full-SET load that hit the memory cap writes regions it never decoded as -1.
+        // Building the sound from those leftovers mutes most of its keys, so decode this
+        // one sound from the PCM banks instead.
+        for (const auto& inst : cached) {
+            const std::string group = inst.group.empty() ? inst.name : inst.group;
+            if (inst.score >= 100 && group == bestGroup && (inst.dropped > 0 || inst.zones.empty())) {
+                cacheMissesSound = true;
+                return false;
+            }
+        }
         std::map<int, int> cacheToEngine;
         std::vector<Zone> mapped;
         bool drum = false;
@@ -2080,7 +2094,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
     try {
     bool skipPcm = false;
     usedCache = named && wantSound ? loadDecodedCacheNamed() : (!named ? loadDecodedCache() : false);
-    if (named && wantSound && !usedCache && cacheReady) {
+    if (named && wantSound && !usedCache && cacheReady && !cacheMissesSound) {
         reason += "Converted WAV cache is here, but that name is not in it. ";
         skipPcm = true;
     }

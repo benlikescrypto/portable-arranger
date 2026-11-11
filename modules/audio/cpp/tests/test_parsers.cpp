@@ -329,6 +329,53 @@ int main() {
         expect(tail < 0.0005f, "kit_flagged_user_sound_stops_after_key_up");
     }
 
+    {
+        // A key whose own zone (or closest-root zone) has no loaded sample must still
+        // sound by borrowing the nearest zone that does.
+        auto isolated = std::make_unique<pa::Engine>();
+        isolated->prepare(48000.0f);
+        pa::Sample tone;
+        tone.sampleRate = 48000;
+        tone.channels = 1;
+        tone.rootNote = 48;
+        tone.data.assign(48000, 0.0f);
+        for (size_t i = 0; i < tone.data.size(); ++i) tone.data[i] = std::sin((float)i * 0.05f) * 0.4f;
+        pa::Patch patch;
+        pa::prepareSampledPatch(patch, false);
+        std::snprintf(patch.name, sizeof(patch.name), "Gappy");
+        const int good = isolated->addSample(std::move(tone));
+        pa::Zone low;
+        low.keyLow = 0;
+        low.keyHigh = 59;
+        low.root = 48;
+        low.sampleIndex = good;
+        pa::Zone missing;  // e.g. a KMP region whose PCM was not found
+        missing.keyLow = 60;
+        missing.keyHigh = 127;
+        missing.root = 72;
+        missing.sampleIndex = -1;
+        pa::Zone overlapMissing;  // closer root than `low` for note 55, but empty
+        overlapMissing.keyLow = 50;
+        overlapMissing.keyHigh = 59;
+        overlapMissing.root = 55;
+        overlapMissing.sampleIndex = 9999;
+        patch.zones = {low, missing, overlapMissing};
+        const int id = isolated->addSampledInstrument(patch);
+        isolated->setPartProgram(0, id);
+        for (int note : {72, 55}) {
+            isolated->noteOn(0, note, 110);
+            buf.assign(4800 * 2, 0.0f);
+            isolated->render(buf.data(), 4800);
+            const float level = rms(buf.data(), 9600);
+            if (level <= 0.01f) std::printf("note %d rms=%.6f\n", note, level);
+            expect(level > 0.01f, note == 72 ? "key_with_missing_sample_still_sounds"
+                                             : "overlapping_missing_zone_not_chosen");
+            isolated->noteOff(0, note);
+            buf.assign(48000 * 2, 0.0f);
+            isolated->render(buf.data(), 48000);
+        }
+    }
+
     const std::string stylePath = tempDir() + "/arrangerbox_test.abstyle";
     {
         std::ofstream st(stylePath);

@@ -1223,6 +1223,23 @@ async function loadUserSound(item: {
   const folder = resolveSetFolder(item.setPath)
   if (!folder) return { ok: false, engineId: -1, reason: "SET folder missing." }
   const setName = folder.name.replace(/\.SET$/i, "")
+  const trimmed = packTrim(item.name, setName)
+  const mapped = (await programSampleGroups(folder, setName)).get(norm(item.name))
+  const nativeName = mapped || item.cacheName?.trim() || (norm(trimmed).length >= 6 ? trimmed : item.name)
+  // Load the whole multisample natively first. A single converted WAV is one key's
+  // sample stretched over the keyboard, so keys far from its root play too fast or
+  // too slow to hear. It is only a fallback when the native load fails.
+  let failReason = "Could not load that User sound from the SET."
+  try {
+    const started = Date.now()
+    const raw = await audio.loadPa4xNamed(nativePath(folder), "sound", nativeName)
+    console.log("[load] native", item.name, "as", nativeName, `${Date.now() - started}ms`, String(raw).slice(0, 280))
+    const result = parseReport(raw)
+    if (result.ok) return result
+    if (result.reason) failReason = result.reason
+  } catch (error) {
+    console.log("[load] native threw", item.name, error)
+  }
   let fileName = item.fileName?.trim() || ""
   if (!fileName) {
     const resolved = await resolveCachePatch(folder, item.name, setName)
@@ -1230,20 +1247,7 @@ async function loadUserSound(item: {
   }
   const wav = fileName ? await loadConvertedCacheSound(item.name, folder, fileName) : null
   if (wav) return wav
-  const trimmed = packTrim(item.name, setName)
-  const mapped = (await programSampleGroups(folder, setName)).get(norm(item.name))
-  const nativeName = mapped || item.cacheName?.trim() || (norm(trimmed).length >= 6 ? trimmed : item.name)
-  try {
-    const started = Date.now()
-    const raw = await audio.loadPa4xNamed(nativePath(folder), "sound", nativeName)
-    console.log("[load] native", item.name, "as", nativeName, `${Date.now() - started}ms`, String(raw).slice(0, 280))
-    const result = parseReport(raw)
-    if (result.ok) return result
-    return { ok: false, engineId: -1, reason: result.reason || "Could not load that User sound from the SET." }
-  } catch (error) {
-    console.log("[load] native threw", item.name, error)
-    return { ok: false, engineId: -1, reason: "Could not load that User sound from the SET." }
-  }
+  return { ok: false, engineId: -1, reason: failReason }
 }
 
 export async function loadDiskItem(item: {

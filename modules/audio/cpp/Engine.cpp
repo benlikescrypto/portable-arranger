@@ -558,26 +558,45 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
         startVoiceZone(instId, p, dummy, note, vel, bus, ch);
         return;
     }
+    // A zone whose sample failed to resolve or decode renders silence. Choosing one
+    // as "the" sample for a key made that key mute, so skip them and borrow the
+    // nearest zone that can actually play.
+    auto playable = [this](const Zone& z) {
+        if (z.sampleIndex < 0 || z.sampleIndex >= (int)samples.size()) return false;
+        return samples[(size_t)z.sampleIndex].frames() > 1;
+    };
+    auto rootOf = [this](const Zone& z) {
+        if (z.root > 0) return z.root;
+        const int r = samples[(size_t)z.sampleIndex].rootNote;
+        return r > 0 ? r : 60;
+    };
     const Zone* hits[32]{};
     int nh = 0;
     int seqLen = 1;
     for (const Zone& z : p.zones) {
         if (z.seqLength > seqLen) seqLen = z.seqLength;
+        if (!playable(z)) continue;
         if (note >= z.keyLow && note <= z.keyHigh && vel >= z.velLow && vel <= z.velHigh) {
             if (nh < 32) hits[nh++] = &z;
         }
     }
     if (nh == 0) {
-        const Zone* closest = &p.zones[0];
+        const Zone* closest = nullptr;
         int best = 999;
         for (const Zone& z : p.zones) {
-            const int d = std::abs(z.root - note);
+            if (!playable(z)) continue;
+            int d = std::abs(rootOf(z) - note);
+            if (note < z.keyLow) d = std::min(d, z.keyLow - note);
+            else if (note > z.keyHigh) d = std::min(d, note - z.keyHigh);
+            else d = 0;
+            // Prefer a zone covering this velocity when distances tie.
+            d = d * 2 + ((vel >= z.velLow && vel <= z.velHigh) ? 0 : 1);
             if (d < best) {
                 best = d;
                 closest = &z;
             }
         }
-        startVoiceZone(instId, p, *closest, note, vel, bus, ch);
+        startVoiceZone(instId, p, closest ? *closest : p.zones[0], note, vel, bus, ch);
         return;
     }
     uint8_t phase = 0;
@@ -591,7 +610,7 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
         const Zone* z = hits[i];
         if (z->seqLength > 1 && z->seqPosition != (int)(phase % z->seqLength) + 1) continue;
         const int side = z->pan < -0.15f ? 0 : (z->pan > 0.15f ? 2 : 1);
-        const int d = std::abs(z->root - note);
+        const int d = std::abs(rootOf(*z) - note);
         if (d < bestDist[side]) {
             bestDist[side] = d;
             best[side] = z;
@@ -1219,6 +1238,8 @@ void Engine::renderSample(Voice& v, float& L, float& R) {
     const int end = v.sampleEnd > 1 ? v.sampleEnd : frames;
     if (sm.data.empty() || frames <= 1) {
         L = R = 0;
+        v.amp.process();
+        v.active = false;
         return;
     }
     const bool looping = v.sampleLoop;
