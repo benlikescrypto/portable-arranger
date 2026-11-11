@@ -68,15 +68,15 @@ struct Patch {
 inline void prepareSampledPatch(Patch& p, bool drum) {
     p.sampled = true;
     p.model = drum ? Model::KitStandard : Model::Piano;
-    p.attack = drum ? 0.2f : 0.4f;
+    p.attack = drum ? 0.8f : 2.0f;
     p.decay = 0.0f;
     p.sustain = 1.0f;
-    p.release = drum ? 80.0f : 220.0f;
+    p.release = drum ? 90.0f : 160.0f;
     p.cutoff = 22000.0f;
     p.reso = 0.0f;
     p.filtEnv = 0.0f;
     p.chorus = 0.0f;
-    p.reverb = drum ? 0.08f : 0.12f;
+    p.reverb = drum ? 0.06f : 0.08f;
     p.brightness = 1.0f;
     p.vibDepth = 0.0f;
     p.bus = drum ? BusDrums : BusKeyboard;
@@ -314,6 +314,7 @@ private:
     void startVoice(int instId, int note, int vel, int bus, int ch);
     void startVoiceZone(int instId, const Patch& p, const Zone& z, int note, int vel, int bus, int ch);
     void stopVoices(int note, int ch, bool matchInst, int instId);
+    void fadeVoices(int note, int ch, int instId, bool quick);
     int stealVoice();
     void renderVoice(Voice& v, float* buses, float* sends, int frames);
     void renderSynth(Voice& v, float& L, float& R);

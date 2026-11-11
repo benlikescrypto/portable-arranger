@@ -526,9 +526,26 @@ void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note,
     }
 }
 
+void Engine::fadeVoices(int note, int ch, int instId, bool quick) {
+    for (int i = 0; i < kMaxVoices; ++i) {
+        Voice& v = voices[i];
+        if (!v.active && v.amp.idle()) continue;
+        if (note >= 0 && v.note != note) continue;
+        if (ch >= 0 && v.chan != ch && ch != 0x7f) continue;
+        if (instId >= 0 && v.inst != instId) continue;
+        if (!quick && v.oneShot) continue;
+        if (!quick && sustainOn && v.chan < 4) continue;
+        if (quick) v.amp.steal();
+        else v.amp.noteOff();
+        v.filtEg.noteOff();
+        v.releasing = true;
+    }
+}
+
 void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
     if (instId < 0 || instId >= (int)patches.size() || vel <= 0) return;
     const Patch& p = patches[instId];
+    fadeVoices(note, ch, -1, true);
     if (gmFont && !p.sampled) {
         startTsfVoice(p, note, vel, bus, ch);
         return;
@@ -538,17 +555,26 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
         startVoiceZone(instId, p, dummy, note, vel, bus, ch);
         return;
     }
-    const Zone* hits[8]{};
+    const Zone* hits[32]{};
     int nh = 0;
     int seqLen = 1;
     for (const Zone& z : p.zones) {
         if (z.seqLength > seqLen) seqLen = z.seqLength;
         if (note >= z.keyLow && note <= z.keyHigh && vel >= z.velLow && vel <= z.velHigh) {
-            if (nh < 8) hits[nh++] = &z;
+            if (nh < 32) hits[nh++] = &z;
         }
     }
     if (nh == 0) {
-        startVoiceZone(instId, p, p.zones[0], note, vel, bus, ch);
+        const Zone* closest = &p.zones[0];
+        int best = 999;
+        for (const Zone& z : p.zones) {
+            const int d = std::abs(z.root - note);
+            if (d < best) {
+                best = d;
+                closest = &z;
+            }
+        }
+        startVoiceZone(instId, p, *closest, note, vel, bus, ch);
         return;
     }
     uint8_t phase = 0;
@@ -556,13 +582,23 @@ void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
         phase = rrPhase[(size_t)instId];
         rrPhase[(size_t)instId] = (uint8_t)((phase + 1) % std::max(1, seqLen));
     }
-    int started = 0;
+    const Zone* best[3] = {nullptr, nullptr, nullptr};
+    int bestDist[3] = {999, 999, 999};
     for (int i = 0; i < nh; ++i) {
         const Zone* z = hits[i];
         if (z->seqLength > 1 && z->seqPosition != (int)(phase % z->seqLength) + 1) continue;
-        startVoiceZone(instId, p, *z, note, vel, bus, ch);
+        const int side = z->pan < -0.15f ? 0 : (z->pan > 0.15f ? 2 : 1);
+        const int d = std::abs(z->root - note);
+        if (d < bestDist[side]) {
+            bestDist[side] = d;
+            best[side] = z;
+        }
+    }
+    int started = 0;
+    for (int s = 0; s < 3; ++s) {
+        if (!best[s]) continue;
+        startVoiceZone(instId, p, *best[s], note, vel, bus, ch);
         started++;
-        if (started >= 4) break;
     }
     if (!started) startVoiceZone(instId, p, *hits[0], note, vel, bus, ch);
 }
@@ -576,19 +612,7 @@ void Engine::stopVoices(int note, int ch, bool matchInst, int instId) {
             tsf_channel_note_off(gmFont, tch, note);
         }
     }
-    for (int i = 0; i < kMaxVoices; ++i) {
-        Voice& v = voices[i];
-        if (!v.active) continue;
-        if (v.note != note) continue;
-        if (ch >= 0 && v.chan != ch && ch != 0x7f) continue;
-        if (matchInst && v.inst != instId) continue;
-        if (sustainOn && v.chan < 4) continue;
-        if (v.oneShot) continue;
-        v.amp.noteOff();
-        v.filtEg.noteOff();
-        v.releasing = true;
-        v.sampleLoop = false;
-    }
+    fadeVoices(note, ch, matchInst ? instId : -1, false);
 }
 
 void Engine::detectChord() {
@@ -702,12 +726,7 @@ void Engine::handle(const MidiEvent& e) {
                 setFx(1, e.c / 127.0f);
             } else if (e.b == 120 || e.b == 123) {
                 tsfAllNotesOff(0, 15);
-                for (auto& v : voices) {
-                    v.amp.noteOff();
-                    v.filtEg.noteOff();
-                    v.releasing = true;
-                    v.sampleLoop = false;
-                }
+                fadeVoices(-1, -1, -1, true);
             }
             break;
         case MidiKind::Pb: {
@@ -719,15 +738,13 @@ void Engine::handle(const MidiEvent& e) {
             break;
         }
         case MidiKind::Pc:
-            if (e.a >= 0 && e.a < 4) partProg[e.a] = e.b;
-            if (gmFont && e.a >= 0 && e.a < 4 && e.b >= 0 && e.b < (int)patches.size()) {
-                applyTsfProgram(e.a, patches[(size_t)e.b]);
-            }
-            break;
         case MidiKind::LoadInst:
             if (e.a >= 0 && e.a < 4) partProg[e.a] = e.b;
-            if (gmFont && e.a >= 0 && e.a < 4 && e.b >= 0 && e.b < (int)patches.size()) {
-                applyTsfProgram(e.a, patches[(size_t)e.b]);
+            fadeVoices(-1, e.a, -1, true);
+            if (gmFont && e.a >= 0 && e.a < 4) {
+                tsf_channel_sounds_off_all(gmFont, e.a);
+                if (e.b >= 0 && e.b < (int)patches.size() && !patches[(size_t)e.b].sampled)
+                    applyTsfProgram(e.a, patches[(size_t)e.b]);
             }
             break;
         case MidiKind::Style:
@@ -1201,27 +1218,29 @@ void Engine::renderSample(Voice& v, float& L, float& R) {
         L = R = 0;
         return;
     }
-    const bool looping = v.sampleLoop && !v.releasing;
+    const bool looping = v.sampleLoop;
     const int ls = v.loopStart;
     const int le = v.loopEnd > ls ? v.loopEnd : end;
-    const float sL = hermiteAt(sm.data.data(), frames, ch, 0, v.samplePos, ls, le, looping);
-    const float sR =
-            ch == 2 ? hermiteAt(sm.data.data(), frames, ch, 1, v.samplePos, ls, le, looping) : sL;
+    const int xfade = looping && le - ls > 512 ? 256 : 0;
+    auto readCh = [&](int c, double pos) {
+        float a = hermiteAt(sm.data.data(), frames, ch, c, pos, ls, le, looping);
+        if (xfade <= 0 || pos < (double)(le - xfade)) return a;
+        const float t = clampf((float)(pos - (double)(le - xfade)) / (float)xfade, 0.0f, 1.0f);
+        const float b = hermiteAt(sm.data.data(), frames, ch, c, pos - (double)(le - ls), ls, le, looping);
+        const float w = t * t * (3.0f - 2.0f * t);
+        return a * (1.0f - w) + b * w;
+    };
+    const float sL = readCh(0, v.samplePos);
+    const float sR = ch == 2 ? readCh(1, v.samplePos) : sL;
     v.samplePos += v.sampleInc * chanBendRatio[v.chan & 15];
     if (looping && v.samplePos >= le && le > ls) {
         v.samplePos = ls + std::fmod(v.samplePos - ls, (double)(le - ls));
-    } else if (!looping && v.samplePos >= (double)end - 2) {
+    } else if (!looping && v.samplePos >= (double)end - 2 && !v.releasing) {
         v.amp.noteOff();
         v.releasing = true;
-        if (v.amp.idle()) v.active = false;
     }
     const float aenv = v.amp.process();
     const float fenv = v.filtEg.process();
-    if (!looping && v.samplePos >= (double)end - 2) {
-        L = R = 0;
-        if (v.amp.idle()) v.active = false;
-        return;
-    }
     float yL = sL, yR = sR;
     if (v.cutoff < 18000.0f || v.filtEnvAmt > 0.01f) {
         float cut = v.cutoff * (0.55f + v.brightness * (v.vel / 127.0f) + v.filtEnvAmt * fenv);

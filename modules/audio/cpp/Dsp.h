@@ -128,16 +128,18 @@ struct Adsr {
     Stage stage = Idle;
     float level = 0.0f;
     float aInc = 0.01f, dInc = 0.01f, sLev = 0.8f, rInc = 0.01f;
+    float rSamples = 4800.0f;
 
     void setTimes(float sr, float aMs, float dMs, float s, float rMs) {
         auto inc = [sr](float ms, float from, float to) {
             const float samples = std::max(1.0f, ms * 0.001f * sr);
             return (to - from) / samples;
         };
-        aInc = inc(std::max(0.2f, aMs), 0.0f, 1.0f);
+        aInc = inc(std::max(0.8f, aMs), 0.0f, 1.0f);
         dInc = inc(std::max(1.0f, dMs), 1.0f, s);
         sLev = clampf(s, 0.0f, 1.0f);
-        rInc = inc(std::max(1.0f, rMs), 1.0f, 0.0f);
+        rSamples = std::max(1.0f, std::max(1.0f, rMs) * 0.001f * sr);
+        rInc = -1.0f / rSamples;
     }
 
     void noteOn() {
@@ -145,11 +147,13 @@ struct Adsr {
         if (level < 0.001f) level = 0.0f;
     }
     void noteOff() {
-        if (stage != Idle) stage = Release;
+        if (stage == Idle) return;
+        stage = Release;
+        rInc = -std::max(level, 1.0e-4f) / rSamples;
     }
     void steal() {
         stage = Release;
-        rInc = std::min(rInc, -level / 24.0f);
+        rInc = -std::max(level, 1.0e-4f) / 384.0f;
     }
 
     float process() {

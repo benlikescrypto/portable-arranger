@@ -288,6 +288,13 @@ int main() {
         const float tail = rms(buf.data() + 20000, 16000);
         if (tail >= 0.0005f) std::printf("looped tail rms=%.6f\n", tail);
         expect(tail < 0.0005f, "looped_sample_stops_after_key_up");
+        float peakStep = 0.0f;
+        for (int i = 2; i < 4000; ++i) {
+            const float a = buf[(size_t)(i - 1) * 2];
+            const float b = buf[(size_t)i * 2];
+            peakStep = std::max(peakStep, std::abs(b - a));
+        }
+        expect(peakStep < 0.12f, "looped_sample_release_has_no_click");
     }
 
     const std::string stylePath = tempDir() + "/arrangerbox_test.abstyle";
