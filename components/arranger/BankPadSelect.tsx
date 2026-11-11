@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Pressable, StyleSheet, Text, View } from "react-native"
 
 import { Lcd } from "@/constants/theme"
@@ -79,9 +79,15 @@ export function BankPadSelect({
   const safePage = Math.min(page, pages - 1)
   const pads = categoryItems.slice(safePage * SOUND_PAGE_SIZE, safePage * SOUND_PAGE_SIZE + SOUND_PAGE_SIZE)
 
+  const sawUser = useRef(hasUser)
   useEffect(() => {
     setPage(pageOf(categoryItems, activeId))
   }, [bank, category])
+
+  useEffect(() => {
+    if (hasUser && !sawUser.current) setBank("User")
+    sawUser.current = hasUser
+  }, [hasUser])
 
   const pickCategory = (next: string) => {
     setCategory(next)
@@ -166,14 +172,9 @@ export function BankPadSelect({
                         >
                           {pad?.name ?? ""}
                         </Text>
-                        {pad &&
-                        !loaded &&
-                        !loading &&
-                        pad.loadError &&
-                        (title === "STYLE SELECT" || title === "PAD SELECT") &&
-                        /smf/i.test(pad.loadError) ? (
+                        {pad && !loaded && !loading && pad.loadError ? (
                           <Text style={styles.padMeta} numberOfLines={1}>
-                            Need SMF
+                            {title !== "SOUND SELECT" && /smf/i.test(pad.loadError) ? "Need SMF" : "Load failed"}
                           </Text>
                         ) : null}
                         {loading ? (

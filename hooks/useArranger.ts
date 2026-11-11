@@ -289,9 +289,11 @@ export function useArranger() {
         tempo: nextStyle?.tempo || style?.tempo || 112,
         importing: false,
         importProgress: 1,
-        importMessage: userOnDisk
+        importMessage: disk.sounds.length
           ? `${disk.sounds.length} User sounds · ${disk.styles.length} styles · ${disk.pads.length} pads — tap to load`
-          : "",
+          : disk.setName
+            ? `SET ${disk.setName} is on disk, but no User sound names were listed. Import the SET again.`
+            : "No User SET in Documents/sets. Import a PA4X SET.",
       }))
       hideSplash()
       void midi.start()
@@ -446,9 +448,14 @@ export function useArranger() {
           return
         }
         const loaded = await ensureLoaded("sound", id, item)
-        if (!loaded.ok && loaded.reason) {
+        if (loaded.ok) {
+          setState((s) => assignSound(s, id, part, s.sounds))
+          return
+        }
+        if (loaded.reason) {
           setState((s) => ({
             ...s,
+            importMessage: loaded.reason,
             sounds: s.sounds.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
           }))
         }
@@ -500,9 +507,14 @@ export function useArranger() {
           return
         }
         const loaded = await ensureLoaded("style", id, item)
-        if (!loaded.ok && loaded.reason) {
+        if (loaded.ok) {
+          setState((s) => apply(s, s.styles))
+          return
+        }
+        if (loaded.reason) {
           setState((s) => ({
             ...s,
+            importMessage: loaded.reason,
             styles: s.styles.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
           }))
         }
@@ -526,9 +538,14 @@ export function useArranger() {
           return
         }
         const loaded = await ensureLoaded("pad", id, item)
-        if (!loaded.ok && loaded.reason) {
+        if (loaded.ok) {
+          setState((s) => ({ ...s, padId: id }))
+          return
+        }
+        if (loaded.reason) {
           setState((s) => ({
             ...s,
+            importMessage: loaded.reason,
             pads: s.pads.map((row) => (row.id === id ? { ...row, loadError: loaded.reason } : row)),
           }))
         }

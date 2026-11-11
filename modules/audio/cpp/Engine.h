@@ -184,7 +184,8 @@ void buildFactory(std::vector<Patch>& patches, std::vector<std::string>& styleNa
 void buildArranger(Arranger& arr);
 int loadWav(const char* path, Sample& out);
 int loadKsf(const char* path, Sample& out);
-int scanPcmBank(const char* path, std::vector<Sample>& out);
+int scanPcmBank(const char* path, std::vector<Sample>& out,
+                bool (*keep)(const char* name, const char* id, void* user) = nullptr, void* user = nullptr);
 bool readFileBytes(const char* path, std::vector<uint8_t>& bytes);
 int loadKsfBytes(const uint8_t* bytes, size_t n, Sample& out, bool* compressed = nullptr);
 bool parseSfzFile(const char* path, std::vector<Sample>& samples, Patch& patch, std::string& error);

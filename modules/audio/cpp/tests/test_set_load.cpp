@@ -317,6 +317,33 @@ int main() {
     expect(std::strstr(report, "\"ok\":1") != nullptr, "named_ok");
     expect(engNamed->soundCount() == factoryNamed + 1, "named_one_patch");
 
+    auto engLoose = std::make_unique<pa::Engine>();
+    engLoose->prepare(44100.0f);
+    const int factoryLoose = engLoose->soundCount();
+    report[0] = 0;
+    const int looseId =
+        engLoose->loadPa4xNamed("tmp/KApro.SET", "sound", "KApro Piano Stage", report, (int)sizeof(report));
+    std::printf("LOOSE report=%s\n", report);
+    expect(looseId >= 0, "loose_named_engine_id");
+    expect(std::strstr(report, "\"ok\":1") != nullptr, "loose_named_ok");
+    expect(engLoose->soundCount() == factoryLoose + 1, "loose_named_one_patch");
+
+    mkdirs("tmp/Layers.SET/PCM");
+    mkdirs("tmp/Layers.SET/MULTISMP");
+    auto layerPcm = makeKsf("PianoC2", 512, 48);
+    const auto other = makeKsf("OtherSax", 512, 62);
+    layerPcm.insert(layerPcm.end(), other.begin(), other.end());
+    writeFile("tmp/Layers.SET/PCM/RAM01.PCM", layerPcm);
+    writeFile("tmp/Layers.SET/MULTISMP/RAM.KMP", makeKmp("Piano C2", "PianoC2"));
+    auto engLayer = std::make_unique<pa::Engine>();
+    engLayer->prepare(44100.0f);
+    report[0] = 0;
+    const int layerId = engLayer->loadPa4xNamed("tmp/Layers.SET", "sound", "Piano", report, (int)sizeof(report));
+    std::printf("LAYER report=%s\n", report);
+    expect(layerId >= 0, "layer_engine_id");
+    expect(samplesAdded(report) == 1, "layer_decodes_one_sample");
+    expect(patchesAdded(report) == 1, "layer_one_patch");
+
     const auto zip = storeZip("PCM/RAM01.PCM", ksf);
     writeFile("tmp/KAproOnline.SET", zip);
     auto eng2 = std::make_unique<pa::Engine>();

@@ -423,7 +423,8 @@ static bool looksLikePaKorf(const uint8_t* b, size_t n) {
     return false;
 }
 
-static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& out) {
+static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& out,
+                              bool (*keep)(const char*, const char*, void*), void* user) {
     if (!looksLikePaKorf(b, n)) return 0;
     std::map<std::string, std::string> names;
     const size_t dirEnd = std::min<size_t>(n, 32u * 1024u);
@@ -467,6 +468,12 @@ static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& o
             continue;
         }
         const uint8_t* audio = payload + 66;
+        const auto itName = names.find(id);
+        const std::string nm = itName != names.end() ? itName->second : id;
+        if (keep && !keep(nm.c_str(), id.c_str(), user)) {
+            pos = hit + 8 + (size_t)sz;
+            continue;
+        }
         Sample s;
         auto decoded = decodeBest(audio, (size_t)dataLen, 16, (int)dataLen, true);
         if (decoded.empty()) {
@@ -477,8 +484,6 @@ static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& o
         s.sampleRate = (sr >= 4000 && sr <= 192000) ? sr : 44100;
         s.data = std::move(decoded);
         s.sourceId = id;
-        const auto it = names.find(id);
-        const std::string nm = it != names.end() ? it->second : id;
         std::memset(s.name, 0, sizeof(s.name));
         std::strncpy(s.name, nm.c_str(), sizeof(s.name) - 1);
         const int frames = s.frames();
@@ -494,7 +499,7 @@ static int scanPaKorfPcmBytes(const uint8_t* b, size_t n, std::vector<Sample>& o
     return found;
 }
 
-int scanPcmBank(const char* path, std::vector<Sample>& out) {
+int scanPcmBank(const char* path, std::vector<Sample>& out, bool (*keep)(const char*, const char*, void*), void* user) {
     FILE* f = std::fopen(path, "rb");
     if (!f) return 0;
     std::fseek(f, 0, SEEK_END);
@@ -514,7 +519,7 @@ int scanPcmBank(const char* path, std::vector<Sample>& out) {
             return 0;
         }
         std::fclose(f);
-        return scanPaKorfPcmBytes(bytes.data(), bytes.size(), out);
+        return scanPaKorfPcmBytes(bytes.data(), bytes.size(), out, keep, user);
     }
     auto readChunk = [&](long off, std::vector<uint8_t>& buf) -> bool {
         if (off < 0 || off + 8 > fileSize) return false;
@@ -569,6 +574,21 @@ int scanPcmBank(const char* path, std::vector<Sample>& out) {
                 }
                 break;
             }
+        }
+        std::string peek;
+        if (packed.size() >= 24 &&
+            (std::memcmp(packed.data(), "SMP1", 4) == 0 || std::memcmp(packed.data(), "SMP2", 4) == 0))
+            peek = readName24(packed.data() + 8, 16);
+        for (size_t pi = 0; pi + 12 < packed.size(); ++pi) {
+            if (std::memcmp(packed.data() + pi, "NAME", 4) == 0) {
+                const std::string longer = readName24(packed.data() + pi + 8, 24);
+                if (!longer.empty()) peek = longer;
+                break;
+            }
+        }
+        if (keep && !peek.empty() && !keep(peek.c_str(), "", user)) {
+            pos = p > start ? p : start + 4;
+            continue;
         }
         Sample s;
         auto r = parseKorgSample(packed.data(), packed.size(), s);

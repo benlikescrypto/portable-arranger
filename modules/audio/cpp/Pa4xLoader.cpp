@@ -96,6 +96,77 @@ std::string normName(const char* s) {
     return o;
 }
 
+int scoreName(const std::string& haveRaw, const std::string& wantRaw) {
+    const std::string a = normName(haveRaw.c_str());
+    const std::string b = normName(wantRaw.c_str());
+    if (a.empty() || b.empty()) return 0;
+    if (a == b) return 1000;
+    if (a.size() >= 4 && b.size() >= 4) {
+        if (a.find(b) != std::string::npos) return 400 + (int)b.size();
+        if (b.find(a) != std::string::npos) return 300 + (int)a.size();
+    }
+    size_t p = 0;
+    while (p < a.size() && p < b.size() && a[p] == b[p]) ++p;
+    return p >= 4 ? 100 + (int)p : 0;
+}
+
+std::string instrumentGroup(std::string name) {
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    for (int pass = 0; pass < 4; ++pass) {
+        std::string next = name;
+        auto ends = [&](const char* suf) {
+            const size_t n = std::strlen(suf);
+            if (next.size() <= n + 2) return false;
+            for (size_t i = 0; i < n; ++i)
+                if (std::tolower((unsigned char)next[next.size() - n + i]) != std::tolower((unsigned char)suf[i]))
+                    return false;
+            return true;
+        };
+        auto strip = [&](const char* suf) {
+            if (!ends(suf)) return false;
+            next.resize(next.size() - std::strlen(suf));
+            while (!next.empty() && (next.back() == ' ' || next.back() == '-' || next.back() == '_')) next.pop_back();
+            return next.size() >= 3;
+        };
+        bool stripped = strip("-L") || strip("-R") || strip("-M") || strip(" L") || strip(" R") || strip(" v1") ||
+                        strip(" v2") || strip(" v3") || strip(" v4") || strip(" ff") || strip(" pp") || strip(" mf") ||
+                        strip(" mp");
+        if (!stripped && next.size() >= 5 && std::isdigit((unsigned char)next.back())) {
+            size_t j = next.size() - 1;
+            if (j > 0 && (next[j - 1] == '#' || next[j - 1] == 'b' || next[j - 1] == 'B')) --j;
+            if (j > 0 && std::strchr("abcdefgABCDEFG", next[j - 1]) != nullptr) {
+                --j;
+                if (j > 0 && (next[j - 1] == ' ' || next[j - 1] == '-' || next[j - 1] == '_')) {
+                    next.resize(j - 1);
+                    while (!next.empty() && (next.back() == ' ' || next.back() == '-' || next.back() == '_'))
+                        next.pop_back();
+                    stripped = next.size() >= 3;
+                }
+            }
+        }
+        if (!stripped) break;
+        name = next;
+    }
+    return name;
+}
+
+bool pcmSampleWanted(const char* name, const char* id, void* user) {
+    const auto* keys = static_cast<const std::set<std::string>*>(user);
+    if (!keys || keys->empty()) return true;
+    auto hit = [&](const char* s) {
+        if (!s || !s[0]) return false;
+        const std::string n = normName(s);
+        if (n.empty()) return false;
+        if (keys->count(n)) return true;
+        if (n.size() < 4) return false;
+        for (const auto& need : *keys) {
+            if (need.size() >= 4 && (n.find(need) != std::string::npos || need.find(n) != std::string::npos)) return true;
+        }
+        return false;
+    };
+    return hit(name) || hit(id);
+}
+
 const char* guessCat(const char* name, const char* fallback) {
     const std::string n = normName(name);
     if (n.find("piano") != std::string::npos || n.find("grand") != std::string::npos || n.find("rhodes") != std::string::npos)
@@ -1958,19 +2029,45 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
     usedCache = named && wantSound ? loadDecodedCacheNamed() : (!named ? loadDecodedCache() : false);
     bool ramFull = false;
     std::set<std::string> neededSampleKeys;
+    std::vector<KmpInst> pickedInsts;
     if (!usedCache && named && wantSound) {
+        struct Cand {
+            KmpInst inst;
+            std::string group;
+            int score = 0;
+        };
+        std::vector<Cand> cands;
+        int bestScore = 0;
         for (const auto& path : files) {
             if (upperExt(path) != ".KMP") continue;
             std::vector<uint8_t> bytes;
             if (!readFileBytes(path.c_str(), bytes)) continue;
             std::vector<KmpInst> insts;
             parseKmpBytes(bytes.data(), bytes.size(), insts);
-            for (const auto& inst : insts) {
-                if (!matchesWant(inst.name) && !matchesWant(fileStem(path))) continue;
-                for (const auto& r : inst.regions) {
+            for (auto& inst : insts) {
+                if (inst.name.empty()) inst.name = fileStem(path);
+                if (isGenericBankName(inst.name)) continue;
+                Cand c;
+                c.group = instrumentGroup(inst.name);
+                c.score = std::max(scoreName(inst.name, wantName), scoreName(c.group, wantName));
+                c.score = std::max(c.score, scoreName(fileStem(path), wantName));
+                if (normName(c.group.c_str()) == normName(wantName.c_str())) c.score = std::max(c.score, 800);
+                c.inst = std::move(inst);
+                bestScore = std::max(bestScore, c.score);
+                cands.push_back(std::move(c));
+            }
+        }
+        std::string bestGroup;
+        if (bestScore >= 100) {
+            for (const auto& c : cands)
+                if (c.score == bestScore) bestGroup = c.group;
+            for (auto& c : cands) {
+                if (c.group != bestGroup) continue;
+                for (const auto& r : c.inst.regions) {
                     const std::string key = normName(r.sampleName.c_str());
                     if (!key.empty()) neededSampleKeys.insert(key);
                 }
+                pickedInsts.push_back(std::move(c.inst));
             }
         }
     }
@@ -2038,7 +2135,8 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
             }
         } else if (ext == ".PCM") {
             std::vector<Sample> found;
-            scanPcmBank(path.c_str(), found);
+            scanPcmBank(path.c_str(), found, named && wantSound ? pcmSampleWanted : nullptr,
+                        named && wantSound ? &neededSampleKeys : nullptr);
             if (found.empty()) {
                 skipped++;
                 if (reason.size() < 220) reason += "PCM bank had no playable samples (" + fileStem(path) + "). ";
@@ -2056,7 +2154,25 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         }
     }
 
-    if (!usedCache && wantSound)
+    if (!usedCache && named && wantSound && !pickedInsts.empty()) {
+        std::vector<Zone> zones;
+        bool drum = false;
+        for (const auto& inst : pickedInsts) {
+            if (isDrumKmp(inst) || inst.name.find("Kit") != std::string::npos) drum = true;
+            for (const auto& z : zonesFromKmp(inst, loaded))
+                if (z.sampleIndex >= 0) zones.push_back(z);
+        }
+        if (zones.empty()) {
+            if (reason.size() < 180) reason += "That sound's samples were not in the PCM bank. ";
+        } else {
+            Patch p = makeSamplePatch(wantName.c_str(), guessCat(wantName.c_str(), drum ? "Percussion" : "Imported"),
+                                      zones, drum);
+            p.source = PatchSource::Korg;
+            rememberPatch(addSampledInstrument(p), drum);
+        }
+    }
+
+    if (!usedCache && wantSound && !named)
     for (const auto& path : files) {
         if (upperExt(path) != ".KMP") continue;
         kmpFiles++;
@@ -2073,7 +2189,6 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
             continue;
         }
         for (const auto& inst : insts) {
-            if (named && !matchesWant(inst.name) && !matchesWant(fileStem(path))) continue;
             auto zones = zonesFromKmp(inst, loaded);
             int mapped = 0;
             for (const auto& z : zones)
@@ -2420,6 +2535,7 @@ int Engine::listPa4xCatalog(const char* folder, char* report, int reportLen) {
         size_t dataOff = 0;
         return korfStyleIndex(bytes.data(), bytes.size(), dataOff, names);
     };
+    bool sawKmpSound = false;
     for (const auto& path : files) {
         const std::string ext = upperExt(path);
         if (ext == ".KMP") {
@@ -2427,15 +2543,20 @@ int Engine::listPa4xCatalog(const char* folder, char* report, int reportLen) {
             if (!readFileBytes(path.c_str(), bytes)) continue;
             std::vector<KmpInst> insts;
             parseKmpBytes(bytes.data(), bytes.size(), insts);
-            for (const auto& inst : insts)
-                if (!inst.name.empty() && !isGenericBankName(inst.name)) push("sound", inst.name, path);
+            const int before = (int)items.size();
+            for (const auto& inst : insts) {
+                const std::string group = instrumentGroup(inst.name);
+                if (!group.empty() && !isGenericBankName(group)) push("sound", group, path);
+            }
             if (insts.empty()) {
                 std::vector<std::string> names;
                 parseKmpCatalogNames(bytes.data(), bytes.size(), names);
-                for (const auto& n : names) push("sound", n, path);
+                for (const auto& n : names) {
+                    const std::string group = instrumentGroup(n);
+                    if (!isGenericBankName(group)) push("sound", group, path);
+                }
             }
-        } else if (ext == ".WAV" || ext == ".KSF") {
-            if (!isGenericBankName(fileStem(path))) push("sound", fileStem(path), path);
+            if ((int)items.size() > before) sawKmpSound = true;
         } else if (ext == ".STY" || ext == ".STG" || ext == ".MID" || ext == ".SMF" || ext == ".PAD") {
             const char* kind = ext == ".PAD" ? "pad" : "style";
             std::vector<uint8_t> bytes;
@@ -2452,6 +2573,13 @@ int Engine::listPa4xCatalog(const char* folder, char* report, int reportLen) {
             } else if (ext == ".MID" || ext == ".SMF" || !isGenericBankName(fileStem(path))) {
                 push(kind, fileStem(path), path);
             }
+        }
+    }
+    if (!sawKmpSound) {
+        for (const auto& path : files) {
+            const std::string ext = upperExt(path);
+            if (ext != ".WAV" && ext != ".KSF") continue;
+            if (!isGenericBankName(fileStem(path))) push("sound", instrumentGroup(fileStem(path)), path);
         }
     }
     const std::string cacheDir = root.empty() ? std::string() : decodedCacheDir(root);

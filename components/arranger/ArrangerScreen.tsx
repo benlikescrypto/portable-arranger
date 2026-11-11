@@ -158,7 +158,13 @@ export function ArrangerScreen() {
               activeId={typeof activeSoundId === "number" ? activeSoundId : s.upper1}
               onSelect={(id) => vm.selectSound(id, soundPart)}
               onClose={closePicker}
-              emptyHint="Import a SET to fill the User squares. Tap a gray square to load that sound."
+              emptyHint={
+                s.sounds.some((item) => (item.source ?? "FACTORY").toUpperCase() !== "FACTORY")
+                  ? "Tap a gray User square to load that sound."
+                  : s.setName
+                    ? `No User sound names from ${s.setName}. Import the SET again.`
+                    : "Import a PA4X SET. User sounds show here, gray until you tap one."
+              }
             />
           ) : picker === "style" ? (
             <StyleSelect
