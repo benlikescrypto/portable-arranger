@@ -1,4 +1,4 @@
-import { useRef } from "react"
+import { useRef, useState } from "react"
 import { StyleSheet, Text, View } from "react-native"
 
 import { Pa } from "@/constants/theme"
@@ -13,13 +13,17 @@ type Props = {
 
 export function VolumeFader({ label, value, onChange }: Props) {
   const height = useRef(1)
+  const [trackH, setTrackH] = useState(0)
   const trackTop = useRef(0)
-  // The track spans 0..MAX (the fill is drawn on that scale), so the cap stays under the finger.
+  // The cap centre travels from CAP_H/2 to height-CAP_H/2 over 0..MAX, so it stays under the finger.
   const setFromPageY = (pageY: number) => {
-    const y = pageY - trackTop.current
-    const next = (1 - y / height.current) * MAX
+    const fromBottom = height.current - (pageY - trackTop.current) - CAP_H / 2
+    const next = (fromBottom / Math.max(1, height.current - CAP_H)) * MAX
     onChange(Math.round(Math.max(0, Math.min(MAX, next)) * 100) / 100)
   }
+
+  const pct = Math.max(0, Math.min(1, value / MAX))
+  const travel = Math.max(0, trackH - CAP_H)
 
   return (
     <View style={styles.wrap}>
@@ -28,6 +32,7 @@ export function VolumeFader({ label, value, onChange }: Props) {
         style={styles.track}
         onLayout={(event) => {
           height.current = Math.max(1, event.nativeEvent.layout.height)
+          setTrackH(event.nativeEvent.layout.height)
         }}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
@@ -41,36 +46,58 @@ export function VolumeFader({ label, value, onChange }: Props) {
         }}
         onResponderMove={(event) => setFromPageY(event.nativeEvent.pageY)}
       >
-        <View pointerEvents="none" style={[styles.fill, { height: `${Math.min(100, (value / MAX) * 100)}%` }]} />
-        <View pointerEvents="none" style={[styles.cap, { bottom: `${Math.min(96, (value / MAX) * 100)}%` }]} />
+        <View pointerEvents="none" style={styles.slot}>
+          <View style={[styles.fill, { height: `${pct * 100}%` }]} />
+        </View>
+        {/* Unity (100) mark */}
+        <View pointerEvents="none" style={[styles.unity, { bottom: CAP_H / 2 + travel / MAX }]} />
+        <View pointerEvents="none" style={[styles.cap, { bottom: pct * travel }]}>
+          <View style={styles.capLine} />
+        </View>
       </View>
       <Text style={styles.label}>{label}</Text>
     </View>
   )
 }
 
+const CAP_H = 30
+
 const styles = StyleSheet.create({
   wrap: { alignItems: "center", gap: 6, flex: 1 },
-  value: { color: Pa.gold, fontSize: 12, fontWeight: "800" },
+  value: { color: Pa.gold, fontSize: 12, fontWeight: "800", fontVariant: ["tabular-nums"] },
   track: {
-    width: 44,
+    width: 56,
     flex: 1,
-    minHeight: 120,
-    borderRadius: 6,
+    minHeight: 56,
+    alignItems: "center",
+  },
+  slot: {
+    position: "absolute",
+    top: CAP_H / 2,
+    bottom: CAP_H / 2,
+    width: 6,
+    borderRadius: 3,
+    backgroundColor: "#050607",
     borderWidth: 1,
-    borderColor: Pa.stroke,
-    backgroundColor: "#101215",
+    borderColor: "#262B32",
     overflow: "hidden",
     justifyContent: "flex-end",
   },
   fill: { width: "100%", backgroundColor: Pa.orange },
+  unity: { position: "absolute", left: 8, right: 8, height: 1, backgroundColor: "#3A414A" },
   cap: {
     position: "absolute",
-    left: 2,
-    right: 2,
-    height: 10,
-    borderRadius: 2,
-    backgroundColor: Pa.text,
+    width: 44,
+    height: CAP_H,
+    borderRadius: 5,
+    backgroundColor: "#D9DDE2",
+    borderWidth: 1,
+    borderColor: "#F4F6F8",
+    borderBottomColor: "#8D949C",
+    borderBottomWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  label: { color: Pa.muted, fontSize: 10, fontWeight: "700", letterSpacing: 0.8, textAlign: "center", lineHeight: 13 },
+  capLine: { width: 30, height: 2, borderRadius: 1, backgroundColor: "#2A2F35" },
+  label: { color: Pa.muted, fontSize: 10, fontWeight: "800", letterSpacing: 1.2, textAlign: "center", lineHeight: 13 },
 })

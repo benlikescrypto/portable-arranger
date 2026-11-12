@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { Pressable, StyleSheet, Text, View } from "react-native"
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native"
 
 import { KeyboardIcon, PadIcon, PianoIcon, StringsIcon } from "@/components/arranger/lcdIcons"
 import { Lcd, noteName } from "@/constants/theme"
@@ -75,6 +75,8 @@ export function StylePlayHome({
   onAccVolume,
 }: Props) {
   const [tab, setTab] = useState<Tab>("home")
+  const { width, height } = useWindowDimensions()
+  const landscape = width > height
 
   return (
     <View style={styles.lcd}>
@@ -136,6 +138,8 @@ export function StylePlayHome({
               <SoundRow
                 name={upper1?.name ?? "Concert Grand"}
                 label="UP1"
+                stacked={!landscape}
+                accent={Lcd.up1}
                 on={true}
                 volume={mixer.keyboard}
                 icon={<PianoIcon />}
@@ -144,6 +148,8 @@ export function StylePlayHome({
               <SoundRow
                 name={upper2?.name ?? "Warm Pad"}
                 label="UP2"
+                stacked={!landscape}
+                accent={Lcd.up2}
                 on={upper2On}
                 volume={mixer.keyboard}
                 muted={!upper2On}
@@ -154,6 +160,8 @@ export function StylePlayHome({
               <SoundRow
                 name={upper3?.name ?? "Concert Strings"}
                 label="UP3"
+                stacked={!landscape}
+                accent={Lcd.up3}
                 on={upper3On}
                 volume={mixer.keyboard}
                 muted={!upper3On}
@@ -164,6 +172,8 @@ export function StylePlayHome({
               <SoundRow
                 name={lower?.name ?? "Cinematic Strings"}
                 label="LOW"
+                stacked={!landscape}
+                accent={Lcd.low}
                 on={lowerOn}
                 volume={mixer.keyboard}
                 backing={lowerOn}
@@ -174,7 +184,7 @@ export function StylePlayHome({
             </View>
           </View>
 
-          <View style={styles.stsRow}>
+          <View style={[styles.stsRow, landscape && styles.stsRowCompact]}>
             {stsPads.map((pad) => (
               <Pressable
                 key={pad.n}
@@ -184,7 +194,7 @@ export function StylePlayHome({
                 style={({ pressed }) => [styles.stsPad, sts === pad.n && styles.stsOn, pressed && styles.pressed]}
               >
                 <View style={styles.stsIcon}>
-                  <KeyboardIcon />
+                  <KeyboardIcon width={landscape ? 26 : 30} height={landscape ? 12 : 14} />
                   <Text style={styles.stsNum}>{pad.n}</Text>
                 </View>
                 <Text style={styles.stsName} numberOfLines={2}>
@@ -212,6 +222,7 @@ export function StylePlayHome({
             onPress={() => (item.id === "pad" ? onOpenPads() : setTab(item.id))}
             style={[styles.tab, tab === item.id && styles.tabOn]}
           >
+            {tab === item.id ? <View style={styles.tabBar} /> : null}
             <Text style={[styles.tabLabel, tab === item.id && styles.tabLabelOn]} numberOfLines={1}>
               {item.label}
             </Text>
@@ -254,11 +265,15 @@ function SoundRow({
   muted,
   backing,
   icon,
+  accent,
+  stacked,
   onPress,
   onMute,
 }: {
   name: string
   label: string
+  accent: string
+  stacked?: boolean
   on: boolean
   volume: number
   muted?: boolean
@@ -272,37 +287,44 @@ function SoundRow({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${label}, ${name}${muted ? ", muted" : backing ? ", backing" : ""}`}
-      style={({ pressed }) => [styles.soundRow, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.soundRow, pressed && styles.soundRowPressed]}
     >
-      <View style={styles.soundText}>
-        <Text style={[styles.soundName, !on && styles.soundOff]} numberOfLines={1}>
-          {name}
-        </Text>
-        {backing ? (
-          <Pressable onPress={onMute} hitSlop={6}>
-            <Text style={styles.backing}>BACKING</Text>
-          </Pressable>
-        ) : null}
+      <View style={[styles.accent, { backgroundColor: on ? accent : Lcd.line }]} />
+      <View style={[styles.soundMain, stacked && styles.soundMainStacked]}>
+        <View style={styles.soundText}>
+          <Text style={[styles.soundName, !on && styles.soundOff]} numberOfLines={stacked ? 2 : 1}>
+            {name}
+          </Text>
+          {backing ? (
+            <Pressable onPress={onMute} hitSlop={6}>
+              <Text style={styles.backing}>BACKING</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        <View style={styles.soundControls}>
+          {muted ? (
+            <Pressable onPress={onMute} hitSlop={8} style={styles.muteHit}>
+              <Text style={styles.mute}>MUTE</Text>
+            </Pressable>
+          ) : (
+            <VolumeTicks value={on ? volume : 0} color={accent} />
+          )}
+          <View style={styles.soundIcon}>{icon}</View>
+          <View style={[styles.partBadge, { borderColor: on ? accent : Lcd.line }]}>
+            <Text style={[styles.partLabel, { color: on ? accent : Lcd.dim }]}>{label}</Text>
+          </View>
+        </View>
       </View>
-      {muted ? (
-        <Pressable onPress={onMute} hitSlop={8} style={styles.muteHit}>
-          <Text style={styles.mute}>MUTE</Text>
-        </Pressable>
-      ) : (
-        <VolumeTicks value={on ? volume : 0} />
-      )}
-      <View style={styles.soundIcon}>{icon}</View>
-      <Text style={styles.partLabel}>{label}</Text>
     </Pressable>
   )
 }
 
-function VolumeTicks({ value }: { value: number }) {
+function VolumeTicks({ value, color }: { value: number; color: string }) {
   const lit = Math.round(Math.max(0, Math.min(1, value)) * 6)
   return (
     <View style={styles.ticks}>
       {Array.from({ length: 6 }).map((_, i) => (
-        <View key={i} style={[styles.tick, i < lit && styles.tickOn]} />
+        <View key={i} style={[styles.tick, i < lit && { backgroundColor: color }]} />
       ))}
     </View>
   )
@@ -391,112 +413,160 @@ const styles = StyleSheet.create({
   lcd: {
     flex: 1,
     backgroundColor: Lcd.bg,
-    borderRadius: 8,
+    borderRadius: 12,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#1A1D22",
+    borderColor: "#2A3038",
   },
   header: {
-    height: 28,
+    height: 30,
     backgroundColor: Lcd.header,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#A88A52",
   },
-  headerTitle: { color: Lcd.headerText, fontSize: 13, fontWeight: "700" },
-  headerKbd: { color: Lcd.headerText, fontSize: 12, fontWeight: "700" },
-  body: { flex: 1 },
-  columns: { flex: 1, flexDirection: "row" },
-  left: { flex: 1.12, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: Lcd.line },
+  headerTitle: { color: Lcd.headerText, fontSize: 13, fontWeight: "800", letterSpacing: 0.3 },
+  headerKbd: { color: Lcd.headerText, fontSize: 12, fontWeight: "800" },
+  body: { flex: 1, minHeight: 0 },
+  columns: { flex: 1, minHeight: 0, flexDirection: "row" },
+  left: { flex: 1.12, borderRightWidth: 1, borderRightColor: Lcd.line },
   right: { flex: 1 },
-  styleRow: { flex: 1.15, flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Lcd.line },
-  sideLabel: { width: 18, alignItems: "center", justifyContent: "center", paddingVertical: 4 },
-  sideLetter: { color: Lcd.muted, fontSize: 8, fontWeight: "800", lineHeight: 10 },
-  styleBlock: { flex: 1, paddingHorizontal: 8, paddingVertical: 6, justifyContent: "center" },
-  styleName: { color: Lcd.text, fontSize: 20, fontWeight: "700", letterSpacing: -0.3 },
-  meta: { color: Lcd.muted, fontSize: 11, fontWeight: "600", marginTop: 2 },
+  // Rows share the column height so nothing is clipped in landscape.
+  styleRow: { flex: 1.7, minHeight: 64, flexDirection: "row", borderBottomWidth: 1, borderBottomColor: Lcd.line },
+  sideLabel: {
+    width: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 4,
+    backgroundColor: Lcd.bgDeep,
+  },
+  sideLetter: { color: Lcd.dim, fontSize: 8, fontWeight: "900", lineHeight: 10 },
+  styleBlock: { flex: 1, paddingHorizontal: 10, paddingVertical: 6, justifyContent: "center", gap: 2 },
+  styleName: { color: Lcd.text, fontSize: 22, fontWeight: "800", letterSpacing: -0.4 },
+  meta: { color: Lcd.muted, fontSize: 11, fontWeight: "600" },
   meterRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4, gap: 8 },
   tempoBox: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: Lcd.orange,
-    paddingHorizontal: 6,
+    borderRadius: 6,
+    backgroundColor: Lcd.bgDeep,
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    gap: 3,
+    gap: 4,
   },
-  tempoMark: { color: Lcd.text, fontSize: 12, fontWeight: "700" },
-  tempoEq: { color: Lcd.text, fontSize: 11 },
-  tempoValue: { color: Lcd.text, fontSize: 16, fontWeight: "800", minWidth: 28, textAlign: "right" },
-  songRow: { flexDirection: "row", height: 52, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Lcd.line },
+  tempoMark: { color: Lcd.text, fontSize: 13, fontWeight: "700" },
+  tempoEq: { color: Lcd.muted, fontSize: 11 },
+  tempoValue: {
+    color: Lcd.text,
+    fontSize: 17,
+    fontWeight: "900",
+    minWidth: 30,
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
+  },
+  songRow: { flex: 1, minHeight: 36, maxHeight: 60, flexDirection: "row", borderBottomWidth: 1, borderBottomColor: Lcd.line },
   songPad: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     gap: 8,
-    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: 1,
     borderRightColor: Lcd.line,
   },
-  songBadge: { width: 22, alignItems: "center" },
-  songP: { color: Lcd.green, fontSize: 11, fontWeight: "800", lineHeight: 12 },
-  songN: { color: Lcd.green, fontSize: 11, fontWeight: "800", lineHeight: 12 },
+  songBadge: {
+    width: 20,
+    paddingVertical: 2,
+    alignItems: "center",
+    borderRadius: 4,
+    backgroundColor: Lcd.bgDeep,
+  },
+  songP: { color: Lcd.green, fontSize: 10, fontWeight: "900", lineHeight: 11 },
+  songN: { color: Lcd.green, fontSize: 10, fontWeight: "900", lineHeight: 11 },
   songLabel: { color: Lcd.muted, fontSize: 12, fontWeight: "600" },
-  kbdRow: { height: 52, flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Lcd.line },
-  kbdBlock: { flex: 1, justifyContent: "center", paddingHorizontal: 8 },
-  kbdName: { color: Lcd.green, fontSize: 15, fontWeight: "700" },
-  kbdSub: { color: Lcd.dim, fontSize: 11, marginTop: 1 },
+  kbdRow: { flex: 1, minHeight: 36, maxHeight: 60, flexDirection: "row" },
+  kbdBlock: { flex: 1, justifyContent: "center", paddingHorizontal: 10 },
+  kbdName: { color: Lcd.green, fontSize: 15, fontWeight: "800" },
+  kbdSub: { color: Lcd.dim, fontSize: 10, fontWeight: "600", marginTop: 1 },
   soundRow: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    gap: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingRight: 8,
+    gap: 8,
+    borderBottomWidth: 1,
     borderBottomColor: Lcd.line,
   },
-  soundText: { flex: 1, minWidth: 0 },
-  soundName: { color: Lcd.text, fontSize: 13, fontWeight: "700" },
-  soundOff: { color: Lcd.dim },
-  backing: { color: Lcd.red, fontSize: 9, fontWeight: "800", letterSpacing: 0.6, marginTop: 1 },
-  muteHit: { paddingHorizontal: 2 },
-  mute: { color: Lcd.mute, fontSize: 9, fontWeight: "800", letterSpacing: 0.4 },
-  ticks: { width: 8, height: 22, justifyContent: "flex-end", gap: 1 },
-  tick: { height: 2, backgroundColor: Lcd.line },
-  tickOn: { backgroundColor: Lcd.text },
+  soundMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
+  soundMainStacked: { flexDirection: "column", alignItems: "stretch", justifyContent: "center", gap: 8 },
+  soundControls: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 },
+  soundRowPressed: { backgroundColor: Lcd.cell },
+  accent: { width: 4, alignSelf: "stretch" },
+  soundText: { flex: 1, minWidth: 0, paddingLeft: 4 },
+  soundName: { color: Lcd.text, fontSize: 14, fontWeight: "800" },
+  soundOff: { color: Lcd.dim, fontWeight: "600" },
+  backing: { color: Lcd.red, fontSize: 9, fontWeight: "900", letterSpacing: 0.8, marginTop: 1 },
+  muteHit: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: Lcd.bgDeep,
+  },
+  mute: { color: Lcd.mute, fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
+  ticks: { width: 8, height: 22, justifyContent: "flex-end", gap: 1.5 },
+  tick: { height: 2, borderRadius: 1, backgroundColor: Lcd.line },
   soundIcon: { width: 28, alignItems: "center" },
-  partLabel: { width: 24, color: Lcd.muted, fontSize: 9, fontWeight: "800", textAlign: "right" },
+  partBadge: {
+    minWidth: 32,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  partLabel: { fontSize: 9, fontWeight: "900", letterSpacing: 0.4 },
   stsRow: {
-    height: 72,
+    height: 74,
     flexDirection: "row",
-    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+    padding: 6,
+    backgroundColor: Lcd.bgDeep,
+    borderTopWidth: 1,
     borderTopColor: Lcd.line,
   },
+  stsRowCompact: { height: 56, padding: 5, gap: 5 },
   stsPad: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: Lcd.line,
-    backgroundColor: Lcd.bgDeep,
+    borderRadius: 8,
+    backgroundColor: Lcd.bg,
+    borderWidth: 1,
+    borderColor: Lcd.line,
+    borderBottomWidth: 3,
+    borderBottomColor: "#2F3841",
   },
-  stsOn: { backgroundColor: Lcd.cell },
+  stsOn: { backgroundColor: Lcd.cell, borderColor: Lcd.catOn, borderBottomColor: Lcd.catOn },
   stsIcon: { flexDirection: "row", alignItems: "flex-end", gap: 3 },
-  stsNum: { color: Lcd.text, fontSize: 11, fontWeight: "800" },
+  stsNum: { color: Lcd.text, fontSize: 11, fontWeight: "900" },
   stsName: { color: Lcd.text, fontSize: 10, fontWeight: "700", textAlign: "center", paddingHorizontal: 4 },
   tabs: {
-    height: 28,
+    height: 30,
     flexDirection: "row",
-    backgroundColor: Lcd.bgDeep,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    backgroundColor: "#3A444E",
+    borderTopWidth: 1,
     borderTopColor: Lcd.line,
   },
   tab: { flex: 1, alignItems: "center", justifyContent: "center" },
-  tabOn: { backgroundColor: Lcd.cell },
-  tabLabel: { color: Lcd.dim, fontSize: 9, fontWeight: "700" },
-  tabLabelOn: { color: Lcd.text },
+  tabOn: { backgroundColor: Lcd.bgDeep },
+  tabBar: { position: "absolute", top: 0, left: 10, right: 10, height: 2, borderRadius: 1, backgroundColor: Lcd.tabOn },
+  tabLabel: { color: Lcd.dim, fontSize: 10, fontWeight: "700" },
+  tabLabelOn: { color: Lcd.text, fontWeight: "800" },
   page: { flex: 1, padding: 16, justifyContent: "center", gap: 12 },
   pageTitle: { color: Lcd.text, fontSize: 18, fontWeight: "700" },
   pageHint: { color: Lcd.muted, fontSize: 13, fontWeight: "600" },

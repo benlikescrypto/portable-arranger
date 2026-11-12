@@ -39,7 +39,8 @@ export function ArrangerScreen() {
   const vm = useArranger()
   const s = vm.state
   const insets = useSafeAreaInsets()
-  const { width } = useWindowDimensions()
+  const { width, height } = useWindowDimensions()
+  const landscape = width > height
   const [picker, setPicker] = useState<"sound" | "style" | "pad" | null>(null)
   const [soundPart, setSoundPart] = useState<0 | 1 | 2 | 3>(0)
   const [page, setPage] = useState(0)
@@ -106,6 +107,17 @@ export function ArrangerScreen() {
 
   const activeSoundId = soundPart === 1 ? s.upper2 : soundPart === 2 ? s.upper3 : soundPart === 3 ? s.lower : s.upper1
 
+  // In landscape the faders run the full slide height beside the keyboard; in
+  // portrait they flank the Start button.
+  const styleFader = (
+    <VolumeFader
+      label="STYLE"
+      value={Math.max(s.mixer.drums, s.mixer.bass, s.mixer.acc, s.mixer.pad)}
+      onChange={vm.setStyleVolume}
+    />
+  )
+  const soundFader = <VolumeFader label="SOUND" value={s.mixer.keyboard} onChange={(v) => vm.setMixer(0, v)} />
+
   if (!s.arrangerReady) return null
 
   return (
@@ -122,7 +134,14 @@ export function ArrangerScreen() {
     >
       <View style={styles.bezelTop}>
         <Text style={styles.brand}>ArrangerBox</Text>
-        <Pressable onPress={vm.importSet} hitSlop={10} style={({ pressed }) => pressed && styles.pressed}>
+        <Text style={styles.status} numberOfLines={1}>
+          {s.importMessage}
+        </Text>
+        <Pressable
+          onPress={vm.importSet}
+          hitSlop={10}
+          style={({ pressed }) => [styles.importBtn, pressed && styles.pressed]}
+        >
           <Text style={styles.importLabel}>Import</Text>
         </Pressable>
       </View>
@@ -131,10 +150,6 @@ export function ArrangerScreen() {
         <View style={styles.progressTrack}>
           <View style={[styles.progressFill, { width: `${Math.round(s.importProgress * 100)}%` }]} />
         </View>
-      ) : s.importMessage ? (
-        <Text style={styles.status} numberOfLines={1}>
-          {s.importMessage}
-        </Text>
       ) : null}
 
       <ScrollView
@@ -211,37 +226,46 @@ export function ArrangerScreen() {
           )}
         </View>
 
-        <View style={[styles.slide, styles.playSlide, { width: slideW }]}>
-          <Text style={styles.playKicker} numberOfLines={1}>
-            {style?.name ?? "Style"}
-          </Text>
-          <View style={styles.playRow}>
-            <View style={styles.playFader}>
-              <VolumeFader
-                label="STYLE"
-                value={Math.max(s.mixer.drums, s.mixer.bass, s.mixer.acc, s.mixer.pad)}
-                onChange={vm.setStyleVolume}
-              />
+        <View style={[styles.slide, styles.playSlide, landscape && styles.playSlideWide, { width: slideW }]}>
+          {landscape ? <View style={styles.sideFader}>{styleFader}</View> : null}
+          <View style={styles.playMain}>
+            <View style={styles.playPanel}>
+              <View style={styles.playHeader}>
+                <Text style={styles.playStyle} numberOfLines={1}>
+                  {style?.name ?? "No Style"}
+                </Text>
+                <Text style={styles.playTempo}>{`♩ = ${Math.round(s.tempo)}`}</Text>
+              </View>
+              <View style={styles.playRow}>
+                {landscape ? null : <View style={styles.playFader}>{styleFader}</View>}
+                <View style={styles.playCenter}>
+                  <Pressable
+                    onPress={vm.toggleStart}
+                    accessibilityRole="button"
+                    accessibilityLabel={s.playing ? "Stop style" : "Start style"}
+                    style={({ pressed }) => [
+                      styles.start,
+                      landscape && styles.startCompact,
+                      s.playing ? styles.startOn : null,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={[styles.startLed, s.playing && styles.startLedOn]} />
+                    <Text style={[styles.startLabel, landscape && styles.startLabelCompact]}>
+                      {s.playing ? "STOP" : "START"}
+                    </Text>
+                  </Pressable>
+                </View>
+                {landscape ? null : <View style={styles.playFader}>{soundFader}</View>}
+              </View>
             </View>
-            <Pressable
-              onPress={vm.toggleStart}
-              accessibilityRole="button"
-              accessibilityLabel={s.playing ? "Stop style" : "Start style"}
-              style={({ pressed }) => [
-                styles.start,
-                { backgroundColor: s.playing ? Pa.red : Pa.text },
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={[styles.startLabel, { color: s.playing ? Pa.text : Pa.bg }]}>
-                {s.playing ? "Stop" : "Start"}
-              </Text>
-            </Pressable>
-            <View style={styles.playFader}>
-              <VolumeFader label="SOUND" value={s.mixer.keyboard} onChange={(v) => vm.setMixer(0, v)} />
-            </View>
+            <MiniKeyboard
+              onNoteOn={vm.playNote}
+              onNoteOff={vm.releaseNote}
+              style={landscape ? styles.keysLandscape : styles.keysPortrait}
+            />
           </View>
-          <MiniKeyboard onNoteOn={vm.playNote} onNoteOff={vm.releaseNote} />
+          {landscape ? <View style={styles.sideFader}>{soundFader}</View> : null}
         </View>
       </ScrollView>
 
@@ -275,19 +299,28 @@ const styles = StyleSheet.create({
   bezelTop: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 12,
     marginBottom: 8,
     paddingHorizontal: 4,
+    minHeight: 30,
   },
   brand: {
     color: Pa.text,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "800",
-    letterSpacing: 1.4,
+    letterSpacing: 2.2,
     textTransform: "uppercase",
   },
-  importLabel: { color: Pa.muted, fontSize: 15, fontWeight: "600" },
-  status: { color: Pa.dim, fontSize: 12, marginBottom: 8, paddingHorizontal: 4 },
+  status: { flex: 1, color: Pa.dim, fontSize: 11, fontWeight: "600", textAlign: "center" },
+  importBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Pa.stroke,
+    backgroundColor: Pa.bgRaised,
+  },
+  importLabel: { color: Pa.text, fontSize: 12, fontWeight: "700", letterSpacing: 0.4 },
   progressTrack: {
     height: 3,
     borderRadius: 2,
@@ -300,43 +333,80 @@ const styles = StyleSheet.create({
   pagerContent: { flexGrow: 1 },
   slide: {
     alignSelf: "stretch",
-    height: 210,
-    minHeight: 160,
-    flexShrink: 1,
     flex: 1,
     paddingBottom: 4,
   },
-  playSlide: { alignItems: "center", justifyContent: "center", paddingHorizontal: 6 },
-  playRow: {
+  playSlide: { gap: 10 },
+  playSlideWide: { flexDirection: "row" },
+  playMain: { flex: 1, gap: 10 },
+  sideFader: {
+    width: 76,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Pa.stroke,
+    backgroundColor: Pa.panel,
+  },
+  playPanel: {
+    flex: 1,
+    minHeight: 0,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Pa.stroke,
+    backgroundColor: Pa.panel,
+    overflow: "hidden",
+  },
+  playHeader: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 18,
-    alignSelf: "stretch",
-    height: 210,
-    minHeight: 160,
-    flexShrink: 1,
-    marginBottom: 18,
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 14,
+    height: 32,
+    backgroundColor: Lcd.header,
   },
-  playFader: { width: 64, alignSelf: "stretch" },
-  playKicker: {
-    color: Pa.muted,
-    fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: 0.4,
-    marginBottom: 22,
-    textAlign: "center",
-    paddingHorizontal: 12,
+  playStyle: { flex: 1, color: Lcd.headerText, fontSize: 13, fontWeight: "800" },
+  playTempo: { color: Lcd.headerText, fontSize: 13, fontWeight: "800" },
+  playRow: {
+    flex: 1,
+    minHeight: 0,
+    flexDirection: "row",
+    alignItems: "stretch",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 14,
   },
+  playFader: { width: 64 },
+  playCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   start: {
-    minWidth: 160,
-    height: 88,
-    paddingHorizontal: 32,
-    borderRadius: 44,
+    width: "100%",
+    maxWidth: 260,
+    aspectRatio: 1.35,
+    maxHeight: "100%",
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
+    gap: 12,
+    backgroundColor: Pa.panelAlt,
+    borderWidth: 1,
+    borderColor: Pa.stroke,
+    borderBottomWidth: 4,
+    borderBottomColor: "#0A0B0D",
   },
-  startLabel: { fontSize: 28, fontWeight: "800", letterSpacing: 0.2 },
+  startCompact: { aspectRatio: 1.9, gap: 8 },
+  startOn: { backgroundColor: "#2A1513", borderColor: Pa.red, borderBottomColor: "#5A1E19" },
+  startLed: { width: 34, height: 6, borderRadius: 3, backgroundColor: "#3A2420" },
+  startLedOn: {
+    backgroundColor: Pa.red,
+    shadowColor: Pa.red,
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  startLabel: { color: Pa.text, fontSize: 30, fontWeight: "900", letterSpacing: 3 },
+  startLabelCompact: { fontSize: 24 },
+  keysPortrait: { flex: 0.62 },
+  keysLandscape: { flex: 1.15 },
   dots: {
     flexDirection: "row",
     justifyContent: "center",

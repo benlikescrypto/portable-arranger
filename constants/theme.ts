@@ -36,6 +36,11 @@ export const Lcd = {
   padOn: "#E25A5A",
   catOn: "#3BB7C4",
   tabOn: "#E8C45A",
+  /** Accent per keyboard part, used on the part rows. */
+  up1: "#F2B35B",
+  up2: "#7FB4FF",
+  up3: "#C79BFF",
+  low: "#6FD9A8",
 } as const
 
 export const NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"] as const
