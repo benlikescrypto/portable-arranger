@@ -1,6 +1,6 @@
 import type { SoundItem } from "@/lib/types"
 
-export const SOUND_BANKS = ["Factory", "Legacy", "GM/XG", "User"] as const
+export const SOUND_BANKS = ["Factory", "User"] as const
 export type SoundBank = (typeof SOUND_BANKS)[number]
 
 export const SOUND_CATS_LEFT = ["Piano", "E. Piano", "Guitar", "Organ", "Strings & Vocal", "Accordion"] as const

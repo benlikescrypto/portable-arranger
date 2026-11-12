@@ -91,7 +91,6 @@ export function BankPadSelect({
 
   const pickCategory = (next: string) => {
     setCategory(next)
-    if (bank === "Legacy" || bank === "GM/XG") setBank("Factory")
   }
 
   return (
@@ -195,9 +194,7 @@ export function BankPadSelect({
                 </Pressable>
               ))}
             </View>
-            {bank === "Legacy" || bank === "GM/XG" ? (
-              <Text style={styles.emptyBank}>No {bank} bank in ArrangerBox.</Text>
-            ) : bank === "User" && categoryItems.length === 0 && emptyHint ? (
+            {bank === "User" && categoryItems.length === 0 && emptyHint ? (
               <Text style={styles.emptyBank}>{emptyHint}</Text>
             ) : null}
           </View>
