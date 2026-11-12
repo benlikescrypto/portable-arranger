@@ -1099,21 +1099,59 @@ int findSample(const std::vector<LoadedSample>& samples, const std::string& key)
 }  // namespace
 
 int Engine::addLeveledUserPatch(Patch p) {
-    // SET PCM is often stored well below full scale, so User sounds came out far
-    // quieter than factory ones. One gain for the whole multisample brings its
-    // loudest sample to ~0.9 peak without changing the balance between zones.
+    // 1) Even out the keys. SET samples are stored at very different levels (in a
+    //    real KApro cello neighbouring keys differ by 4x); the Pa evens them out with
+    //    per-zone levels in the Sound program, which is unpublished. Bring each zone
+    //    toward the multisample's median loudness, at most +/-12 dB so natural
+    //    register differences survive.
+    // 2) Then one gain for the whole sound so its loudest zone peaks near 0.9: SET
+    //    PCM is often far below full scale (User sounds were much quieter than factory).
     constexpr float kTargetPeak = 0.9f;
-    constexpr float kMaxBoost = 16.0f;  // +24 dB; more would just raise noise
-    float peak = 0;
-    std::vector<int> seen;
+    constexpr float kMaxBoost = 16.0f;  // +24 dB overall; more would just raise noise
+    constexpr float kMaxZoneTrim = 4.0f;  // +/-12 dB per zone
+    struct Level {
+        int sample;
+        float rms, peak;
+    };
+    std::vector<Level> levels;
+    auto levelOf = [&](int idx) -> const Level* {
+        for (const auto& l : levels)
+            if (l.sample == idx) return &l;
+        const Sample& s = samples[(size_t)idx];
+        const int ch = std::max(1, s.channels);
+        // Loudness over what you hear while holding a key: the first ~1.5 s.
+        const size_t body = std::min(s.data.size(), (size_t)(1.5f * (float)std::max(8000, s.sampleRate)) * (size_t)ch);
+        double q = 0;
+        float pk = 0;
+        for (size_t i = 0; i < s.data.size(); ++i) {
+            const float x = s.data[i];
+            pk = std::max(pk, std::fabs(x));
+            if (i < body) q += (double)x * x;
+        }
+        levels.push_back({idx, body ? (float)std::sqrt(q / (double)body) : 0.0f, pk});
+        return &levels.back();
+    };
+    std::vector<float> rmsList;
     for (const Zone& z : p.zones) {
         if (z.sampleIndex < 0 || z.sampleIndex >= (int)samples.size()) continue;
-        if (std::find(seen.begin(), seen.end(), z.sampleIndex) != seen.end()) continue;
-        seen.push_back(z.sampleIndex);
-        for (float x : samples[(size_t)z.sampleIndex].data) peak = std::max(peak, std::fabs(x));
+        const size_t before = levels.size();
+        const Level* l = levelOf(z.sampleIndex);
+        if (levels.size() > before && l->rms > 1e-5f) rmsList.push_back(l->rms);
     }
-    if (peak > 1e-4f) {
-        const float g = std::max(0.5f, std::min(kMaxBoost, kTargetPeak / peak));
+    float median = 0;
+    if (!rmsList.empty()) {
+        std::nth_element(rmsList.begin(), rmsList.begin() + rmsList.size() / 2, rmsList.end());
+        median = rmsList[rmsList.size() / 2];
+    }
+    float peakAfter = 0;
+    for (Zone& z : p.zones) {
+        if (z.sampleIndex < 0 || z.sampleIndex >= (int)samples.size()) continue;
+        const Level* l = levelOf(z.sampleIndex);
+        if (median > 0 && l->rms > 1e-5f) z.gain *= std::max(1.0f / kMaxZoneTrim, std::min(kMaxZoneTrim, median / l->rms));
+        peakAfter = std::max(peakAfter, l->peak * z.gain);
+    }
+    if (peakAfter > 1e-4f) {
+        const float g = std::max(0.5f, std::min(kMaxBoost, kTargetPeak / peakAfter));
         for (Zone& z : p.zones) z.gain *= g;
     }
     return addSampledInstrument(p);
@@ -1266,6 +1304,11 @@ void parseKmpBytes(const uint8_t* b, size_t n, std::vector<KmpInst>& out) {
     if (!out.empty()) return;
 
     std::map<std::string, KmpInst> grouped;
+    struct Run {
+        size_t lastOff = 0;
+        int blocks = 0;
+    };
+    std::map<std::string, Run> runs;
     for (size_t i = 0; i + 32 <= n; ++i) {
         if (b[i] < 32 || b[i] >= 127 || !std::isalpha((unsigned char)b[i])) continue;
         if (i > 0 && (std::isalnum((unsigned char)b[i - 1]) || b[i - 1] == ' ' || b[i - 1] == '-')) continue;
@@ -1296,8 +1339,21 @@ void parseKmpBytes(const uint8_t* b, size_t n, std::vector<KmpInst>& out) {
             if (name[name.size() - 2] == '-' && side == 'L') z.pan = 16;
             else if (name[name.size() - 2] == '-' && side == 'R') z.pan = 112;
         }
-        KmpInst& inst = grouped[name];
-        if (inst.name.empty()) inst.name = name;
+        // Two different multisamples can share a 16-char name (a real KApro SET has a
+        // sustain and an expressive "KApro Solo Cel-L"). Each is a contiguous run of
+        // records; a far-away record with the same name starts a new multisample.
+        // Merging them interleaved the two on alternate keys (10-20 dB jumps).
+        auto& run = runs[name];
+        if (run.blocks == 0 || i - run.lastOff > 256) run.blocks++;
+        run.lastOff = i;
+        std::string key = name;
+        if (run.blocks > 1) {
+            const std::string tag = " #" + std::to_string(run.blocks);
+            const bool sided = name.size() >= 2 && name[name.size() - 2] == '-';
+            key = sided ? name.substr(0, name.size() - 2) + tag + name.substr(name.size() - 2) : name + tag;
+        }
+        KmpInst& inst = grouped[key];
+        if (inst.name.empty()) inst.name = key;
         inst.regions.push_back(z);
         i += 24;
     }
@@ -1445,7 +1501,7 @@ bool decodedCacheReady(const std::string& dir, int* sampleCount, int* patchCount
     if (!in) return false;
     std::string magic, ver;
     in >> magic >> ver;
-    if (magic != "ARRANGERBOX_CACHE" || ver != "2") return false;  // 2: leaky DPCM decode (v1 caches have drifted audio)
+    if (magic != "ARRANGERBOX_CACHE" || ver != "3") return false;  // 3: 8-bit linear decode (v1/v2 caches have wrong levels)
     std::string tag;
     int nS = 0, nP = 0;
     in >> tag >> nS;
@@ -2106,7 +2162,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         }
         FILE* mf = std::fopen((cacheDir + "/manifest.txt").c_str(), "wb");
         if (!mf) return;
-        std::fprintf(mf, "ARRANGERBOX_CACHE 2\nS %d\n", (int)loaded.size());
+        std::fprintf(mf, "ARRANGERBOX_CACHE 3\nS %d\n", (int)loaded.size());
         for (int i = 0; i < (int)loaded.size(); ++i) {
             char wavName[32];
             std::snprintf(wavName, sizeof(wavName), "s%04d.wav", i);

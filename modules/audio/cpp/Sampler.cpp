@@ -200,13 +200,9 @@ static std::vector<float> decode24(const uint8_t* p, size_t n, int frames, bool 
     return o;
 }
 
-// Korg's compressed PCM is 8-bit deltas, but a plain running sum drifts far past
-// 16-bit range (we don't know Korg's step table). Clamping that drift pinned whole
-// samples at full-scale DC, which the output DC blocker then removed: User sounds
-// came out ~25 dB too quiet. Integrating also boosts lows hugely, so any bias in the
-// codes becomes a large sub-audio wander that hid the real level from the loader.
-// One fused pass: leaky integrator, then two one-pole ~20 Hz high-passes (keeps bass
-// fundamentals, removes the wander). Patch level is set later by the loader.
+// 4-bit delta (nibble) data: a plain running sum can drift, so integrate with a
+// leak and two one-pole ~20 Hz high-passes in one pass (keeps bass fundamentals,
+// removes sub-audio wander). Patch level is set later by the loader.
 struct DeltaDecoder {
     static constexpr float kLeak = 0.999f;
     static constexpr float kHp = 0.99738f;  // 1 - 2*pi*20/48000
@@ -229,16 +225,6 @@ struct DeltaDecoder {
         for (float& x : o) x *= g;
     }
 };
-
-static std::vector<float> decodeDpcm(const uint8_t* p, size_t n, int frames, int scale) {
-    const int count = std::min(frames > 0 ? frames : (int)n, (int)n);
-    std::vector<float> o((size_t)std::max(0, count));
-    DeltaDecoder d;
-    const float sc = (float)scale;
-    for (int i = 0; i < count; ++i) o[(size_t)i] = d.step((float)(int8_t)p[i] * sc);
-    d.fit(o);
-    return o;
-}
 
 static std::vector<float> decodeDpcm4(const uint8_t* p, size_t n, int frames) {
     const int count = frames > 0 ? frames : (int)n * 2;
@@ -316,8 +302,11 @@ static std::vector<float> decodeBest(const uint8_t* pcm, size_t pcmLen, int bits
     const size_t expect = (size_t)std::max(1, frames) * (size_t)std::max(1, bits / 8);
     const bool sizeLooksRaw = frames <= 0 || pcmLen >= expect * 9 / 10;
     if (!compressed || sizeLooksRaw) return decodeUncompressed(pcm, pcmLen, bits, frames);
-    for (int scale : {1, 16, 256}) {
-        auto got = decodeDpcm(pcm, pcmLen, frames, scale);
+    // One byte per frame: Korg compressed sample data is signed 8-bit linear PCM.
+    // (Decoding it as deltas drifted far past full scale and coloured every sample
+    // by pitch: keys jumped by 10-20 dB between neighbouring samples.)
+    if (frames > 0 && pcmLen >= (size_t)frames * 9 / 10) {
+        auto got = decode8s(pcm, pcmLen, frames);
         if (pcmScore(got) > 1e-8f) return got;
     }
     {

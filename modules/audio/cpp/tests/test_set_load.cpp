@@ -473,6 +473,37 @@ int main() {
                 }
             }
         }
+        // Neighbouring keys must play at similar levels. These sounds jumped 13-23 dB
+        // between keys: samples decoded as deltas, zones not level-matched, and two
+        // same-named multisamples merged onto alternate keys.
+        for (const char* group : {"KApro Solo Cel", "KApro Legato O", "KApro Solo Str"}) {
+            auto eng = std::make_unique<pa::Engine>();
+            eng->prepare(48000.0f);
+            eng->setSynchro(false);
+            for (int fx = 0; fx < 3; ++fx) eng->setFx(fx, 0.0f);
+            const int gid = eng->loadPa4xNamed(realSet, "sound", group, report, (int)sizeof(report));
+            if (gid < 0) continue;
+            eng->setPartProgram(0, gid);
+            std::vector<float> buf(14400 * 2), tail(48000 * 2);
+            double prevDb = 0, worst = 0;
+            int worstKey = 0;
+            for (int note = 36; note <= 96; ++note) {
+                eng->noteOn(0, note, 100);
+                eng->render(buf.data(), 14400);
+                double q = 0;
+                for (float x : buf) q += (double)x * x;
+                const double db = 10.0 * std::log10(q / buf.size() + 1e-12);
+                if (note > 36 && std::fabs(db - prevDb) > worst) {
+                    worst = std::fabs(db - prevDb);
+                    worstKey = note;
+                }
+                prevDb = db;
+                eng->noteOff(0, note);
+                eng->render(tail.data(), 48000);
+            }
+            std::printf("REAL KEYS %s worst neighbour jump %.1f dB at key %d\n", group, worst, worstKey);
+            expect(worst < 8.0, "real_neighbouring_keys_even");
+        }
     } else {
         std::printf("SKIP real_named (SET not on disk)\n");
     }
