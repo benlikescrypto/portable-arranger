@@ -1245,9 +1245,29 @@ async function loadUserSound(item: {
     const resolved = await resolveCachePatch(folder, item.name, setName)
     if (resolved?.wavName) fileName = resolved.wavName
   }
-  const wav = fileName ? await loadConvertedCacheSound(item.name, folder, fileName) : null
+  // Version 1 caches hold WAVs decoded with the old drifting DPCM decoder (very quiet),
+  // so only fall back to cached WAVs the native loader wrote as version 2 or later.
+  const current = fileName ? await convertedCacheIsCurrent(folder) : false
+  const wav = current ? await loadConvertedCacheSound(item.name, folder, fileName) : null
   if (wav) return wav
   return { ok: false, engineId: -1, reason: failReason }
+}
+
+const CONVERTED_CACHE_VERSION = 2
+
+async function convertedCacheIsCurrent(folder: Directory) {
+  for (const dir of cacheDirOf(folder)) {
+    try {
+      const file = new File(dir, "manifest.txt")
+      if (!file.exists) continue
+      const head = String(await Promise.resolve(file.text())).slice(0, 64)
+      const version = parseInt(head.match(/^ARRANGERBOX_CACHE\s+(\d+)/)?.[1] || "0", 10)
+      if (version >= CONVERTED_CACHE_VERSION) return true
+    } catch {
+      // Unreadable manifest: treat it as stale.
+    }
+  }
+  return false
 }
 
 export async function loadDiskItem(item: {

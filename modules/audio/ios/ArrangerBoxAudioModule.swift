@@ -191,6 +191,19 @@ public class ArrangerBoxAudioModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ArrangerBoxAudio")
 
+    // Native on-screen keyboard: touches play the engine directly, no JS in the path.
+    View(ArrangerKeyboardView.self) {
+      Prop("startNote") { (view: ArrangerKeyboardView, value: Int) in
+        view.startNote = value
+      }
+      Prop("octaves") { (view: ArrangerKeyboardView, value: Int) in
+        view.octaves = value
+      }
+      Prop("channel") { (view: ArrangerKeyboardView, value: Int) in
+        view.channel = value
+      }
+    }
+
     OnCreate {
       loadFactorySoundfont()
       _ = arrangerbox_audio_start()

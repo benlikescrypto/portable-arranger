@@ -1,4 +1,6 @@
-import { requireOptionalNativeModule } from "expo-modules-core"
+import { requireNativeViewManager, requireOptionalNativeModule } from "expo-modules-core"
+import type { ComponentType } from "react"
+import type { ViewProps } from "react-native"
 
 export type SoundInfo = {
   id: number
@@ -63,6 +65,28 @@ type AudioNative = {
 const native = requireOptionalNativeModule<AudioNative>("ArrangerBoxAudio")
 
 export const isAudioNativeAvailable = native != null
+
+export type NativeKeyboardProps = ViewProps & {
+  startNote?: number
+  octaves?: number
+  channel?: number
+}
+
+/**
+ * Native on-screen keyboard (touch -> C++ engine, no JS round trip, multi-touch).
+ * Null when this build has no such view (web, Expo Go, or an older native build
+ * running newer JS): callers fall back to the JS keyboard instead of a dead view.
+ */
+export const NativeKeyboardView: ComponentType<NativeKeyboardProps> | null = (() => {
+  if (!native) return null
+  const expoGlobal = (globalThis as { expo?: { getViewConfig?: (module: string, view?: string) => unknown } }).expo
+  if (!expoGlobal?.getViewConfig?.("ArrangerBoxAudio")) return null
+  try {
+    return requireNativeViewManager<NativeKeyboardProps>("ArrangerBoxAudio")
+  } catch {
+    return null
+  }
+})()
 
 export const audio = {
   isAvailable(): boolean {

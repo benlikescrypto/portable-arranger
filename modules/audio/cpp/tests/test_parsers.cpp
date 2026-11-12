@@ -9,6 +9,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <atomic>
+#include <thread>
 
 namespace pa {
 int Engine::loadPa4xSet(const char*, char* report, int reportLen) {
@@ -420,6 +422,81 @@ int main() {
         } else {
             std::printf("SKIP soundfont fader test (no %s)\n", sf2.c_str());
         }
+    }
+
+    {
+        // Key-up release is exponential (eases out like a real damper/room): no jump
+        // at note-off, -20 dB at a third of the release time, -60 dB at the full time,
+        // then the voice is freed.
+        pa::Adsr env;
+        const float sr = 48000.0f, relMs = 300.0f;
+        env.setTimes(sr, 1.0f, 1.0f, 1.0f, relMs);
+        env.noteOn();
+        float held = 0;
+        for (int i = 0; i < 4800; ++i) held = env.process();
+        env.noteOff();
+        const float first = env.process();
+        const int n = (int)(relMs * 0.001f * sr);
+        float atThird = 0, atFull = 0;
+        for (int i = 1; i < n; ++i) {
+            const float y = env.process();
+            if (i == n / 3) atThird = y;
+            atFull = y;
+        }
+        const float dbThird = 20.0f * std::log10(atThird / held);
+        const float dbFull = 20.0f * std::log10(atFull / held);
+        int extra = 0;
+        while (!env.idle() && extra < n) {
+            env.process();
+            extra++;
+        }
+        if (std::fabs(first - held) > 0.01f || dbThird > -18.0f || dbThird < -22.0f || dbFull > -58.0f)
+            std::printf("release held=%.3f first=%.3f third=%.1fdB full=%.1fdB extra=%d\n", held, first, dbThird, dbFull, extra);
+        expect(std::fabs(first - held) < 0.01f, "release_starts_without_jump");
+        expect(dbThird < -18.0f && dbThird > -22.0f, "release_is_exponential");
+        expect(dbFull <= -58.0f, "release_reaches_minus_60db");
+        expect(env.idle(), "release_frees_voice");
+    }
+
+    {
+        // Note events come from several threads at once (JS, USB-MIDI, the native
+        // keyboard's UI thread). None may be lost or duplicated.
+        static pa::MidiQueue<1024> q;
+        constexpr int kPerThread = 50000;
+        std::atomic<bool> done{false};
+        std::vector<int> seen(2 * kPerThread, 0);
+        std::thread consumer([&] {
+            pa::MidiEvent e;
+            for (;;) {
+                bool got = false;
+                while (q.pop(e)) {
+                    seen[(size_t)(e.a * kPerThread + e.b)]++;
+                    got = true;
+                }
+                if (!got && done.load()) {
+                    while (q.pop(e)) seen[(size_t)(e.a * kPerThread + e.b)]++;
+                    break;
+                }
+            }
+        });
+        auto producer = [&](int id) {
+            for (int i = 0; i < kPerThread; ++i) {
+                pa::MidiEvent e;
+                e.a = id;
+                e.b = i;
+                while (!q.push(e)) std::this_thread::yield();
+            }
+        };
+        std::thread p0(producer, 0), p1(producer, 1);
+        p0.join();
+        p1.join();
+        done = true;
+        consumer.join();
+        int wrong = 0;
+        for (int v : seen)
+            if (v != 1) wrong++;
+        if (wrong) std::printf("midi queue: %d events lost or duplicated\n", wrong);
+        expect(wrong == 0, "midi_queue_safe_with_two_producers");
     }
 
     const std::string stylePath = tempDir() + "/arrangerbox_test.abstyle";

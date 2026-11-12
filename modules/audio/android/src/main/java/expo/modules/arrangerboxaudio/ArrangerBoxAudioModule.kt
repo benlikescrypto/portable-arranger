@@ -21,6 +21,13 @@ class ArrangerBoxAudioModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ArrangerBoxAudio")
 
+    // Native on-screen keyboard: touches play the engine directly, no JS in the path.
+    View(ArrangerKeyboardView::class) {
+      Prop("startNote") { view: ArrangerKeyboardView, value: Int -> view.startNote = value }
+      Prop("octaves") { view: ArrangerKeyboardView, value: Int -> view.octaves = value }
+      Prop("channel") { view: ArrangerKeyboardView, value: Int -> view.channel = value }
+    }
+
     OnCreate {
       try {
         loadFactorySoundfont()

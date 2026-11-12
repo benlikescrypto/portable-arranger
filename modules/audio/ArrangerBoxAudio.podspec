@@ -21,7 +21,11 @@ Pod::Spec.new do |s|
     'DEFINES_MODULE' => 'YES',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
     'CLANG_CXX_LIBRARY' => 'libc++',
-    'HEADER_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/cpp"'
+    'HEADER_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/cpp"',
+    # Optimize the C++ engine in every configuration. Development builds use Debug,
+    # which otherwise compiles the real-time engine and PCM decoding at -O0
+    # (3-5x slower sound loads). Android already builds it with -O3.
+    'GCC_OPTIMIZATION_LEVEL' => '3'
   }
   s.user_target_xcconfig = {
     'OTHER_LDFLAGS' => '$(inherited) -lz'

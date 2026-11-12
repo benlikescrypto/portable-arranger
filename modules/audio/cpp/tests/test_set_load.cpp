@@ -1,5 +1,6 @@
 #include "../Engine.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -427,6 +428,50 @@ int main() {
             expect(id >= 0 && engReal->soundCount() == before + 1, "real_named_one_patch");
             expect(samplesAdded(report) >= 4, "real_named_samples");
             expect(ms < 3000, "real_named_fast");
+            // Compressed SET PCM used to decode with a huge drifting DC offset, which the
+            // output DC blocker removed along with most of the level (~25 dB too quiet).
+            if (id >= 0) {
+                engReal->setSynchro(false);
+                engReal->setPartProgram(0, id);
+                engReal->noteOn(0, 60, 100);
+                std::vector<float> out(22050 * 2);
+                engReal->render(out.data(), 22050);
+                engReal->noteOff(0, 60);
+                float peak = 0;
+                for (float x : out) peak = std::max(peak, std::fabs(x));
+                std::printf("REAL LEVEL %s peak=%.3f\n", group, peak);
+                expect(peak > 0.08f, "real_named_user_sound_is_loud_enough");  // old decoder: 0.006-0.075
+
+                // Release follows the instrument: accordion stops almost at once,
+                // strings ring on briefly. Effects off so only the dry release counts.
+                const bool acco = std::strstr(group, "Acco") != nullptr;
+                const bool strings = std::strstr(group, "Legato") != nullptr || std::strstr(group, "Fast Str") != nullptr;
+                if (acco || strings) {
+                    auto eng = std::make_unique<pa::Engine>();
+                    eng->prepare(44100.0f);
+                    eng->setSynchro(false);
+                    for (int fx = 0; fx < 3; ++fx) eng->setFx(fx, 0.0f);
+                    const int rid = eng->loadPa4xNamed(realSet, "sound", group, report, (int)sizeof(report));
+                    eng->setPartProgram(0, rid);
+                    eng->noteOn(0, 60, 100);
+                    std::vector<float> held(22050 * 2);
+                    eng->render(held.data(), 22050);
+                    eng->noteOff(0, 60);
+                    std::vector<float> after(4410 * 2);  // skip the first 100 ms of release
+                    eng->render(after.data(), 4410);
+                    eng->render(after.data(), 4410);  // measure 100-200 ms after key-up
+                    auto rmsOf = [](const std::vector<float>& b, size_t from) {
+                        double q = 0;
+                        for (size_t i = from; i < b.size(); ++i) q += (double)b[i] * b[i];
+                        return std::sqrt(q / std::max<size_t>(1, b.size() - from));
+                    };
+                    const double heldRms = rmsOf(held, held.size() / 2);
+                    const double tailDb = 20.0 * std::log10(rmsOf(after, 0) / std::max(1e-9, heldRms));
+                    std::printf("REAL RELEASE %s 100-200ms after key-up: %.1f dB\n", group, tailDb);
+                    if (acco) expect(tailDb < -50.0, "real_accordion_stops_quickly");
+                    if (strings) expect(tailDb > -40.0, "real_strings_ring_after_release");
+                }
+            }
         }
     } else {
         std::printf("SKIP real_named (SET not on disk)\n");

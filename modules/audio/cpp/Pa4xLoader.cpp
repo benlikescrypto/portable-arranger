@@ -1096,6 +1096,68 @@ int findSample(const std::vector<LoadedSample>& samples, const std::string& key)
     return -1;
 }
 
+}  // namespace
+
+int Engine::addLeveledUserPatch(Patch p) {
+    // SET PCM is often stored well below full scale, so User sounds came out far
+    // quieter than factory ones. One gain for the whole multisample brings its
+    // loudest sample to ~0.9 peak without changing the balance between zones.
+    constexpr float kTargetPeak = 0.9f;
+    constexpr float kMaxBoost = 16.0f;  // +24 dB; more would just raise noise
+    float peak = 0;
+    std::vector<int> seen;
+    for (const Zone& z : p.zones) {
+        if (z.sampleIndex < 0 || z.sampleIndex >= (int)samples.size()) continue;
+        if (std::find(seen.begin(), seen.end(), z.sampleIndex) != seen.end()) continue;
+        seen.push_back(z.sampleIndex);
+        for (float x : samples[(size_t)z.sampleIndex].data) peak = std::max(peak, std::fabs(x));
+    }
+    if (peak > 1e-4f) {
+        const float g = std::max(0.5f, std::min(kMaxBoost, kTargetPeak / peak));
+        for (Zone& z : p.zones) z.gain *= g;
+    }
+    return addSampledInstrument(p);
+}
+
+namespace {
+
+// Key-up release (ms to -60 dB) by instrument family, like a real keyboard: organ
+// stops at once, piano gets a short damper fade, pads and choirs tail off.
+// Korg's own Sound envelope data is unpublished, so this goes by name/category.
+float releaseMsFor(const char* name, const char* cat, bool drum) {
+    if (drum) return 90.0f;
+    std::string n = std::string(" ") + name + " " + (cat ? cat : "") + " ";
+    for (char& c : n) c = (char)std::tolower((unsigned char)(std::isalnum((unsigned char)c) ? c : ' '));
+    auto has = [&](const char* w) { return n.find(w) != std::string::npos; };
+    auto word = [&](const char* w) { return n.find(std::string(" ") + w + " ") != std::string::npos; };
+    if (has("organ") || has("drawbar") || word("b3") || has("church")) return 40.0f;
+    if (has("acco") || has("alpen") || has("bayan") || has("musette") || has("bandoneon") || has("harmonica") ||
+        has("diatonic"))
+        return 70.0f;
+    // Short articulations stop short whatever the instrument.
+    if (has("stac") || has("spicc") || has("stab") || word("hit")) return 110.0f;
+    if (has("pad") || has("atmos") || has("sweep") || has("warm") || has("dream")) return 900.0f;
+    if (has("choir") || has("chor") || has("mixed ch") || has("vox") || has("voice") || has("vocal") || word("aah") || word("ooh") || has("dooh") ||
+        word("dah") || word("bah") || word("bap") || has("dooeeah"))
+        return 500.0f;
+    if (has("vibra") || has("marimba") || has("xylo") || has("bell") || has("celesta") || has("glock") || has("mallet"))
+        return 500.0f;
+    if (has("string") || has("violin") || has("viola") || has("cello") || word("cel") || has("orch") || has("legato") ||
+        has("ensemble") || word("str"))
+        return 450.0f;
+    if (has("piano") || has("grand") || has("rhodes") || has("wurli") || word("ep") || has("clav")) return 350.0f;
+    if (has("guitar") || has("gtr") || has("mandolin") || has("bouzouki") || has("oud") || has("kanun") || has("qanun") ||
+        has("saz") || has("harp") || has("santur") || has("banjo") || has("sitar") || has("pizz"))
+        return 250.0f;
+    if (has("brass") || has("trumpet") || has("horn") || has("trombone") || has("tuba")) return 150.0f;
+    if (has("sax") || has("flute") || has("clarinet") || has("oboe") || has("ney") || has("zurna") || has("woodwind") ||
+        has("whistle") || has("kaval") || has("duduk"))
+        return 140.0f;
+    if (has("bass")) return 120.0f;
+    if (has("lead") || has("synth")) return 120.0f;
+    return 200.0f;
+}
+
 Patch makeSamplePatch(const char* name, const char* cat, const std::vector<Zone>& zones, bool drum) {
     Patch p;
     std::memset(p.name, 0, sizeof(p.name));
@@ -1103,6 +1165,7 @@ Patch makeSamplePatch(const char* name, const char* cat, const std::vector<Zone>
     std::strncpy(p.name, name, sizeof(p.name) - 1);
     std::strncpy(p.category, cat, sizeof(p.category) - 1);
     prepareSampledPatch(p, drum);
+    p.release = releaseMsFor(name, cat, drum);
     p.zones = zones;
     return p;
 }
@@ -1277,12 +1340,17 @@ std::vector<Zone> zonesFromKmp(const KmpInst& inst, const std::vector<LoadedSamp
     return zones;
 }
 
+// Decide by name, not layout. One-key-per-region is how melodic instruments are
+// sampled too (accordion, strings, choir in a real KApro SET were all flagged as
+// kits: drum release, "Percussion" label). Pa user drum kits map samples in the
+// drum-kit program, not in a KMP multisample, so the name is the reliable signal.
 bool isDrumKmp(const KmpInst& inst) {
-    if (inst.regions.size() < 8) return false;
-    int singles = 0;
-    for (const auto& r : inst.regions)
-        if (r.top <= r.original + 1) singles++;
-    return singles * 2 >= (int)inst.regions.size();
+    std::string n = " " + inst.name + " ";
+    for (char& c : n) c = (char)std::tolower((unsigned char)(std::isalnum((unsigned char)c) ? c : ' '));
+    for (const char* w : {" kit", "drum", "perc", " dr ", "kick", "snare", "hihat", " hh ", "cymbal", "tom ", "conga",
+                          "bongo", "darbuka", "tabla", "timbal", "clap", "shaker"})
+        if (n.find(w) != std::string::npos) return true;
+    return false;
 }
 
 void copyName40(char* dst, size_t n, const std::string& s) {
@@ -1377,7 +1445,7 @@ bool decodedCacheReady(const std::string& dir, int* sampleCount, int* patchCount
     if (!in) return false;
     std::string magic, ver;
     in >> magic >> ver;
-    if (magic != "ARRANGERBOX_CACHE" || ver != "1") return false;
+    if (magic != "ARRANGERBOX_CACHE" || ver != "2") return false;  // 2: leaky DPCM decode (v1 caches have drifted audio)
     std::string tag;
     int nS = 0, nP = 0;
     in >> tag >> nS;
@@ -1878,7 +1946,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
                                       guessCat(inst.name.c_str(), inst.cat.empty() ? "Imported" : inst.cat.c_str()), zones,
                                       inst.drum != 0);
             p.source = PatchSource::Korg;
-            rememberPatch(addSampledInstrument(p), inst.drum != 0);
+            rememberPatch(addLeveledUserPatch(p), inst.drum != 0);
         }
         if (loaded.empty()) return false;
         reason += "Loaded converted sounds (skipped SET decode). ";
@@ -2016,7 +2084,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         Patch p = makeSamplePatch(wantName.c_str(), guessCat(wantName.c_str(), drum ? "Percussion" : "Imported"), mapped,
                                   drum);
         p.source = PatchSource::Korg;
-        rememberPatch(addSampledInstrument(p), drum);
+        rememberPatch(addLeveledUserPatch(p), drum);
         reason += "Loaded one converted sound. ";
         return true;
     };
@@ -2038,7 +2106,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         }
         FILE* mf = std::fopen((cacheDir + "/manifest.txt").c_str(), "wb");
         if (!mf) return;
-        std::fprintf(mf, "ARRANGERBOX_CACHE 1\nS %d\n", (int)loaded.size());
+        std::fprintf(mf, "ARRANGERBOX_CACHE 2\nS %d\n", (int)loaded.size());
         for (int i = 0; i < (int)loaded.size(); ++i) {
             char wavName[32];
             std::snprintf(wavName, sizeof(wavName), "s%04d.wav", i);
@@ -2239,7 +2307,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
             Patch p = makeSamplePatch(wantName.c_str(), guessCat(wantName.c_str(), drum ? "Percussion" : "Imported"),
                                       zones, drum);
             p.source = PatchSource::Korg;
-            rememberPatch(addSampledInstrument(p), drum);
+            rememberPatch(addLeveledUserPatch(p), drum);
         }
     }
 
@@ -2277,7 +2345,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
             const std::string nm = inst.name.empty() ? fileStem(path) : inst.name;
             Patch p = makeSamplePatch(nm.c_str(), guessCat(nm.c_str(), drum ? "Percussion" : "Imported"), zones, drum);
             p.source = PatchSource::Korg;
-            rememberPatch(addSampledInstrument(p), drum);
+            rememberPatch(addLeveledUserPatch(p), drum);
         }
     }
 
@@ -2298,7 +2366,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
             }
             Patch p = makeSamplePatch(rec.name.c_str(), guessCat(rec.name.c_str(), "Imported"), {z}, false);
             p.source = PatchSource::Korg;
-            rememberPatch(addSampledInstrument(p), false);
+            rememberPatch(addLeveledUserPatch(p), false);
         }
         if (kmpFiles > 0) reason += "KMP names did not match PCM; loaded raw samples. Look in User. ";
     }

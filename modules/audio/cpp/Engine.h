@@ -124,13 +124,23 @@ template <size_t N>
 struct MidiQueue {
     MidiEvent q[N]{};
     std::atomic<uint32_t> w{0}, r{0};
+    // Several threads produce events (JS, USB-MIDI input, the native on-screen
+    // keyboard's UI thread). Producers serialize on a tiny spinlock; the audio
+    // thread's pop() stays lock-free and never waits.
+    std::atomic_flag writing = ATOMIC_FLAG_INIT;
     bool push(const MidiEvent& e) {
+        while (writing.test_and_set(std::memory_order_acquire)) {
+        }
         const uint32_t wi = w.load(std::memory_order_relaxed);
         const uint32_t ni = (wi + 1) % N;
-        if (ni == r.load(std::memory_order_acquire)) return false;
-        q[wi] = e;
-        w.store(ni, std::memory_order_release);
-        return true;
+        bool ok = false;
+        if (ni != r.load(std::memory_order_acquire)) {
+            q[wi] = e;
+            w.store(ni, std::memory_order_release);
+            ok = true;
+        }
+        writing.clear(std::memory_order_release);
+        return ok;
     }
     bool pop(MidiEvent& e) {
         const uint32_t ri = r.load(std::memory_order_relaxed);
@@ -286,6 +296,9 @@ public:
 
     int addSampledInstrument(const Patch& p);
     int addSample(Sample&& s);
+    // Adds a PA4X User patch with its zones scaled so the loudest sample peaks near
+    // full scale. Keeps the balance between keys and velocity layers.
+    int addLeveledUserPatch(Patch p);
     int addStyle(Arranger::Style style);
     int loadPa4xSet(const char* folder, char* report, int reportLen);
     int loadPa4xNamed(const char* folder, const char* kind, const char* name, char* report, int reportLen);

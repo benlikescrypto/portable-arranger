@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Pressable, StyleSheet, Text, View } from "react-native"
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native"
+
+import { NativeKeyboardView } from "arrangerbox-audio"
 
 import { noteName, Pa } from "@/constants/theme"
 
@@ -10,9 +12,29 @@ type Props = {
   onNoteOff: (note: number) => void
   startNote?: number
   octaves?: number
+  style?: StyleProp<ViewStyle>
 }
 
-export function MiniKeyboard({ onNoteOn, onNoteOff, startNote = 60, octaves = 2 }: Props) {
+/**
+ * On a native build the keyboard is a native view: touches reach the C++ engine
+ * directly (no JS round trip), several fingers play chords and sliding plays each
+ * key. The JS keyboard below is the fallback for web and older native builds.
+ */
+export function MiniKeyboard(props: Props) {
+  if (NativeKeyboardView) {
+    return (
+      <NativeKeyboardView
+        style={[styles.wrap, styles.native, props.style]}
+        startNote={props.startNote ?? 60}
+        octaves={props.octaves ?? 2}
+        channel={0}
+      />
+    )
+  }
+  return <JsMiniKeyboard {...props} />
+}
+
+function JsMiniKeyboard({ onNoteOn, onNoteOff, startNote = 60, octaves = 2, style }: Props) {
   const heldRef = useRef<Set<number>>(new Set())
   const [held, setHeld] = useState<number[]>([])
   const onNoteOnRef = useRef(onNoteOn)
@@ -54,7 +76,7 @@ export function MiniKeyboard({ onNoteOn, onNoteOff, startNote = 60, octaves = 2 
   )
 
   return (
-    <View style={styles.wrap} onResponderTerminate={allUp}>
+    <View style={[styles.wrap, style]} onResponderTerminate={allUp}>
       <View style={styles.row}>
         {whites.map((note) => {
           const on = held.includes(note)
@@ -117,39 +139,46 @@ function buildKeys(startNote: number, octaves: number) {
 const styles = StyleSheet.create({
   wrap: {
     alignSelf: "stretch",
-    marginTop: 28,
-    paddingHorizontal: 4,
+    minHeight: 84,
   },
+  native: { flex: 1 },
   row: {
-    height: 108,
+    flex: 1,
     flexDirection: "row",
     position: "relative",
-    borderRadius: 8,
+    borderRadius: 10,
     overflow: "hidden",
-    backgroundColor: "#D8DDE3",
+    backgroundColor: "#0E1013",
+    borderWidth: 1,
+    borderColor: "#2A3038",
   },
   white: {
     flex: 1,
-    backgroundColor: "#F4F6F8",
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: "#B7BEC6",
+    backgroundColor: "#F2F4F7",
+    borderRightWidth: 2,
+    borderRightColor: "#0E1013",
+    borderBottomLeftRadius: 6,
+    borderBottomRightRadius: 6,
     justifyContent: "flex-end",
     alignItems: "center",
     paddingBottom: 8,
   },
-  whiteOn: { backgroundColor: Pa.gold },
+  whiteOn: { backgroundColor: "#FFD48A" },
   whiteLabel: {
-    color: "#5A6169",
+    color: "#8A929C",
     fontSize: 10,
     fontWeight: "700",
   },
   black: {
     position: "absolute",
     top: 0,
-    height: "58%",
-    backgroundColor: "#121417",
-    borderBottomLeftRadius: 4,
-    borderBottomRightRadius: 4,
+    height: "60%",
+    backgroundColor: "#16191D",
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: "#000",
+    borderBottomLeftRadius: 5,
+    borderBottomRightRadius: 5,
     zIndex: 2,
   },
   blackOn: { backgroundColor: Pa.orange },

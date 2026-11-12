@@ -146,14 +146,25 @@ struct Adsr {
         stage = Attack;
         if (level < 0.001f) level = 0.0f;
     }
-    void noteOff() {
-        if (stage == Idle) return;
+    // Release is exponential, like a real damper, string or room dying away:
+    // the level falls to -60 dB over the release time and the tail eases out.
+    // It starts from the current (shaped) output so there is no jump at key-up.
+    float rMul = 0.999f;
+    void beginRelease(float samples) {
+        level = level * level * (3.0f - 2.0f * level);
+        rMul = std::exp(std::log(1.0e-3f) / std::max(1.0f, samples));
         stage = Release;
-        rInc = -std::max(level, 1.0e-4f) / rSamples;
     }
+    void noteOff() {
+        if (stage == Idle || stage == Release) return;
+        beginRelease(rSamples);
+    }
+    // Fast (~8 ms) fade to free a voice without a click.
     void steal() {
-        stage = Release;
-        rInc = -std::max(level, 1.0e-4f) / 384.0f;
+        constexpr float kFast = 0.982171f;  // exp(ln(1e-3) / 384): -60 dB in 384 samples
+        if (stage == Idle) return;
+        if (stage == Release) rMul = std::min(rMul, kFast);
+        else beginRelease(384.0f);
     }
 
     float process() {
@@ -176,12 +187,12 @@ struct Adsr {
                 level = sLev;
                 break;
             case Release:
-                level += (rInc < 0.0f ? rInc : -std::abs(rInc));
-                if (level <= 0.0f) {
+                level *= rMul;
+                if (level <= 1.0e-4f) {  // -80 dB: inaudible, free the voice
                     level = 0.0f;
                     stage = Idle;
                 }
-                break;
+                return level;  // already in output terms (see beginRelease)
             default:
                 break;
         }

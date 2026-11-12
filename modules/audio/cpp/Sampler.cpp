@@ -200,16 +200,43 @@ static std::vector<float> decode24(const uint8_t* p, size_t n, int frames, bool 
     return o;
 }
 
+// Korg's compressed PCM is 8-bit deltas, but a plain running sum drifts far past
+// 16-bit range (we don't know Korg's step table). Clamping that drift pinned whole
+// samples at full-scale DC, which the output DC blocker then removed: User sounds
+// came out ~25 dB too quiet. Integrating also boosts lows hugely, so any bias in the
+// codes becomes a large sub-audio wander that hid the real level from the loader.
+// One fused pass: leaky integrator, then two one-pole ~20 Hz high-passes (keeps bass
+// fundamentals, removes the wander). Patch level is set later by the loader.
+struct DeltaDecoder {
+    static constexpr float kLeak = 0.999f;
+    static constexpr float kHp = 0.99738f;  // 1 - 2*pi*20/48000
+    float acc = 0, x1a = 0, y1a = 0, x1b = 0, y1b = 0, peak = 0;
+    float step(float delta) {
+        acc = acc * kLeak + delta;
+        const float a = acc - x1a + kHp * y1a;
+        x1a = acc;
+        y1a = a;
+        const float y = a - x1b + kHp * y1b;
+        x1b = a;
+        y1b = y;
+        const float out = y * (1.0f / 32768.0f);
+        peak = std::max(peak, std::fabs(out));
+        return out;
+    }
+    void fit(std::vector<float>& o) const {
+        if (peak <= 0.98f) return;
+        const float g = 0.98f / peak;
+        for (float& x : o) x *= g;
+    }
+};
+
 static std::vector<float> decodeDpcm(const uint8_t* p, size_t n, int frames, int scale) {
     const int count = std::min(frames > 0 ? frames : (int)n, (int)n);
     std::vector<float> o((size_t)std::max(0, count));
-    int acc = 0;
-    for (int i = 0; i < count; ++i) {
-        acc += (int)((int8_t)p[i]) * scale;
-        if (acc > 32767) acc = 32767;
-        if (acc < -32768) acc = -32768;
-        o[(size_t)i] = acc / 32768.0f;
-    }
+    DeltaDecoder d;
+    const float sc = (float)scale;
+    for (int i = 0; i < count; ++i) o[(size_t)i] = d.step((float)(int8_t)p[i] * sc);
+    d.fit(o);
     return o;
 }
 
@@ -217,16 +244,12 @@ static std::vector<float> decodeDpcm4(const uint8_t* p, size_t n, int frames) {
     const int count = frames > 0 ? frames : (int)n * 2;
     std::vector<float> o;
     o.reserve((size_t)count);
-    int acc = 0;
+    DeltaDecoder d;
     for (size_t i = 0; i < n && (int)o.size() < count; ++i) {
         const int nib[2] = {(int)(int8_t)(p[i] & 0xF0) >> 4, (int)(int8_t)((p[i] & 0x0F) << 4) >> 4};
-        for (int k = 0; k < 2 && (int)o.size() < count; ++k) {
-            acc += nib[k] * 16;
-            if (acc > 32767) acc = 32767;
-            if (acc < -32768) acc = -32768;
-            o.push_back(acc / 32768.0f);
-        }
+        for (int k = 0; k < 2 && (int)o.size() < count; ++k) o.push_back(d.step((float)(nib[k] * 16)));
     }
+    d.fit(o);
     return o;
 }
 
