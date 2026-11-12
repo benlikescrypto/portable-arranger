@@ -1245,15 +1245,15 @@ async function loadUserSound(item: {
     const resolved = await resolveCachePatch(folder, item.name, setName)
     if (resolved?.wavName) fileName = resolved.wavName
   }
-  // Version 1-2 caches hold WAVs decoded as 8-bit deltas (wrong, uneven levels),
-  // so only fall back to cached WAVs the native loader wrote as version 3 or later.
+  // Caches before version 4 hold WAVs from earlier decoders (quiet, uneven or muffled),
+  // so only fall back to cached WAVs the native loader wrote as version 4 or later.
   const current = fileName ? await convertedCacheIsCurrent(folder) : false
   const wav = current ? await loadConvertedCacheSound(item.name, folder, fileName) : null
   if (wav) return wav
   return { ok: false, engineId: -1, reason: failReason }
 }
 
-const CONVERTED_CACHE_VERSION = 3
+const CONVERTED_CACHE_VERSION = 4
 
 async function convertedCacheIsCurrent(folder: Directory) {
   for (const dir of cacheDirOf(folder)) {

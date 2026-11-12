@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 project(arrangerbox_engine_tests CXX)
 
+# The app builds the engine optimized (Android -O3, iOS GCC_OPTIMIZATION_LEVEL 3), so
+# test it the same way; load-time checks are meaningless at -O0.
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 

@@ -1119,16 +1119,26 @@ int Engine::addLeveledUserPatch(Patch p) {
             if (l.sample == idx) return &l;
         const Sample& s = samples[(size_t)idx];
         const int ch = std::max(1, s.channels);
-        // Loudness over what you hear while holding a key: the first ~1.5 s.
-        const size_t body = std::min(s.data.size(), (size_t)(1.5f * (float)std::max(8000, s.sampleRate)) * (size_t)ch);
-        double q = 0;
+        // How loud the note gets: the loudest 100 ms within the first 1.5 s. An average
+        // would call a slow-bowed note "quiet" just because it swells in later.
+        const size_t rate = (size_t)std::max(8000, s.sampleRate);
+        const size_t body = std::min(s.data.size(), (size_t)(1.5 * (double)rate) * (size_t)ch);
+        const size_t win = std::max<size_t>(1, rate / 10 * (size_t)ch);
+        double q = 0, loudest = 0;
         float pk = 0;
         for (size_t i = 0; i < s.data.size(); ++i) {
             const float x = s.data[i];
             pk = std::max(pk, std::fabs(x));
-            if (i < body) q += (double)x * x;
+            if (i < body) {
+                q += (double)x * x;
+                if ((i + 1) % win == 0 || i + 1 == body) {
+                    const size_t len = (i % win) + 1;
+                    loudest = std::max(loudest, q / (double)len);
+                    q = 0;
+                }
+            }
         }
-        levels.push_back({idx, body ? (float)std::sqrt(q / (double)body) : 0.0f, pk});
+        levels.push_back({idx, (float)std::sqrt(loudest), pk});
         return &levels.back();
     };
     std::vector<float> rmsList;
@@ -1501,7 +1511,7 @@ bool decodedCacheReady(const std::string& dir, int* sampleCount, int* patchCount
     if (!in) return false;
     std::string magic, ver;
     in >> magic >> ver;
-    if (magic != "ARRANGERBOX_CACHE" || ver != "3") return false;  // 3: 8-bit linear decode (v1/v2 caches have wrong levels)
+    if (magic != "ARRANGERBOX_CACHE" || ver != "4") return false;  // 4: 8-bit delta decode + key balancing (v1-3 caches decoded differently)
     std::string tag;
     int nS = 0, nP = 0;
     in >> tag >> nS;
@@ -2162,7 +2172,7 @@ int Engine::loadPa4xNamed(const char* folder, const char* kind, const char* name
         }
         FILE* mf = std::fopen((cacheDir + "/manifest.txt").c_str(), "wb");
         if (!mf) return;
-        std::fprintf(mf, "ARRANGERBOX_CACHE 3\nS %d\n", (int)loaded.size());
+        std::fprintf(mf, "ARRANGERBOX_CACHE 4\nS %d\n", (int)loaded.size());
         for (int i = 0; i < (int)loaded.size(); ++i) {
             char wavName[32];
             std::snprintf(wavName, sizeof(wavName), "s%04d.wav", i);

@@ -484,15 +484,21 @@ int main() {
             const int gid = eng->loadPa4xNamed(realSet, "sound", group, report, (int)sizeof(report));
             if (gid < 0) continue;
             eng->setPartProgram(0, gid);
-            std::vector<float> buf(14400 * 2), tail(48000 * 2);
+            std::vector<float> buf(48000 * 2), tail(48000 * 2);
             double prevDb = 0, worst = 0;
             int worstKey = 0;
             for (int note = 36; note <= 96; ++note) {
                 eng->noteOn(0, note, 100);
-                eng->render(buf.data(), 14400);
-                double q = 0;
-                for (float x : buf) q += (double)x * x;
-                const double db = 10.0 * std::log10(q / buf.size() + 1e-12);
+                eng->render(buf.data(), 48000);
+                // How loud the note gets: loudest 100 ms in its first second (a slow
+                // bow attack reaches the same level, just later).
+                double loudest = 0;
+                for (size_t w = 0; w + 9600 <= buf.size(); w += 9600) {
+                    double q = 0;
+                    for (size_t i = w; i < w + 9600; ++i) q += (double)buf[i] * buf[i];
+                    loudest = std::max(loudest, q / 9600.0);
+                }
+                const double db = 10.0 * std::log10(loudest + 1e-12);
                 if (note > 36 && std::fabs(db - prevDb) > worst) {
                     worst = std::fabs(db - prevDb);
                     worstKey = note;
@@ -503,6 +509,45 @@ int main() {
             }
             std::printf("REAL KEYS %s worst neighbour jump %.1f dB at key %d\n", group, worst, worstKey);
             expect(worst < 8.0, "real_neighbouring_keys_even");
+        }
+        // Low notes must be a clean, steady tone. Read as plain 8-bit samples (wrong:
+        // the bytes are deltas) low notes repeated at only ~0.65 and sounded muffled.
+        for (const char* group : {"KApro Alpen Acco", "KApro Legato O"}) {
+            auto eng = std::make_unique<pa::Engine>();
+            eng->prepare(48000.0f);
+            eng->setSynchro(false);
+            for (int fx = 0; fx < 3; ++fx) eng->setFx(fx, 0.0f);
+            const int gid = eng->loadPa4xNamed(realSet, "sound", group, report, (int)sizeof(report));
+            if (gid < 0) continue;
+            eng->setPartProgram(0, gid);
+            double sum = 0;
+            int count = 0;
+            std::vector<float> buf(48000 * 2), tail(48000 * 2);
+            for (int note : {48, 50, 52, 53, 55, 57}) {
+                eng->noteOn(0, note, 100);
+                eng->render(buf.data(), 48000);  // 1 s; analyse 0.6-0.8 s (sustain)
+                eng->noteOff(0, note);
+                eng->render(tail.data(), 48000);
+                // Search every period up to ~20 Hz: ensembles double the bass an octave
+                // below, so the tone may repeat at twice the played note's period.
+                const int from = 28800, len = 9600;
+                double best = 0;
+                for (int L = 20; L <= 2400; ++L) {
+                    double xy = 0, xx = 0, yy = 0;
+                    for (int i = from; i < from + len; ++i) {
+                        const double a = buf[(size_t)i * 2], b = buf[(size_t)(i + L) * 2];
+                        xy += a * b;
+                        xx += a * a;
+                        yy += b * b;
+                    }
+                    if (xx > 0 && yy > 0) best = std::max(best, xy / std::sqrt(xx * yy));
+                }
+                sum += best;
+                count++;
+            }
+            const double clarity = count ? sum / count : 0;
+            std::printf("REAL CLARITY %s low notes periodicity %.3f\n", group, clarity);
+            expect(clarity > 0.85, "real_low_notes_clean");
         }
     } else {
         std::printf("SKIP real_named (SET not on disk)\n");
