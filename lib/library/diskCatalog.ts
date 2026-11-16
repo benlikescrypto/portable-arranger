@@ -888,12 +888,14 @@ export function mergeSounds(engine: SoundItem[], disk: DiskItem[]): SoundItem[] 
     }))
   const imported = engine.filter((item) => !isFactory(item.source))
   const out: SoundItem[] = [...factory]
+  const matched = new Set<number>()
   disk.forEach((item, index) => {
     const hit = imported.find(
       (row) =>
         norm(row.name) === norm(item.name) ||
         (!!item.cacheName && norm(row.name) === norm(item.cacheName || ""))
     )
+    if (hit) matched.add(hit.id)
     out.push({
       id: DISK_SOUND + index,
       name: item.name,
@@ -907,6 +909,11 @@ export function mergeSounds(engine: SoundItem[], disk: DiskItem[]): SoundItem[] 
       cacheName: item.cacheName,
     })
   })
+  // Engine sounds with no disk entry (AI Lab SFZ sounds, other SFZ loads) are User sounds too.
+  for (const item of imported) {
+    if (matched.has(item.id)) continue
+    out.push({ ...item, loaded: true, engineId: item.id, source: item.source ?? "SFZ", bank: "IMPORTED" })
+  }
   return out
 }
 
