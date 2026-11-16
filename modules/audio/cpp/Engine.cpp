@@ -18,6 +18,16 @@ Engine::Engine() {
     buildArranger(arr);
     wireFactoryStylePrograms();
     rrPhase.assign(patches.size(), 0);
+    std::memset(sounded, -1, sizeof(sounded));
+    std::memset(ensNotes, -1, sizeof(ensNotes));
+    std::memset(manualBassNote, -1, sizeof(manualBassNote));
+    for (auto& a : activity) a.store(0.0f);
+    for (int i = 0; i < (int)patches.size(); ++i) {
+        if (patches[(size_t)i].model == Model::KitStandard) {
+            metroKit = i;
+            break;
+        }
+    }
     if (!arr.styles.empty()) {
         arrSt.styleId = 0;
         arrSt.tempo = arr.styles[0].tempo;
@@ -96,6 +106,212 @@ void Engine::setFx(int which, float mix) {
     if (which == 0) reverb.mix = mix * 0.42f;
     else if (which == 1) chorusMix = mix * 0.55f;
     else if (which == 2) delayFx.mix = mix * 0.45f;
+}
+
+void Engine::control(int cmd, int a, int b, float v, int c) {
+    MidiEvent e{MidiKind::Control, cmd, a, b, c};
+    e.f = v;
+    midi.push(e);
+}
+
+float Engine::query(int what) const {
+    switch (what) {
+        case QBeat: return (float)arrSt.displayBeat.load();
+        case QBar: return (float)arrSt.displayBar.load();
+        case QBooked: return (float)arrSt.displayBooked.load();
+        case QVariation: return (float)arrSt.variation;
+        case QFade: return fadeShown.load();
+        case QChordHeld: return (float)chordHeldShown.load();
+        case QBassRoot: return (float)bassShown.load();
+        case QVoices: return (float)voiceCount.load();
+        case QPeakL: return peakL.exchange(0.0f);
+        case QPeakR: return peakR.exchange(0.0f);
+        case QMetroBeat: return (float)metroBeatShown.load();
+        default:
+            if (what >= QActivity && what < QActivity + 16) return activity[what - QActivity].load();
+            return 0.0f;
+    }
+}
+
+float Engine::effGain(int ch) const {
+    ch &= 15;
+    if (chanMute[ch]) return 0.0f;
+    float g = chanGain[ch];
+    if (isStyleChannel(ch)) g *= fadeLevel;
+    return g;
+}
+
+int Engine::curveVelocity(int vel) const {
+    const float x = clampf((float)vel / 127.0f, 0.0f, 1.0f);
+    switch (velMode) {
+        case 0: return std::max(1, (int)std::lround(127.0f * std::pow(x, 0.6f)));
+        case 2: return std::max(1, (int)std::lround(127.0f * std::pow(x, 1.6f)));
+        case 3: return 100;
+        default: return vel;
+    }
+}
+
+int Engine::currentBassProg() const {
+    if (arr.styles.empty()) return -1;
+    const auto& s = arr.styles[(size_t)(arrSt.styleId % (int)arr.styles.size())];
+    if (s.var[0].bassProg >= 0) return s.var[0].bassProg;
+    for (const auto& p : s.var)
+        if (p.bassProg >= 0) return p.bassProg;
+    return -1;
+}
+
+void Engine::silenceAccompaniment() {
+    for (int i = 0; i < arr.holdn; ++i) stopInternal(arr.holds[i].inst, arr.holds[i].note, arr.holds[i].ch);
+    arr.holdn = 0;
+    for (int ch : {4, 5, 6, 8}) {
+        fadeVoices(-1, ch, -1, false);
+        if (gmFont) {
+            for (int n = 0; n < 128; ++n) tsf_channel_note_off(gmFont, ch, n);
+        }
+    }
+}
+
+void Engine::stopArrangerNow() {
+    for (int i = 0; i < arr.holdn; ++i) stopInternal(arr.holds[i].inst, arr.holds[i].note, arr.holds[i].ch);
+    arr.holdn = 0;
+    tsfAllNotesOff(4, 9);
+    arr.stop(arrSt);
+    fadeStopAtEnd = false;
+    fadeLevel = fadeTarget = 1.0f;
+}
+
+void Engine::metronomeClick(int beat) {
+    metroBeatShown.store(beat);
+    if (metroKit < 0) return;
+    // GM high / low wood block on its own channel so Drum mute never silences it.
+    playInternal(metroKit, beat == 0 ? 76 : 77, beat == 0 ? 120 : 92, BusDrums, 15);
+}
+
+void Engine::playEnsemble(int raw, int melody, int vel) {
+    if (ensemble <= 0 || partProg[0] < 0) return;
+    int targets[3] = {-1, -1, -1};
+    if (ensemble == 4) {
+        targets[0] = melody - 12;
+    } else {
+        // Chord tones of the current chord, as pitch classes.
+        static const int tones[12][4] = {
+                {0, 4, 7, -1}, {0, 3, 7, -1}, {0, 4, 7, 10}, {0, 3, 7, 10}, {0, 4, 7, 11}, {0, 5, 7, -1},
+                {0, 3, 6, 9},  {0, 4, 7, 9},  {0, 3, 7, 9},  {0, 4, 7, 10}, {0, 2, 7, -1}, {0, 4, 8, -1},
+        };
+        const int type = std::max(0, std::min(11, arrSt.chordType));
+        const int want = ensemble == 1 ? 1 : (ensemble == 2 ? 2 : 3);
+        int found = 0;
+        for (int n = melody - 1; n > melody - 24 && found < want; --n) {
+            const int pc = ((n - arrSt.chordRoot) % 12 + 12) % 12;
+            bool chordTone = false;
+            for (int t : tones[type])
+                if (t >= 0 && t == pc) chordTone = true;
+            if (chordTone) targets[found++] = n;
+        }
+    }
+    const int hv = std::max(1, vel * 4 / 5);
+    for (int i = 0; i < 3; ++i) {
+        const int n = targets[i];
+        if (n < 0 || n > 127) continue;
+        startVoice(partProg[0], n, hv, BusKeyboard, 0);
+        ensNotes[raw][i] = (int8_t)n;
+    }
+}
+
+void Engine::handleControl(const MidiEvent& e) {
+    const int a = e.b, b = e.c, c = e.d;
+    const float v = e.f;
+    switch (e.a) {
+        case CmdChannelGain: chanGain[a & 15] = clampf(v, 0.0f, 1.5f); break;
+        case CmdChannelPan: chanPan[a & 15] = clampf(v, -1.0f, 1.0f); break;
+        case CmdChannelMute:
+            chanMute[a & 15] = b != 0;
+            if (b != 0 && gmFont) {
+                for (int n = 0; n < 128; ++n) tsf_channel_note_off(gmFont, a & 15, n);
+            }
+            break;
+        case CmdPartOctave:
+            if (a >= 0 && a < 4) partOct[a] = std::max(-3, std::min(3, b));
+            break;
+        case CmdSplitOn: splitOn = b != 0; break;
+        case CmdChordScan: chordScan = std::max(0, std::min(2, b)); break;
+        case CmdChordMode: chordMode = b != 0 ? 1 : 0; break;
+        case CmdMemory:
+            arrSt.memory = b != 0;
+            if (!arrSt.memory && !arrSt.chordHeld) silenceAccompaniment();
+            break;
+        case CmdBassInversion: arrSt.bassInversion = b != 0; break;
+        case CmdManualBass:
+            arrSt.manualBass = b != 0;
+            if (arrSt.manualBass) {
+                fadeVoices(-1, 8, -1, false);
+                if (gmFont)
+                    for (int n = 0; n < 128; ++n) tsf_channel_note_off(gmFont, 8, n);
+            }
+            break;
+        case CmdSynchroStop: synchroStop = b != 0; break;
+        case CmdFade: {
+            const float secs = clampf(v > 0 ? v : 6.0f, 0.5f, 30.0f);
+            fadeStep = 1.0f / (secs * sampleRate);
+            if (b == 1) {
+                if (!arrSt.running) {
+                    fadeLevel = 0.0f;
+                    arr.start(arrSt);
+                }
+                fadeTarget = 1.0f;
+                fadeStopAtEnd = false;
+            } else if (b == 2 && arrSt.running) {
+                fadeTarget = 0.0f;
+                fadeStopAtEnd = true;
+            }
+            break;
+        }
+        case CmdMetronome:
+            metroOn = b != 0;
+            if (v > 0) chanGain[15] = clampf(v, 0.0f, 1.5f);
+            break;
+        case CmdMetronomeRun:
+            metroRun = b != 0;
+            metroTicks = 0;
+            metroLastBeat = -1;
+            break;
+        case CmdEnsemble: ensemble = std::max(0, std::min(4, b)); break;
+        case CmdVelocityCurve: velMode = std::max(0, std::min(3, b)); break;
+        case CmdScaleCents:
+            if (a >= 0 && a < 12) scaleCents[a] = clampf(v, -100.0f, 100.0f);
+            break;
+        case CmdScaleToStyle: scaleToStyle = b != 0; break;
+        case CmdEq: {
+            const float db = clampf(v, -15.0f, 15.0f);
+            if (a == 0) {
+                eqLowL.setLowShelf(sampleRate, 90.0f, db);
+                eqLowR.setLowShelf(sampleRate, 90.0f, db);
+            } else if (a == 1) {
+                eqMidL.setPeaking(sampleRate, 1200.0f, 0.7f, db);
+                eqMidR.setPeaking(sampleRate, 1200.0f, 0.7f, db);
+            } else if (a == 2) {
+                eqHighL.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f + db);
+                eqHighR.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f + db);
+            }
+            break;
+        }
+        case CmdPadOn: {
+            const int slot = 10 + std::max(0, std::min(3, c));
+            const int vel = (int)clampf(v, 1.0f, 127.0f);
+            startVoice(a, std::max(0, std::min(127, b)), vel, BusPad, slot);
+            break;
+        }
+        case CmdPadOff: {
+            const int slot = 10 + std::max(0, std::min(3, c));
+            stopVoices(std::max(0, std::min(127, b)), slot, true, a);
+            break;
+        }
+        case CmdPadsOff:
+            for (int ch = 10; ch <= 13; ++ch) fadeVoices(-1, ch, -1, false);
+            tsfAllNotesOff(10, 13);
+            break;
+        default: break;
+    }
 }
 
 const char* Engine::soundName(int id) const {
@@ -323,6 +539,8 @@ static void gmProgramFor(const Patch& p, int& bank, int& program, bool drums) {
 }
 
 int Engine::tsfChannelFor(int bus, int ch, bool drums) const {
+    // Pads (10-13) and the metronome (15) keep their own channels, kits included.
+    if (ch >= 10 && ch <= 15) return ch;
     if (drums || bus == BusDrums) return 9;
     if (bus == BusBass) return 8;
     if (bus == BusPad) return 7;
@@ -349,16 +567,22 @@ void Engine::startTsfVoice(const Patch& p, int note, int vel, int bus, int ch) {
     const int tch = tsfChannelFor(bus, ch, drums);
     applyTsfProgram(tch, p);
     tsfBaseVol[tch] = clampf(chanVol[ch & 15] * chanExpr[ch & 15] * 0.95f, 0.08f, 1.0f);
-    tsfBus[tch] = drums ? (int)BusDrums : std::max(0, std::min((int)BusPad, bus));
+    tsfBus[tch] = (drums && tch < 10) ? (int)BusDrums : std::max(0, std::min((int)BusPad, bus));
     applyTsfVolume(tch);
     const int pw = (int)clampf(8192.0f + chanBend[ch & 15] * 8192.0f, 0.0f, 16383.0f);
     tsf_channel_set_pitchwheel(gmFont, tch, pw);
+    // Sub scale: the SoundFont tunes per channel, so the cents of this key are set
+    // just before it starts (a held note on the same part follows the newest key).
+    if (!drums && (tch < 4 || (scaleToStyle && isStyleChannel(tch)))) {
+        tsf_channel_set_tuning(gmFont, tch, scaleCents[note % 12] / 100.0f);
+    }
+    activity[tch].store(std::max(activity[tch].load(), (float)vel / 127.0f));
     tsf_channel_note_on(gmFont, tch, note, clampf((float)vel / 127.0f, 0.0f, 1.0f));
 }
 
 void Engine::applyTsfVolume(int tsfCh) {
     if (!gmFont || tsfCh < 0 || tsfCh > 15) return;
-    tsf_channel_set_volume(gmFont, tsfCh, tsfBaseVol[tsfCh] * mix.g[tsfBus[tsfCh]]);
+    tsf_channel_set_volume(gmFont, tsfCh, tsfBaseVol[tsfCh] * mix.g[tsfBus[tsfCh]] * effGain(tsfCh));
 }
 
 // Runs on the audio thread: setMixer only writes mix.g, so pick up fader moves here.
@@ -371,8 +595,17 @@ void Engine::syncTsfMixer() {
             changed = true;
         }
     }
-    if (!changed) return;
-    for (int c = 0; c < 16; ++c) applyTsfVolume(c);
+    for (int c = 0; c < 16; ++c) {
+        const float g = effGain(c);
+        if (changed || g != effApplied[c]) {
+            effApplied[c] = g;
+            applyTsfVolume(c);
+        }
+        if (chanPan[c] != panApplied[c]) {
+            panApplied[c] = chanPan[c];
+            tsf_channel_set_pan(gmFont, c, clampf(0.5f + chanPan[c] * 0.5f, 0.0f, 1.0f));
+        }
+    }
 }
 
 void Engine::tsfAllNotesOff(int fromCh, int toCh) {
@@ -471,6 +704,7 @@ void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note,
     if (slot < 0) slot = stealVoice();
     Voice& v = voices[slot];
     v = Voice{};
+    activity[ch & 15].store(std::max(activity[ch & 15].load(), (float)vel / 127.0f));
     v.active = true;
     v.note = note;
     v.chan = ch;
@@ -508,12 +742,15 @@ void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note,
     // must stop on key-up, even when the loader guessed it is a kit: one-key-wide
     // KMP regions (a chromatically sampled User sound) look like a drum kit.
     v.oneShot = p.sampled && v.bus == BusDrums;
+    const bool scaled = (ch & 15) < 4 || (scaleToStyle && isStyleChannel(ch & 15));
+    const float sub = (scaled && v.bus != BusDrums && !isKit(p.model)) ? scaleCents[note % 12] : 0.0f;
+    v.tune = sub / 100.0f;
 
     if (p.sampled && z.sampleIndex >= 0 && z.sampleIndex < (int)samples.size()) {
         const Sample& sm = samples[z.sampleIndex];
         v.sampleIndex = z.sampleIndex;
         const int root = z.root > 0 ? z.root : (sm.rootNote > 0 ? sm.rootNote : 60);
-        const float target = midiToHz((float)note + z.tuneCents / 100.0f);
+        const float target = midiToHz((float)note + (z.tuneCents + sub) / 100.0f);
         const float rootHz = midiToHz((float)root);
         v.sampleInc = (target / rootHz) * ((double)sm.sampleRate / (double)sampleRate);
         v.sampleEnd = z.end > 0 ? std::min(z.end, sm.frames()) : sm.frames();
@@ -535,7 +772,7 @@ void Engine::startVoiceZone(int instId, const Patch& p, const Zone& z, int note,
     }
 
     if (!p.sampled && (isPluckModel(p.model) || isPianoFamily(p.model))) {
-        const float freq = midiToHz((float)note);
+        const float freq = midiToHz((float)note + v.tune);
         v.ksLen = std::max(24, std::min(kKsLen - 1, (int)(sampleRate / freq)));
         v.ksIdx = 0;
         v.ksFilter = 0;
@@ -568,7 +805,10 @@ void Engine::fadeVoices(int note, int ch, int instId, bool quick) {
 void Engine::startVoice(int instId, int note, int vel, int bus, int ch) {
     if (instId < 0 || instId >= (int)patches.size() || vel <= 0) return;
     const Patch& p = patches[instId];
-    fadeVoices(note, ch, -1, true);
+    // Retrigger the same key. For sampled kits only the same kit: AI styles give every
+    // element its own slice kit on keys 0..n, and a new element must not cut the last
+    // slice of the previous one while it rings.
+    fadeVoices(note, ch, (p.sampled && bus == BusDrums) ? instId : -1, true);
     if (gmFont && !p.sampled) {
         startTsfVoice(p, note, vel, bus, ch);
         return;
@@ -658,10 +898,12 @@ void Engine::stopVoices(int note, int ch, bool matchInst, int instId) {
 }
 
 void Engine::detectChord() {
+    if (chordScan == 2) return;
     int pcs[12]{};
     int count = 0;
-    int lowest = 128;
-    for (int n = 0; n <= splitNote; ++n) {
+    int lowest = 128, highest = -1;
+    const int top = (chordScan == 1 || !splitOn) ? 127 : splitNote;
+    for (int n = 0; n <= top; ++n) {
         bool on = false;
         for (int ch = 0; ch < 16; ++ch)
             if (held[ch][n]) on = true;
@@ -669,8 +911,37 @@ void Engine::detectChord() {
         pcs[n % 12] = 1;
         count++;
         if (n < lowest) lowest = n;
+        if (n > highest) highest = n;
     }
-    if (count == 0) return;
+    const bool wasHeld = arrSt.chordHeld;
+    arrSt.chordHeld = count > 0;
+    chordHeldShown.store(count > 0 ? 1 : 0);
+    if (count == 0) {
+        if (wasHeld && !arrSt.memory && arrSt.running) silenceAccompaniment();
+        return;
+    }
+    // Full-keyboard scan needs a real chord: a melody line must not change it.
+    if (top == 127 && count < 3) return;
+    if (chordMode == 1 && count <= 2) {
+        // One finger: the highest key is the root. A black key below makes it minor,
+        // a white key below makes it a seventh, both make a minor seventh.
+        const int root = highest % 12;
+        bool black = false, white = false;
+        for (int n = lowest; n < highest; ++n) {
+            bool on = false;
+            for (int ch = 0; ch < 16; ++ch)
+                if (held[ch][n]) on = true;
+            if (!on) continue;
+            const int pc = n % 12;
+            if (pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10) black = true;
+            else white = true;
+        }
+        const int type = (black && white) ? 3 : (black ? 1 : (white ? 2 : 0));
+        arrSt.bassRoot = -1;
+        bassShown.store(-1);
+        arr.onChord(arrSt, root, type);
+        return;
+    }
     int bestRoot = lowest % 12;
     int bestType = 0;
     int bestScore = -1;
@@ -707,25 +978,51 @@ void Engine::detectChord() {
             }
         }
     }
+    const int lowPc = lowest % 12;
+    arrSt.bassRoot = (arrSt.bassInversion && lowPc != bestRoot) ? lowPc : -1;
+    bassShown.store(arrSt.bassRoot);
     arr.onChord(arrSt, bestRoot, bestType);
 }
 
 void Engine::handle(const MidiEvent& e) {
     switch (e.kind) {
         case MidiKind::NoteOn: {
-            const int ch = e.a, raw = e.b, vel = e.c;
+            const int ch = e.a, raw = e.b;
             if (raw < 0 || raw > 127) return;
+            const int vel = curveVelocity(e.c);
             held[ch & 15][raw] = 1;
-            const bool left = raw <= splitNote;
-            if (left) detectChord();
-            if (left && arrSt.synchro && !arrSt.running) arr.start(arrSt);
-            const int note = std::max(0, std::min(127, raw + transpose + octave * 12));
-            if (left && partOn[3]) {
-                startVoice(partProg[3], note, vel, BusKeyboard, 3);
+            const bool left = splitOn && raw <= splitNote;
+            const bool chordKey = chordScan != 2 && (chordScan == 1 || !splitOn || left);
+            if (chordKey) detectChord();
+            if (chordKey && arrSt.synchro && !arrSt.running) {
+                fadeLevel = fadeTarget = 1.0f;
+                arr.start(arrSt);
+            }
+            auto partNote = [&](int part) {
+                return std::max(0, std::min(127, raw + transpose + (octave + partOct[part]) * 12));
+            };
+            if (left && arrSt.manualBass) {
+                const int bp = currentBassProg();
+                if (bp >= 0) {
+                    int n = std::max(0, std::min(127, raw + transpose));
+                    while (n > 55) n -= 12;
+                    startVoice(bp, n, vel, BusBass, 8);
+                    manualBassNote[raw] = (int8_t)n;
+                }
+            } else if (left) {
+                if (partOn[3] && partProg[3] >= 0) {
+                    const int n = partNote(3);
+                    startVoice(partProg[3], n, vel, BusKeyboard, 3);
+                    sounded[raw][3] = (int8_t)n;
+                }
             } else {
-                if (partOn[0]) startVoice(partProg[0], note, vel, BusKeyboard, 0);
-                if (partOn[1] && partProg[1] >= 0) startVoice(partProg[1], note, vel, BusKeyboard, 1);
-                if (partOn[2] && partProg[2] >= 0) startVoice(partProg[2], note, vel, BusKeyboard, 2);
+                for (int p = 0; p < 3; ++p) {
+                    if (!partOn[p] || partProg[p] < 0) continue;
+                    const int n = partNote(p);
+                    startVoice(partProg[p], n, vel, BusKeyboard, p);
+                    sounded[raw][p] = (int8_t)n;
+                }
+                if (ensemble > 0 && partOn[0]) playEnsemble(raw, partNote(0), vel);
             }
             break;
         }
@@ -733,10 +1030,31 @@ void Engine::handle(const MidiEvent& e) {
             const int ch = e.a, raw = e.b;
             if (raw < 0 || raw > 127) return;
             held[ch & 15][raw] = 0;
-            const int note = std::max(0, std::min(127, raw + transpose + octave * 12));
-            stopVoices(note, -1, false, 0);
-            if (note != raw) stopVoices(raw, -1, false, 0);
+            bool any = false;
+            for (int p = 0; p < 4; ++p) {
+                if (sounded[raw][p] < 0) continue;
+                stopVoices(sounded[raw][p], p, false, 0);
+                sounded[raw][p] = -1;
+                any = true;
+            }
+            for (int i = 0; i < 3; ++i) {
+                if (ensNotes[raw][i] < 0) continue;
+                stopVoices(ensNotes[raw][i], 0, false, 0);
+                ensNotes[raw][i] = -1;
+            }
+            if (manualBassNote[raw] >= 0) {
+                stopVoices(manualBassNote[raw], 8, false, 0);
+                manualBassNote[raw] = -1;
+                any = true;
+            }
+            if (!any) {
+                // Keys pressed before this build tracked them: stop by pitch on the parts.
+                const int note = std::max(0, std::min(127, raw + transpose + octave * 12));
+                for (int p = 0; p < 4; ++p) stopVoices(note, p, false, 0);
+            }
+            const bool wasHeld = arrSt.chordHeld;
             detectChord();
+            if (synchroStop && wasHeld && !arrSt.chordHeld && arrSt.running) stopArrangerNow();
             break;
         }
         case MidiKind::Cc:
@@ -795,19 +1113,19 @@ void Engine::handle(const MidiEvent& e) {
             break;
         case MidiKind::Style:
             if (e.a == 0 || (e.a == 2 && arrSt.running)) {
-                for (int i = 0; i < arr.holdn; ++i) {
-                    stopInternal(arr.holds[i].inst, arr.holds[i].note, arr.holds[i].ch);
-                }
-                arr.holdn = 0;
-                tsfAllNotesOff(4, 9);
+                stopArrangerNow();
+            } else if (e.a == 1 || e.a == 2) {
+                fadeLevel = fadeTarget = 1.0f;
+                fadeStopAtEnd = false;
+                if (!arrSt.running) arr.start(arrSt);
+            } else if (e.a == 3) {
+                arr.book(arrSt, (Section)e.b);
+            } else if (e.a == 4) {
+                arr.setStyle(arrSt, e.b);
             }
-            if (e.a == 0) arr.stop(arrSt);
-            else if (e.a == 1) arr.start(arrSt);
-            else if (e.a == 2) {
-                if (arrSt.running) arr.stop(arrSt);
-                else arr.start(arrSt);
-            } else if (e.a == 3) arr.book(arrSt, (Section)e.b);
-            else if (e.a == 4) arr.setStyle(arrSt, e.b);
+            break;
+        case MidiKind::Control:
+            handleControl(e);
             break;
         default:
             break;
@@ -815,7 +1133,7 @@ void Engine::handle(const MidiEvent& e) {
 }
 
 void Engine::renderSynth(Voice& v, float& L, float& R) {
-    const float freq = midiToHz((float)v.note) * chanBendRatio[v.chan & 15];
+    const float freq = midiToHz((float)v.note + v.tune) * chanBendRatio[v.chan & 15];
     const float dt = freq / sampleRate;
     v.lfoDelay += 1.0f / sampleRate;
     const float vibAmt = v.lfoDelay > 0.32f ? v.vibDepth : 0.0f;
@@ -1311,6 +1629,11 @@ void Engine::renderVoice(Voice& v, float* buses, float* sends, int) {
         renderDrum(v, L, R);
     else
         renderSynth(v, L, R);
+    const int vc = v.chan & 15;
+    const float cg = effGain(vc);
+    const float cp = chanPan[vc];
+    L *= cg * (cp > 0.0f ? 1.0f - cp : 1.0f);
+    R *= cg * (cp < 0.0f ? 1.0f + cp : 1.0f);
     const int b = std::max(0, std::min(kBusCount - 2, v.bus));
     buses[b * 2] += L;
     buses[b * 2 + 1] += R;
@@ -1331,9 +1654,19 @@ void Engine::renderVoice(Voice& v, float* buses, float* sends, int) {
 void Engine::render(float* out, int frames) {
     MidiEvent e;
     while (midi.pop(e)) handle(e);
+
+    // Style fade in / out, stepped per block (SoundFont volumes update per block too).
+    if (fadeLevel != fadeTarget) {
+        const float step = fadeStep * (float)frames;
+        if (fadeLevel < fadeTarget) fadeLevel = std::min(fadeTarget, fadeLevel + step);
+        else fadeLevel = std::max(fadeTarget, fadeLevel - step);
+        if (fadeLevel <= 0.0f && fadeStopAtEnd) stopArrangerNow();
+    }
+    fadeShown.store(fadeLevel);
     syncTsfMixer();
 
     const double ticksPerSample = (arrSt.tempo / 60.0) * (double)kPpq / (double)sampleRate;
+    float blockPeakL = 0.0f, blockPeakR = 0.0f;
     for (int i = 0; i < frames; ++i) {
         if (arrSt.running) {
             arrSt.tickPos += ticksPerSample;
@@ -1342,6 +1675,24 @@ void Engine::render(float* out, int frames) {
                 arr.renderTicks(*this, arrSt, whole, sampleRate);
                 arrSt.tickPos -= whole;
             }
+            if (metroOn && arrSt.running) {
+                const long long beat = arrSt.totalTicks / kPpq;
+                if (beat < metroLastBeat) metroLastBeat = -1;  // the style restarted
+                if (beat != metroLastBeat) {
+                    metroLastBeat = beat;
+                    metronomeClick((int)(beat % arr.styleBeats(arrSt.styleId)));
+                }
+            }
+        } else if (metroOn && metroRun) {
+            metroTicks += ticksPerSample;
+            const long long beat = (long long)(metroTicks / kPpq);
+            if (beat != metroLastBeat) {
+                metroLastBeat = beat;
+                metronomeClick((int)(beat % 4));
+            }
+        } else {
+            metroLastBeat = -1;
+            metroTicks = 0;
         }
 
         float buses[kBusCount * 2]{};
@@ -1382,7 +1733,18 @@ void Engine::render(float* out, int frames) {
         R = limiter.process(outDcR.process(R));
         out[i * 2] = clampf(L, -1.0f, 1.0f);
         out[i * 2 + 1] = clampf(R, -1.0f, 1.0f);
+        blockPeakL = std::max(blockPeakL, std::fabs(out[i * 2]));
+        blockPeakR = std::max(blockPeakR, std::fabs(out[i * 2 + 1]));
     }
+    if (blockPeakL > peakL.load()) peakL.store(blockPeakL);
+    if (blockPeakR > peakR.load()) peakR.store(blockPeakR);
+    int nv = 0;
+    for (int v = 0; v < kMaxVoices; ++v)
+        if (voices[v].active) nv++;
+    if (gmFont) nv += tsf_active_voice_count(gmFont);
+    voiceCount.store(nv);
+    const float decay = std::exp(-(float)frames / (0.18f * sampleRate));
+    for (auto& a : activity) a.store(a.load() * decay);
 }
 
 int Engine::loadSfz(const char* path, char* report, int reportLen) {
@@ -1412,7 +1774,8 @@ int Engine::loadSfz(const char* path, char* report, int reportLen) {
 int Engine::loadAbStyle(const char* path, char* report, int reportLen) {
     Arranger::Style style;
     std::string error;
-    if (!parseAbStyleFile(path, style, error)) {
+    std::vector<std::pair<std::string, std::string>> kits;
+    if (!parseAbStyleFile(path, style, error, &kits)) {
         if (report && reportLen > 0) {
             std::snprintf(report, (size_t)reportLen, "{\"ok\":0,\"reason\":\"%s\"}", error.c_str());
         }
@@ -1427,9 +1790,34 @@ int Engine::loadAbStyle(const char* path, char* report, int reportLen) {
         if (patches[(size_t)i].model == Model::NylonGuitar && acc3 < 0) acc3 = i;
     }
     applyStylePrograms(style, drum, bass, acc1, acc2, acc3);
+    // kit=<file.sfz> per section: an SFZ drum kit next to the .abstyle (AI drum styles
+    // play slices of the song's own drum stem). One load per distinct file.
+    int kitCount = 0, kitFailed = 0;
+    if (!kits.empty()) {
+        std::string dir(path);
+        const size_t slash = dir.find_last_of("/\\");
+        dir = slash == std::string::npos ? std::string() : dir.substr(0, slash + 1);
+        std::vector<std::pair<std::string, int>> loaded;
+        for (const auto& k : kits) {
+            Arranger::Pattern* pat = abStyleSection(style, k.first);
+            if (!pat || k.second.empty() || k.second.find("..") != std::string::npos) continue;
+            int kitId = -1;
+            for (const auto& l : loaded)
+                if (l.first == k.second) kitId = l.second;
+            if (kitId < 0) {
+                char kitReport[256];
+                kitId = loadSfz((dir + k.second).c_str(), kitReport, sizeof(kitReport));
+                loaded.push_back({k.second, kitId});
+                if (kitId >= 0) kitCount++;
+                else kitFailed++;
+            }
+            if (kitId >= 0) pat->drumProg = kitId;
+        }
+    }
     const int id = addStyle(std::move(style));
     if (report && reportLen > 0) {
-        std::snprintf(report, (size_t)reportLen, "{\"ok\":1,\"id\":%d}", id);
+        std::snprintf(report, (size_t)reportLen, "{\"ok\":1,\"id\":%d,\"kits\":%d,\"kitsFailed\":%d}", id,
+                      kitCount, kitFailed);
     }
     return id;
 }

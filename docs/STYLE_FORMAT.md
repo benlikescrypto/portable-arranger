@@ -26,6 +26,11 @@ length=384
 
 Time signature is implied by `length` in PPQ ticks (`kPpq = 96`). 4/4 bar = 384 ticks. 3/4 bar = 288 ticks. 9/8 example: `length` of `(96*9)/2`.
 
+- `meter=3` — beats per bar (2–7, default 4). Variation changes wait for this bar line, and the beat display and metronome count it.
+- `kit=file.sfz` — inside a section: that element's drums play an SFZ kit next to the `.abstyle` instead of the factory kit. Each distinct file loads once. AI drum styles use this: one slice kit per element, with event `note` = slice key.
+
+SFZ extensions read by ArrangerBox: `ab_kit=1` (the patch is a drum kit: one-shot on the drum bus), `ab_category=…` (the browser category). Headers may carry opcodes on the same line (`<region> sample=a.wav key=60`), and values may contain spaces up to the next `opcode=`.
+
 ## Sections
 
 `intro1` `intro2` `intro3` `var1` `var2` `var3` `var4` (`main_a`…`main_d` aliases) `fill1`…`fill4` `break` `end1` `end2` `end3`

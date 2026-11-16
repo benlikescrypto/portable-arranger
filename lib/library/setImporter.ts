@@ -218,7 +218,7 @@ export async function writeSavedSelection(patch: SavedSelection) {
     const prev = await readSavedSelection()
     const next = { ...prev, ...patch }
     const file = selectionFile()
-    if (!file.exists) file.create({ intermediates: true, idempotent: true })
+    if (!file.exists) file.create({ intermediates: true })
     file.write(JSON.stringify(next))
   } catch (error) {
     logImport("write library-state failed", error)

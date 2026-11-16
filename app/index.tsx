@@ -1,5 +1,5 @@
-import { ArrangerScreen } from "@/components/arranger/ArrangerScreen"
+import { ProScreen } from "@/components/pro/ProScreen"
 
 export default function Index() {
-  return <ArrangerScreen />
+  return <ProScreen />
 }

@@ -142,6 +142,19 @@ void tokenizeLine(const std::string& line, std::vector<std::pair<std::string, st
                 }
                 val += line[i++];
             }
+            // SFZ values run until the next opcode: "global_label=Pop Kit 2" or
+            // "sample=My Piano C4.wav". Words without '=' belong to this value.
+            for (;;) {
+                size_t j = i;
+                while (j < line.size() && std::isspace((unsigned char)line[j])) ++j;
+                if (j >= line.size() || line[j] == '/' || line[j] == '#' || line[j] == '<') break;
+                size_t w = j;
+                while (w < line.size() && !std::isspace((unsigned char)line[w])) ++w;
+                const std::string word = line.substr(j, w - j);
+                if (word.find('=') != std::string::npos) break;
+                val += " " + word;
+                i = w;
+            }
         }
         for (char& c : key) c = (char)std::tolower((unsigned char)c);
         if (!key.empty()) kv.push_back({key, val});
@@ -180,6 +193,8 @@ bool parseSfzFile(const char* path, std::vector<Sample>& samples, Patch& patch, 
     std::vector<Region> regions;
     std::string section = "global";
     Region* cur = &global;
+    std::string pendingRest;
+    bool kit = false;
 
     std::istringstream in(text);
     std::string line;
@@ -187,6 +202,19 @@ bool parseSfzFile(const char* path, std::vector<Sample>& samples, Patch& patch, 
         if (!line.empty() && line.back() == '\r') line.pop_back();
         const auto cmt = line.find("//");
         if (cmt != std::string::npos) line = line.substr(0, cmt);
+        // "<region> sample=a.wav key=60": a header with opcodes after it on the same line.
+        {
+            const std::string t = trim(line);
+            const size_t close = t.find('>');
+            if (t.size() > 2 && t[0] == '<' && close != std::string::npos && close + 1 < t.size()) {
+                const std::string head = t.substr(0, close + 1);
+                const std::string rest = t.substr(close + 1);
+                if (!headerOf(head).empty()) {
+                    line = head;
+                    pendingRest = rest;
+                }
+            }
+        }
         const std::string hdr = headerOf(line);
         if (!hdr.empty()) {
             if (hdr == "control") section = "control";
@@ -202,8 +230,10 @@ bool parseSfzFile(const char* path, std::vector<Sample>& samples, Patch& patch, 
                 section = "region";
                 cur = &regions.back();
             }
-            continue;
+            if (pendingRest.empty()) continue;
+            line = pendingRest;
         }
+        pendingRest.clear();
         std::vector<std::pair<std::string, std::string>> kv;
         tokenizeLine(line, kv);
         for (const auto& p : kv) {
@@ -213,6 +243,15 @@ bool parseSfzFile(const char* path, std::vector<Sample>& samples, Patch& patch, 
             }
             if (p.first == "global_label" || p.first == "master_label") {
                 std::strncpy(patch.name, unquote(p.second).c_str(), sizeof(patch.name) - 1);
+                continue;
+            }
+            // ArrangerBox extensions: the browser category and "this is a drum kit".
+            if (p.first == "ab_category") {
+                std::strncpy(patch.category, unquote(p.second).c_str(), sizeof(patch.category) - 1);
+                continue;
+            }
+            if (p.first == "ab_kit") {
+                kit = std::atoi(p.second.c_str()) != 0;
                 continue;
             }
             applyOpcode(*cur, p.first, p.second);
@@ -283,7 +322,18 @@ bool parseSfzFile(const char* path, std::vector<Sample>& samples, Patch& patch, 
         if (error.empty()) error = "no SFZ regions resolved to WAV samples";
         return false;
     }
-    prepareSampledPatch(patch, false);
+    {
+        // prepareSampledPatch resets the envelope; keep what the SFZ asked for.
+        const float a = patch.attack, d = patch.decay, s = patch.sustain, r = patch.release;
+        const Patch defaults{};
+        prepareSampledPatch(patch, kit);
+        if (!kit) {
+            if (a != defaults.attack) patch.attack = a;
+            if (d != defaults.decay) patch.decay = d;
+            if (s != defaults.sustain) patch.sustain = s;
+            if (r != defaults.release) patch.release = r;
+        }
+    }
     patch.source = PatchSource::Sfz;
     patch.sampled = true;
     if (!patch.name[0]) {

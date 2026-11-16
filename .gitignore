@@ -67,3 +67,15 @@ yarn-error.*
 # host test scratch (compilers, downloaded styles)
 /tmp/
 /modules/audio/cpp/tests/build/
+
+# EAS Simulator session (contains access tokens)
+.env.eas-simulator
+
+# AI server token (also in Modal secret arrangerbox-ai)
+server/.env.local
+.env
+
+# Python / build output
+__pycache__/
+*.pyc
+/modules/audio/android/build/

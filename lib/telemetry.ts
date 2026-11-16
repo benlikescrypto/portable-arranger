@@ -1,0 +1,125 @@
+import { audio, EngineQuery } from "arrangerbox-audio"
+import { useSyncExternalStore } from "react"
+
+/**
+ * Fast engine read-back (beat, bar, booked element, meters, chord) for the display.
+ * One poll feeds every subscriber, so only the widgets that read it re-render,
+ * not the whole arranger tree.
+ */
+export type Telemetry = {
+  tick: number
+  playing: boolean
+  section: number
+  booked: number
+  variation: number
+  beat: number
+  bar: number
+  fade: number
+  chordRoot: number
+  chordType: number
+  chordHeld: boolean
+  bassRoot: number
+  voices: number
+  peakL: number
+  peakR: number
+  activity: number[]
+  metroBeat: number
+  tempo: number
+  live: boolean
+}
+
+const empty: Telemetry = {
+  tick: 0,
+  playing: false,
+  section: 4,
+  booked: 0,
+  variation: 1,
+  beat: 0,
+  bar: 0,
+  fade: 1,
+  chordRoot: 0,
+  chordType: 0,
+  chordHeld: false,
+  bassRoot: -1,
+  voices: 0,
+  peakL: 0,
+  peakR: 0,
+  activity: new Array(16).fill(0),
+  metroBeat: -1,
+  tempo: 120,
+  live: false,
+}
+
+let current: Telemetry = empty
+const listeners = new Set<() => void>()
+let timer: ReturnType<typeof setInterval> | null = null
+// Meters fall back smoothly instead of jumping to the instantaneous peak.
+let holdL = 0
+let holdR = 0
+
+function poll() {
+  const snap = audio.snapshot()
+  const q = audio.queryAll()
+  const live = !!snap
+  const peakL = q[EngineQuery.PeakL] ?? 0
+  const peakR = q[EngineQuery.PeakR] ?? 0
+  holdL = Math.max(peakL, holdL * 0.82)
+  holdR = Math.max(peakR, holdR * 0.82)
+  const next: Telemetry = {
+    tick: current.tick + 1,
+    playing: snap?.playing ?? false,
+    section: snap?.section ?? current.section,
+    booked: q[EngineQuery.Booked] ?? 0,
+    variation: q[EngineQuery.Variation] ?? current.variation,
+    beat: q[EngineQuery.Beat] ?? 0,
+    bar: q[EngineQuery.Bar] ?? 0,
+    fade: q[EngineQuery.Fade] ?? 1,
+    chordRoot: snap?.chordRoot ?? 0,
+    chordType: snap?.chordType ?? 0,
+    chordHeld: (q[EngineQuery.ChordHeld] ?? 0) > 0.5,
+    bassRoot: q[EngineQuery.BassRoot] ?? -1,
+    voices: q[EngineQuery.Voices] ?? 0,
+    peakL: holdL,
+    peakR: holdR,
+    activity: q.length > EngineQuery.Activity ? q.slice(EngineQuery.Activity, EngineQuery.Activity + 16) : empty.activity,
+    metroBeat: q[EngineQuery.MetroBeat] ?? -1,
+    tempo: snap?.tempo ?? current.tempo,
+    live,
+  }
+  current = next
+  listeners.forEach((fn) => fn())
+}
+
+function subscribe(fn: () => void) {
+  listeners.add(fn)
+  if (!timer) timer = setInterval(poll, 33)
+  return () => {
+    listeners.delete(fn)
+    if (listeners.size === 0 && timer) {
+      clearInterval(timer)
+      timer = null
+    }
+  }
+}
+
+function snapshot() {
+  return current
+}
+
+/** Subscribe to one derived value; the component re-renders only when it changes. */
+export function useTelemetry<T>(select: (t: Telemetry) => T): T {
+  return useSyncExternalStore(
+    subscribe,
+    () => select(current),
+    () => select(empty)
+  )
+}
+
+/** A clock for blinking LEDs (booked elements), ~2 Hz, in step with the poll. */
+export function useBlink() {
+  return useTelemetry((t) => Math.floor(t.tick / 8) % 2 === 0)
+}
+
+export function telemetryNow() {
+  return snapshot()
+}

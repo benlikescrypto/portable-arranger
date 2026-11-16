@@ -93,6 +93,10 @@ class ArrangerBoxAudioModule : Module() {
     Function("setTranspose") { semis: Int -> EngineNative.nativeSetTranspose(semis) }
     Function("setOctave") { oct: Int -> EngineNative.nativeSetOctave(oct) }
     Function("setFx") { which: Int, mix: Double -> EngineNative.nativeSetFx(which, mix.toFloat()) }
+    Function("control") { cmd: Int, a: Int, b: Int, c: Int, v: Double ->
+      EngineNative.nativeControl(cmd, a, b, c, v.toFloat())
+    }
+    Function("queryAll") { count: Int -> EngineNative.nativeQueryAll(count).map { it.toDouble() } }
 
     Function("snapshot") {
       mapOf(

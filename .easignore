@@ -1,0 +1,81 @@
+# Same as .gitignore, except .env is uploaded so builds carry EXPO_PUBLIC_AI_TOKEN.
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+expo.gitignore
+
+# Native / Android
+/.gradle/
+/.idea/
+/build/
+/app/build/
+/legacy-android/.gradle/
+/legacy-android/build/
+/legacy-android/app/build/
+/legacy-android/app/.cxx/
+/legacy-android/local.properties
+/local.properties
+*.iml
+.DS_Store
+captures/
+.cxx/
+*.apk
+*.ap_
+*.aab
+*.keystore
+*.jks
+*.p12
+*.p8
+*.key
+*.mobileprovision
+keystore.properties
+upload-keystore.jks
+upload-keystore.p12
+play-service-account.json
+CMakeUserPresets.json
+.kotlin/
+*.orig.*
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders (CNG)
+/ios
+/android
+
+# local tunnel binary (downloaded by npm run dev:tunnel)
+/scripts/bin/
+
+# host test scratch (compilers, downloaded styles)
+/tmp/
+/modules/audio/cpp/tests/build/
+
+# EAS Simulator session (contains access tokens)
+.env.eas-simulator
+
+# AI server token (also in Modal secret arrangerbox-ai)
+server/.env.local
+
+# Python / build output
+__pycache__/
+*.pyc
+/modules/audio/android/build/

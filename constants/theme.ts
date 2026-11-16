@@ -43,6 +43,31 @@ export const Lcd = {
   low: "#6FD9A8",
 } as const
 
+/** Control-panel hardware: rubber keys with LEDs on a dark chassis. */
+export const Hw = {
+  chassis: "#0E0F12",
+  panel: "#16181C",
+  panelEdge: "#24272D",
+  groove: "#0A0B0D",
+  key: "#2B2E34",
+  keyHi: "#3A3E45",
+  keyDown: "#202227",
+  keyEdge: "#08090B",
+  label: "#D3D7DD",
+  sub: "#7E858F",
+  section: "#8C939D",
+  ledOff: "#2C1714",
+  ledRed: "#FF3A2C",
+  ledGreen: "#33E07A",
+  ledGreenOff: "#12261A",
+  ledAmber: "#FFB224",
+  ledAmberOff: "#2A1F0C",
+  ledBlue: "#4FA3FF",
+  ledBlueOff: "#0F1D2E",
+  start: "#1C3A24",
+  stop: "#3A1714",
+} as const
+
 export const NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"] as const
 export const CHORD_TYPES = ["", "m", "7", "m7", "M7", "sus4", "dim", "6", "m6", "9", "sus2", "aug"] as const
 

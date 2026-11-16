@@ -2,7 +2,7 @@ import { audio, isAudioNativeAvailable } from "arrangerbox-audio"
 import { midi } from "arrangerbox-midi"
 import * as SplashScreen from "expo-splash-screen"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Alert } from "react-native"
+import { Alert, Platform } from "react-native"
 
 import {
   cachedFileName,
@@ -20,10 +20,12 @@ import {
   writeSavedSelection,
   type ImportMode,
 } from "@/lib/library/setImporter"
+import { previewSounds, previewStyles } from "@/lib/webPreview"
 import type { ArrangerUiState, LibraryKind, Mode, PadItem, SoundItem, StyleItem } from "@/lib/types"
 
 function catalogSounds(): SoundItem[] {
-  return audio.listSounds().map((item) => ({
+  // AI drum styles load one slice kit per element; those are style internals, not sounds.
+  return audio.listSounds().filter((item) => item.category !== "AI Kit").map((item) => ({
     ...item,
     bank: item.source === "FACTORY" || !item.source ? "FACTORY" : item.source,
     source: item.source ?? "FACTORY",
@@ -139,9 +141,20 @@ export function useArranger() {
       hideSplash()
     }, 2500)
     ;(async () => {
-      if (!isAudioNativeAvailable) {
+      if (!isAudioNativeAvailable || Platform.OS === "web") {
+        // Web preview: names only, nothing plays (there is no audio engine on web).
+        const sounds = Platform.OS === "web" ? previewSounds() : []
+        const styles = Platform.OS === "web" ? previewStyles() : []
         setState((s) => ({
           ...s,
+          sounds,
+          styles,
+          upper1: 0,
+          upper2: 7,
+          upper3: 5,
+          lower: 6,
+          styleId: 0,
+          tempo: styles[0]?.tempo ?? s.tempo,
           arrangerReady: true,
           importing: false,
           importMessage: "Native audio requires an Expo development build.",
@@ -320,15 +333,24 @@ export function useArranger() {
     const timer = setInterval(() => {
       const snap = audio.snapshot()
       if (!snap) return
-      setState((s) => ({
-        ...s,
-        playing: snap.playing,
-        section: snap.section,
-        chordRoot: snap.chordRoot,
-        chordType: snap.chordType,
-        tempo: snap.tempo,
-        latencyMs: snap.latencyMs,
-      }))
+      setState((s) =>
+        s.playing === snap.playing &&
+        s.section === snap.section &&
+        s.chordRoot === snap.chordRoot &&
+        s.chordType === snap.chordType &&
+        s.tempo === snap.tempo &&
+        s.latencyMs === snap.latencyMs
+          ? s
+          : {
+              ...s,
+              playing: snap.playing,
+              section: snap.section,
+              chordRoot: snap.chordRoot,
+              chordType: snap.chordType,
+              tempo: snap.tempo,
+              latencyMs: snap.latencyMs,
+            }
+      )
     }, 50)
     return () => {
       alive = false
@@ -359,12 +381,12 @@ export function useArranger() {
     })
   }, [])
 
-  const assignSound = useCallback((s: ArrangerUiState, id: number, part: number, sounds: SoundItem[]) => {
+  const assignSound = useCallback((s: ArrangerUiState, id: number, part: number, sounds: SoundItem[], enable = true) => {
     const item = sounds.find((row) => row.id === id)
     const prog = engineProgram(item)
     if (prog >= 0) {
       audio.setPartProgram(part, prog)
-      if (part > 0) audio.setPartEnable(part, true)
+      if (part > 0 && enable) audio.setPartEnable(part, true)
     }
     if (item?.name) {
       void writeSavedSelection(
@@ -378,8 +400,8 @@ export function useArranger() {
       )
     }
     const recentSounds = [id, ...s.recentSounds.filter((x) => x !== id)].slice(0, 12)
-    if (part === 1) return { ...s, sounds, upper2: id, upper2On: true, recentSounds }
-    if (part === 2) return { ...s, sounds, upper3: id, upper3On: true, recentSounds }
+    if (part === 1) return { ...s, sounds, upper2: id, upper2On: enable ? true : s.upper2On, recentSounds }
+    if (part === 2) return { ...s, sounds, upper3: id, upper3On: enable ? true : s.upper3On, recentSounds }
     if (part === 3) return { ...s, sounds, lower: id, recentSounds }
     return { ...s, sounds, upper1: id, recentSounds }
   }, [])
@@ -452,7 +474,7 @@ export function useArranger() {
   )
 
   const selectSound = useCallback(
-    (id: number, part = 0) => {
+    (id: number, part = 0, enable = true) => {
       void (async () => {
         const current = await new Promise<ArrangerUiState>((resolve) => {
           setState((s) => {
@@ -462,12 +484,12 @@ export function useArranger() {
         })
         const item = current.sounds.find((row) => row.id === id)
         if (item?.loaded !== false && engineProgram(item) >= 0) {
-          setState((s) => assignSound(s, id, part, s.sounds))
+          setState((s) => assignSound(s, id, part, s.sounds, enable))
           return
         }
         const loaded = await ensureLoaded("sound", id, item)
         if (loaded.ok) {
-          setState((s) => assignSound(s, id, part, s.sounds))
+          setState((s) => assignSound(s, id, part, s.sounds, enable))
           return
         }
         if (loaded.reason) {
@@ -493,8 +515,16 @@ export function useArranger() {
     })
   }, [])
 
+  const setPartOn = useCallback((part: number, on: boolean) => {
+    if (part < 1 || part > 3) return
+    audio.setPartEnable(part, on)
+    setState((s) =>
+      part === 1 ? { ...s, upper2On: on } : part === 2 ? { ...s, upper3On: on } : { ...s, lowerOn: on }
+    )
+  }, [])
+
   const selectStyle = useCallback(
-    (id: number) => {
+    (id: number, keepTempo = false) => {
       void (async () => {
         const current = await new Promise<ArrangerUiState>((resolve) => {
           setState((s) => {
@@ -505,10 +535,10 @@ export function useArranger() {
         const apply = (s: ArrangerUiState, styles: StyleItem[]) => {
           const style = styles.find((item) => item.id === id)
           const prog = engineProgram(style)
-          const tempo = style?.tempo || s.tempo || 100
+          const tempo = keepTempo ? s.tempo : style?.tempo || s.tempo || 100
           if (prog >= 0) {
             audio.setStyle(prog)
-            if (style?.tempo) audio.setTempo(tempo)
+            audio.setTempo(tempo)
           }
           if (style?.name) void writeSavedSelection({ styleName: style.name })
           return {
@@ -705,6 +735,7 @@ export function useArranger() {
       setLibraryFilter,
       selectSound,
       togglePart,
+      setPartOn,
       selectStyle,
       selectPad,
       book,
@@ -712,6 +743,15 @@ export function useArranger() {
       setAccVolume,
       setStyleVolume,
       importSet,
+      /** Re-read the engine's sound / style lists after something loaded outside the import flow. */
+      refreshCatalog: () => {
+        const disk = lastLoadedDiskCatalog()
+        setState((s) => ({
+          ...s,
+          sounds: mergeSounds(catalogSounds(), disk.sounds),
+          styles: mergeStyles(catalogStyles(), disk.styles),
+        }))
+      },
       toggleStart: () => {
         if (isAudioNativeAvailable) audio.arrangerToggle()
       },
@@ -800,6 +840,7 @@ export function useArranger() {
       setMixer,
       setMode,
       setQuery,
+      setPartOn,
       togglePart,
     ]
   )

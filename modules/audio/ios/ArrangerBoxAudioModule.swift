@@ -66,6 +66,12 @@ func arrangerbox_set_octave(_ oct: Int32)
 @_silgen_name("arrangerbox_set_fx")
 func arrangerbox_set_fx(_ which: Int32, _ mix: Float)
 
+@_silgen_name("arrangerbox_control")
+func arrangerbox_control(_ cmd: Int32, _ a: Int32, _ b: Int32, _ c: Int32, _ v: Float)
+
+@_silgen_name("arrangerbox_query")
+func arrangerbox_query(_ what: Int32) -> Float
+
 @_silgen_name("arrangerbox_sound_count")
 func arrangerbox_sound_count() -> Int32
 
@@ -256,6 +262,13 @@ public class ArrangerBoxAudioModule: Module {
     Function("setTranspose") { (semis: Int) in arrangerbox_set_transpose(Int32(semis)) }
     Function("setOctave") { (oct: Int) in arrangerbox_set_octave(Int32(oct)) }
     Function("setFx") { (which: Int, mix: Double) in arrangerbox_set_fx(Int32(which), Float(mix)) }
+    Function("control") { (cmd: Int, a: Int, b: Int, c: Int, v: Double) in
+      arrangerbox_control(Int32(cmd), Int32(a), Int32(b), Int32(c), Float(v))
+    }
+    Function("queryAll") { (count: Int) -> [Double] in
+      let n = max(0, min(64, count))
+      return (0..<n).map { Double(arrangerbox_query(Int32($0))) }
+    }
 
     Function("snapshot") {
       [

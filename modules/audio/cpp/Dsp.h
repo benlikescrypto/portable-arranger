@@ -185,6 +185,11 @@ struct Adsr {
                 break;
             case Sustain:
                 level = sLev;
+                // A zero sustain (drum hits, plucks) has nothing left to play: free it.
+                if (sLev <= 0.0f) {
+                    stage = Idle;
+                    return 0.0f;
+                }
                 break;
             case Release:
                 level *= rMul;

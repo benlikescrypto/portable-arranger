@@ -145,6 +145,10 @@ void arrangerbox_set_octave(int oct) {
 void arrangerbox_set_fx(int which, float mix) {
     if (auto* e = live()) e->setFx(which, mix);
 }
+void arrangerbox_control(int cmd, int a, int b, int c, float v) {
+    if (auto* e = live()) e->control(cmd, a, b, v, c);
+}
+float arrangerbox_query(int what) { return live() ? live()->query(what) : 0.0f; }
 
 int arrangerbox_sound_count(void) { return live() ? live()->soundCount() : 0; }
 void arrangerbox_sound_name(int id, char* out, int maxLen) {

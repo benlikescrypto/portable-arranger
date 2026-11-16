@@ -245,6 +245,7 @@ int main() {
     expect(sfzId >= 0, "sfz_loads");
     if (sfzId >= 0) {
         eng.setPartProgram(0, sfzId);
+        eng.setSynchro(false);  // key 40 is a chord key: it would start the style
         eng.noteOn(0, 40, 40);
         eng.noteOn(0, 40, 100);
         eng.noteOn(0, 80, 90);
@@ -525,5 +526,378 @@ int main() {
     expect(foundGrand, "pcg_extracts_program_name");
 
     std::printf("%s\n", fails ? "FAILED" : "OK");
+    {
+        // Note transposition: recorded in C major 7, played on other chords.
+        expect(pa::nttNote(64, 0, 1) == 63, "ntt_minor_third");
+        expect(pa::nttNote(71, 2, 2) == 72, "ntt_dominant_seventh");
+        expect(pa::nttNote(67, 0, 6) == 66, "ntt_dim_fifth");
+        expect(pa::nttNote(60, 5, 0) == 65, "ntt_root_moves");
+    }
+
+    {
+        // Arranger controls on a stand-alone engine (factory styles, built-in synth).
+        auto e = std::make_unique<pa::Engine>();
+        e->prepare(48000.0f);
+        std::vector<float> b;
+        auto run = [&](float secs) {
+            const int n = (int)(secs * 48000.0f);
+            b.assign((size_t)n * 2, 0.0f);
+            for (int off = 0; off < n; off += 256) e->render(b.data() + off * 2, std::min(256, n - off));
+        };
+        e->setTempo(120.0f);
+        e->setSynchro(false);
+        e->setAutoFill(false);
+        e->bookSection((int)pa::Section::Var1);
+        e->arrangerStart();
+        run(0.76f);  // 1.5 beats at 120 bpm
+        expect(e->isPlaying(), "style_starts");
+        expect((int)e->query(pa::QBeat) == 1, "beat_counter_advances");
+        e->bookSection((int)pa::Section::Var2);
+        run(0.05f);
+        expect(e->currentSection() == (int)pa::Section::Var1 &&
+                       (int)e->query(pa::QBooked) == (int)pa::Section::Var2,
+               "variation_waits_for_bar_line");
+        run(1.5f);
+        expect(e->currentSection() == (int)pa::Section::Var2 && (int)e->query(pa::QBooked) == 0,
+               "variation_changes_on_bar_line");
+        e->setAutoFill(true);
+        e->bookSection((int)pa::Section::Var3);
+        run(0.02f);
+        expect(e->currentSection() == (int)pa::Section::Fill3, "auto_fill_starts_now");
+        run(2.2f);
+        expect(e->currentSection() == (int)pa::Section::Var3, "auto_fill_lands_on_variation");
+        e->control(pa::CmdFade, 0, 2, 0.5f);
+        run(0.8f);
+        expect(!e->isPlaying(), "fade_out_stops_style");
+        expect(e->currentSection() == (int)pa::Section::Var3, "stop_keeps_variation");
+
+        e->control(pa::CmdFade, 0, 1, 0.5f);
+        run(0.05f);
+        const float fadeMid = e->query(pa::QFade);
+        run(0.7f);
+        expect(e->isPlaying() && fadeMid < 0.5f && e->query(pa::QFade) > 0.99f, "fade_in_starts_and_rises");
+        e->bookSection((int)pa::Section::Ending1);
+        run(12.0f);
+        expect(!e->isPlaying(), "ending_stops_style");
+
+        // Synchro Start + Synchro Stop from the chord hand.
+        e->setSplit(60);
+        e->setSynchro(true);
+        e->control(pa::CmdSynchroStop, 0, 1, 0.0f);
+        e->noteOn(0, 48, 100);
+        run(0.05f);
+        expect(e->isPlaying(), "synchro_start");
+        e->noteOff(0, 48);
+        run(0.05f);
+        expect(!e->isPlaying(), "synchro_stop");
+        e->control(pa::CmdSynchroStop, 0, 0, 0.0f);
+        e->setSynchro(false);
+
+        // One-finger chords: C with a black key below is C minor, with a white key C7.
+        e->control(pa::CmdChordMode, 0, 1, 0.0f);
+        e->noteOn(0, 48, 100);
+        e->noteOn(0, 46, 100);
+        run(0.02f);
+        expect(e->currentChordRoot() == 0 && e->currentChordType() == 1, "one_finger_minor");
+        expect((int)e->query(pa::QChordHeld) == 1, "chord_held_reported");
+        e->noteOff(0, 46);
+        e->noteOff(0, 48);
+        e->noteOn(0, 48, 100);
+        e->noteOn(0, 47, 100);
+        run(0.02f);
+        expect(e->currentChordRoot() == 0 && e->currentChordType() == 2, "one_finger_seventh");
+        e->noteOff(0, 47);
+        e->noteOff(0, 48);
+        run(0.02f);
+        expect((int)e->query(pa::QChordHeld) == 0, "chord_release_reported");
+        e->control(pa::CmdChordMode, 0, 0, 0.0f);
+
+        // Bass inversion: E G C reads as C with E in the bass.
+        e->control(pa::CmdBassInversion, 0, 1, 0.0f);
+        e->noteOn(0, 40, 100);
+        e->noteOn(0, 43, 100);
+        e->noteOn(0, 48, 100);
+        run(0.02f);
+        expect(e->currentChordRoot() == 0 && (int)e->query(pa::QBassRoot) == 4, "bass_inversion_reports_bass");
+        for (int n : {40, 43, 48}) e->noteOff(0, n);
+        run(0.3f);
+
+        // Channel mute and the per-part octave.
+        auto level = [&](int note) {
+            e->noteOn(0, note, 110);
+            run(0.2f);
+            const float r = rms(b.data(), (int)b.size());
+            e->noteOff(0, note);
+            run(1.0f);
+            return r;
+        };
+        const float up1 = level(72);
+        e->control(pa::CmdChannelMute, 0, 1, 0.0f);
+        const float muted = level(72);
+        e->control(pa::CmdChannelMute, 0, 0, 0.0f);
+        expect(up1 > 0.001f && muted < up1 * 0.01f, "channel_mute_silences_part");
+        e->control(pa::CmdChannelGain, 0, 0, 0.5f);
+        const float half = level(72);
+        e->control(pa::CmdChannelGain, 0, 0, 1.0f);
+        expect(half < up1 * 0.75f && half > up1 * 0.25f, "channel_gain_scales_part");
+        e->control(pa::CmdPartOctave, 0, 1, 0.0f);
+        e->noteOn(0, 72, 110);
+        run(0.05f);
+        e->noteOff(0, 72);
+        run(1.2f);
+        expect(e->query(pa::QVoices) < 1.0f, "octave_shifted_note_releases");
+        e->control(pa::CmdPartOctave, 0, 0, 0.0f);
+
+        // Split off: the upper part plays on the left side too.
+        e->setPartEnable(3, false);
+        e->control(pa::CmdSplitOn, 0, 0, 0.0f);
+        const float fullLeft = level(40);
+        e->control(pa::CmdSplitOn, 0, 1, 0.0f);
+        const float splitLeft = level(40);
+        expect(fullLeft > 0.001f && splitLeft < fullLeft * 0.01f, "split_off_plays_upper_everywhere");
+
+        // Ensemble adds harmony under Upper 1.
+        e->noteOn(0, 48, 100);
+        e->noteOn(0, 52, 100);
+        e->noteOn(0, 55, 100);
+        run(0.02f);
+        for (int n : {48, 52, 55}) e->noteOff(0, n);
+        e->control(pa::CmdEnsemble, 0, 3, 0.0f);
+        e->noteOn(0, 79, 100);
+        run(0.02f);
+        const float withEns = e->query(pa::QVoices);
+        e->noteOff(0, 79);
+        run(1.2f);
+        expect(withEns >= 4.0f, "ensemble_block_adds_three_voices");
+        expect(e->query(pa::QVoices) < 1.0f, "ensemble_notes_release");
+        e->control(pa::CmdEnsemble, 0, 0, 0.0f);
+
+        // Metronome runs without the style.
+        e->control(pa::CmdMetronome, 0, 1, 0.8f);
+        e->control(pa::CmdMetronomeRun, 0, 1, 0.0f);
+        run(0.6f);
+        expect((int)e->query(pa::QMetroBeat) == 1, "metronome_counts_beats");
+        e->control(pa::CmdMetronomeRun, 0, 0, 0.0f);
+        e->control(pa::CmdMetronome, 0, 0, 0.0f);
+
+        // Pads play on their own channel and stop.
+        e->query(pa::QPeakL);
+        e->control(pa::CmdPadOn, 0, 72, 110.0f, 1);
+        run(0.2f);
+        expect(e->query(pa::QPeakL) > 0.001f && e->query(pa::QActivity + 11) > 0.1f, "pad_plays");
+        e->control(pa::CmdPadsOff, 0, 0, 0.0f);
+        run(1.2f);
+        expect(e->query(pa::QVoices) < 1.0f, "pads_off_stops");
+
+        // Quarter-tone sub scale changes the played pitch of that key only.
+        auto zeroCross = [&](int note) {
+            e->noteOn(0, note, 110);
+            run(0.4f);
+            int zc = 0;
+            for (size_t i = 24000; i + 2 < b.size(); i += 2)
+                if ((b[i] <= 0.0f) != (b[i + 2] <= 0.0f)) zc++;
+            e->noteOff(0, note);
+            run(1.0f);
+            return zc;
+        };
+        e->setPartProgram(0, 0);
+        const int plain = zeroCross(64);
+        e->control(pa::CmdScaleCents, 4, 0, -50.0f);
+        const int quarter = zeroCross(64);
+        e->control(pa::CmdScaleCents, 4, 0, 0.0f);
+        if (!(quarter < plain)) std::printf("sub scale zc plain=%d quarter=%d\n", plain, quarter);
+        expect(quarter < plain, "sub_scale_lowers_key");
+    }
+
+    {
+        // The same controls on the GM SoundFont path the app uses for factory sounds.
+        std::string sf2 = __FILE__;
+        sf2 = sf2.substr(0, sf2.find_last_of("/\\")) + "/../../factory/GeneralUser-GS.sf2";
+        auto g = std::make_unique<pa::Engine>();
+        g->prepare(48000.0f);
+        if (g->loadSoundfont(sf2.c_str()) > 0) {
+            std::vector<float> b;
+            auto run = [&](float secs) {
+                const int n = (int)(secs * 48000.0f);
+                b.assign((size_t)n * 2, 0.0f);
+                for (int off = 0; off < n; off += 256) g->render(b.data() + off * 2, std::min(256, n - off));
+            };
+            auto level = [&](int note) {
+                g->noteOn(0, note, 110);
+                run(0.25f);
+                const float r = rms(b.data(), (int)b.size());
+                g->noteOff(0, note);
+                run(1.5f);
+                return r;
+            };
+            g->setSynchro(false);
+            const float on = level(72);
+            g->control(pa::CmdChannelMute, 0, 1, 0.0f);
+            const float muted = level(72);
+            g->control(pa::CmdChannelMute, 0, 0, 0.0f);
+            expect(on > 0.001f && muted < on * 0.02f, "gm_channel_mute");
+            g->control(pa::CmdChannelGain, 0, 0, 0.4f);
+            const float low = level(72);
+            g->control(pa::CmdChannelGain, 0, 0, 1.0f);
+            expect(low < on * 0.8f && low > 0.0005f, "gm_channel_gain");
+            g->query(pa::QPeakL);
+            g->control(pa::CmdPadOn, 0, 67, 110.0f, 0);
+            run(0.3f);
+            expect(g->query(pa::QPeakL) > 0.002f, "gm_pad_plays");
+            g->control(pa::CmdPadsOff, 0, 0, 0.0f);
+            run(2.0f);
+            g->query(pa::QPeakL);
+            run(0.1f);
+            expect(g->query(pa::QPeakL) < 0.01f, "gm_pads_off");
+            g->control(pa::CmdMetronome, 0, 1, 1.0f);
+            g->control(pa::CmdMetronomeRun, 0, 1, 0.0f);
+            run(0.1f);
+            expect(g->query(pa::QPeakL) > 0.002f, "gm_metronome_sounds");
+            g->control(pa::CmdMetronomeRun, 0, 0, 0.0f);
+        } else {
+            std::printf("SKIP gm control tests (no %s)\n", sf2.c_str());
+        }
+    }
+
+    {
+        // AI drum style: per-element SFZ slice kits (kit=), 3/4 meter, ArrangerBox SFZ opcodes.
+        const std::string dir = tempDir();
+        writeWav16Stereo(dir + "/ab_ai_kit.wav", 9600);
+        {
+            std::ofstream k(dir + "/ab_ai_kit.sfz");
+            k << "<control>\n<global> global_label=Waltz Kit ab_kit=1 ab_category=AI Kit\n";
+            k << "<group>\nloop_mode=one_shot\n";
+            k << "<region> sample=ab_ai_kit.wav key=0 offset=0 end=4799\n";
+            k << "<region> sample=ab_ai_kit.wav key=1 offset=4800 end=9599\n";
+        }
+        auto e = std::make_unique<pa::Engine>();
+        e->prepare(48000.0f);
+        char rep[256];
+        const int kitId = e->loadSfz((dir + "/ab_ai_kit.sfz").c_str(), rep, sizeof(rep));
+        expect(kitId >= 0 && std::strstr(rep, "\"zones\":2") != nullptr, "sfz_header_line_opcodes");
+        expect(kitId >= 0 && std::strcmp(e->soundCategory(kitId), "AI Kit") == 0 &&
+                       std::strcmp(e->soundName(kitId), "Waltz Kit") == 0,
+               "sfz_ab_category_and_label");
+        {
+            std::ofstream st(dir + "/ab_ai_waltz.abstyle");
+            st << "ABSTYLE1\nname=AI Waltz\ncategory=AI Drums\ntempo=120\nmeter=3\n";
+            st << "section=var1\nlength=288\nkit=ab_ai_kit.sfz\n0,0,0,127,96,abs\n96,0,1,127,96,abs\n";
+            st << "section=var2\nlength=288\nkit=ab_ai_kit.sfz\n0,0,1,127,96,abs\n";
+        }
+        const int before = e->soundCount();
+        const int sid = e->loadAbStyle((dir + "/ab_ai_waltz.abstyle").c_str(), rep, sizeof(rep));
+        expect(sid >= 0 && std::strstr(rep, "\"kits\":1,\"kitsFailed\":0") != nullptr, "abstyle_kit_loads_once");
+        expect(e->soundCount() == before + 1, "abstyle_kit_shared_between_sections");
+        std::vector<float> b;
+        int maxBeat = 0;
+        auto run = [&](float secs) {
+            const int n = (int)(secs * 48000.0f);
+            b.assign((size_t)n * 2, 0.0f);
+            for (int off = 0; off < n; off += 256) {
+                e->render(b.data() + off * 2, std::min(256, n - off));
+                maxBeat = std::max(maxBeat, (int)e->query(pa::QBeat));
+            }
+        };
+        e->setStyle(sid);
+        e->setTempo(120.0f);
+        e->setSynchro(false);
+        e->setAutoFill(false);
+        e->bookSection((int)pa::Section::Var1);
+        e->arrangerStart();
+        run(0.08f);
+        expect(rms(b.data(), (int)b.size()) > 0.003f, "ai_kit_slice_plays");
+        run(0.12f);
+        e->bookSection((int)pa::Section::Var2);
+        run(1.1f);  // 1.3 s: still inside the first 3/4 bar (1.5 s at 120 bpm)
+        expect(e->currentSection() == (int)pa::Section::Var1, "meter3_variation_waits_for_bar");
+        run(0.4f);  // 1.7 s
+        expect(e->currentSection() == (int)pa::Section::Var2, "meter3_variation_on_bar_line");
+        run(3.0f);
+        expect(maxBeat == 2, "meter3_beat_display_counts_three");
+        e->arrangerStop();
+    }
+
+    if (const char* aiStyle = std::getenv("AB_AI_STYLE")) {
+        // Real output of the ArrangerBox AI server (see server/tests/e2e.mjs).
+        auto e = std::make_unique<pa::Engine>();
+        e->prepare(48000.0f);
+        char rep[256];
+        const int sid = e->loadAbStyle(aiStyle, rep, sizeof(rep));
+        std::printf("AI style %s -> %s\n", aiStyle, rep);
+        expect(sid >= 0 && std::strstr(rep, "\"kitsFailed\":0") != nullptr && std::strstr(rep, "\"kits\":0,") == nullptr,
+               "ai_server_style_loads_with_kits");
+        std::vector<float> b;
+        auto level = [&](float secs) {
+            const int n = (int)(secs * 48000.0f);
+            b.assign((size_t)n * 2, 0.0f);
+            for (int off = 0; off < n; off += 256) e->render(b.data() + off * 2, std::min(256, n - off));
+            return rms(b.data(), (int)b.size());
+        };
+        e->setStyle(sid);
+        e->setSynchro(false);
+        e->setAutoFill(true);
+        const float tempo = e->styleTempo(sid);
+        bool allPlay = true;
+        for (int v = 0; v < 4; ++v) {
+            e->setTempo(v % 2 ? tempo * 0.7f : tempo * 1.25f);
+            e->bookSection((int)pa::Section::Var1 + v);
+            if (!e->isPlaying()) e->arrangerStart();
+            const float l = level(3.0f);
+            std::printf("  var%d at %.1f bpm rms %.4f section %d\n", v + 1, e->tempo(), l, e->currentSection());
+            allPlay = allPlay && l > 0.005f;
+        }
+        expect(allPlay, "ai_server_variations_play_at_any_tempo");
+        e->setTempo(tempo);
+        e->bookSection((int)pa::Section::Fill1);
+        const float fill = level(0.5f);
+        expect(fill > 0.005f, "ai_server_fill_plays");
+        e->bookSection((int)pa::Section::Ending1);
+        level(30.0f);
+        expect(!e->isPlaying(), "ai_server_ending_stops");
+    }
+    if (const char* aiSfz = std::getenv("AB_AI_SFZ")) {
+        auto e = std::make_unique<pa::Engine>();
+        e->prepare(48000.0f);
+        // Measure the samples' own release, not the reverb / delay tail, and keep the low
+        // test notes from being chord keys that start the style (Synchro Start).
+        e->setSynchro(false);
+        e->setSplit(0);
+        e->setFx(0, 0.0f);
+        e->setFx(1, 0.0f);
+        e->setFx(2, 0.0f);
+        std::string list(aiSfz);
+        size_t pos = 0;
+        bool all = true;
+        int count = 0;
+        while (pos <= list.size()) {
+            size_t semi = list.find(';', pos);
+            if (semi == std::string::npos) semi = list.size();
+            const std::string path = list.substr(pos, semi - pos);
+            pos = semi + 1;
+            if (path.empty()) continue;
+            char rep[256];
+            const int id = e->loadSfz(path.c_str(), rep, sizeof(rep));
+            std::printf("AI sound %s -> %s (%s)\n", path.c_str(), rep, id >= 0 ? e->soundCategory(id) : "-");
+            if (id < 0) {
+                all = false;
+                continue;
+            }
+            count++;
+            e->setPartProgram(0, id);
+            std::vector<float> b((size_t)48000 * 2);
+            for (int note : {36, 48, 60, 72, 84}) {
+                e->noteOn(0, note, 100);
+                for (int off = 0; off < 24000; off += 256) e->render(b.data() + off * 2, std::min(256, 24000 - off));
+                const float held = rms(b.data(), 24000 * 2);
+                e->noteOff(0, note);
+                for (int off = 0; off < 48000; off += 256) e->render(b.data() + off * 2, std::min(256, 48000 - off));
+                const float after = rms(b.data() + 40000 * 2, 8000 * 2);
+                std::printf("  note %d held rms %.4f, 0.8 s after release %.5f\n", note, held, after);
+                all = all && held > 0.003f && after < held * 0.2f;
+            }
+        }
+        expect(all && count > 0, "ai_server_sounds_play_and_release");
+    }
+
     return fails ? 1 : 0;
 }

@@ -49,6 +49,8 @@ type AudioNative = {
   setTranspose?: (semis: number) => void
   setOctave?: (oct: number) => void
   setFx?: (which: number, mix: number) => void
+  control?: (cmd: number, a: number, b: number, c: number, v: number) => void
+  queryAll?: (count: number) => number[]
   snapshot: () => EngineSnapshot
   listSounds: () => SoundInfo[]
   listStyles: () => StyleInfo[]
@@ -152,6 +154,17 @@ export const audio = {
   setFx(which: number, mix: number) {
     native?.setFx?.(which, mix)
   },
+  /** Generic engine control (see EngineCmd). Applied on the audio thread. */
+  control(cmd: number, a = 0, b = 0, v = 0, c = 0) {
+    native?.control?.(cmd, a, b, c, v)
+  },
+  /** Engine read-back values indexed by EngineQuery. Empty on builds without it. */
+  queryAll(): number[] {
+    return native?.queryAll ? native.queryAll(EngineQuery.Count) : []
+  },
+  get hasControl(): boolean {
+    return typeof native?.control === "function"
+  },
   snapshot(): EngineSnapshot | null {
     return native ? native.snapshot() : null
   },
@@ -193,3 +206,46 @@ export const audio = {
 }
 
 export default audio
+
+/** Mirrors pa::EngineCmd in modules/audio/cpp/Engine.h. */
+export const EngineCmd = {
+  ChannelGain: 1,
+  ChannelPan: 2,
+  ChannelMute: 3,
+  PartOctave: 4,
+  SplitOn: 5,
+  ChordScan: 6,
+  ChordMode: 7,
+  Memory: 8,
+  BassInversion: 9,
+  ManualBass: 10,
+  SynchroStop: 11,
+  Fade: 12,
+  Metronome: 13,
+  MetronomeRun: 14,
+  Ensemble: 15,
+  VelocityCurve: 16,
+  ScaleCents: 17,
+  Eq: 18,
+  PadOn: 19,
+  PadOff: 20,
+  PadsOff: 21,
+  ScaleToStyle: 22,
+} as const
+
+/** Mirrors pa::EngineQuery. */
+export const EngineQuery = {
+  Beat: 0,
+  Bar: 1,
+  Booked: 2,
+  Variation: 3,
+  Fade: 4,
+  ChordHeld: 5,
+  BassRoot: 6,
+  Voices: 7,
+  PeakL: 8,
+  PeakR: 9,
+  Activity: 10,
+  MetroBeat: 26,
+  Count: 27,
+} as const

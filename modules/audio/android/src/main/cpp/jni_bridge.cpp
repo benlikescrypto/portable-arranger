@@ -115,6 +115,19 @@ JNIEXPORT void JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeSetFx(JNIEnv*, jclass, jint which, jfloat mix) {
     arrangerbox_set_fx(which, mix);
 }
+JNIEXPORT void JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeControl(JNIEnv*, jclass, jint cmd, jint a, jint b, jint c, jfloat v) {
+    arrangerbox_control(cmd, a, b, c, v);
+}
+JNIEXPORT jfloatArray JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeQueryAll(JNIEnv* env, jclass, jint count) {
+    const int n = count > 0 && count <= 64 ? count : 0;
+    jfloat values[64];
+    for (int i = 0; i < n; ++i) values[i] = arrangerbox_query(i);
+    jfloatArray out = env->NewFloatArray(n);
+    if (out && n > 0) env->SetFloatArrayRegion(out, 0, n, values);
+    return out;
+}
 
 JNIEXPORT jint JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeSoundCount(JNIEnv*, jclass) {

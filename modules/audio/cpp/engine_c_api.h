@@ -45,6 +45,8 @@ void arrangerbox_set_auto_fill(int on);
 void arrangerbox_set_transpose(int semis);
 void arrangerbox_set_octave(int oct);
 void arrangerbox_set_fx(int which, float mix);
+void arrangerbox_control(int cmd, int a, int b, int c, float v);
+float arrangerbox_query(int what);
 
 int arrangerbox_sound_count(void);
 void arrangerbox_sound_name(int id, char* out, int maxLen);

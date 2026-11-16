@@ -76,7 +76,10 @@ void applyStylePrograms(Arranger::Style& style, int drum, int bass, int acc1, in
     set(style.end3);
 }
 
-bool parseAbStyleFile(const char* path, Arranger::Style& style, std::string& error) {
+Arranger::Pattern* abStyleSection(Arranger::Style& s, const std::string& name) { return sectionOf(s, name); }
+
+bool parseAbStyleFile(const char* path, Arranger::Style& style, std::string& error,
+                      std::vector<std::pair<std::string, std::string>>* kits) {
     style = Arranger::Style{};
     error.clear();
     std::ifstream in(path);
@@ -94,6 +97,8 @@ bool parseAbStyleFile(const char* path, Arranger::Style& style, std::string& err
         return false;
     }
     Arranger::Pattern* cur = &style.var[0];
+    std::string curName = "var1";
+    if (kits) kits->clear();
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         line = trim(line);
@@ -105,8 +110,16 @@ bool parseAbStyleFile(const char* path, Arranger::Style& style, std::string& err
         } else if (line.rfind("tempo=", 0) == 0) {
             style.tempo = clampf((float)std::atof(line.c_str() + 6), 40.0f, 240.0f);
         } else if (line.rfind("section=", 0) == 0) {
-            cur = sectionOf(style, line.substr(8));
-            if (!cur) cur = &style.var[0];
+            curName = line.substr(8);
+            cur = sectionOf(style, curName);
+            if (!cur) {
+                cur = &style.var[0];
+                curName = "var1";
+            }
+        } else if (line.rfind("meter=", 0) == 0) {
+            style.beats = std::max(2, std::min(7, std::atoi(line.c_str() + 6)));
+        } else if (line.rfind("kit=", 0) == 0) {
+            if (kits) kits->push_back({curName, line.substr(4)});
         } else if (line.rfind("length=", 0) == 0) {
             if (cur) cur->lengthTicks = std::max(kPpq, std::atoi(line.c_str() + 7));
         } else if (std::isdigit((unsigned char)line[0])) {
@@ -143,6 +156,7 @@ bool writeAbStyleFile(const char* path, const Arranger::Style& style) {
     out << "name=" << style.name << "\n";
     out << "category=" << style.category << "\n";
     out << "tempo=" << style.tempo << "\n";
+    if (style.beats != 4) out << "meter=" << style.beats << "\n";
     const char* names[] = {"intro1", "intro2", "intro3", "var1", "var2", "var3", "var4",
                            "fill1",  "fill2",  "fill3",  "fill4", "break", "end1", "end2", "end3"};
     for (const char* n : names) {

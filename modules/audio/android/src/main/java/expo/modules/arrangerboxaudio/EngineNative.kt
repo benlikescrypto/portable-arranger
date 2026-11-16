@@ -27,6 +27,8 @@ internal object EngineNative {
   @JvmStatic external fun nativeSetTranspose(semis: Int)
   @JvmStatic external fun nativeSetOctave(oct: Int)
   @JvmStatic external fun nativeSetFx(which: Int, mix: Float)
+  @JvmStatic external fun nativeControl(cmd: Int, a: Int, b: Int, c: Int, v: Float)
+  @JvmStatic external fun nativeQueryAll(count: Int): FloatArray
   @JvmStatic external fun nativeSoundCount(): Int
   @JvmStatic external fun nativeSoundName(id: Int): String
   @JvmStatic external fun nativeSoundCategory(id: Int): String

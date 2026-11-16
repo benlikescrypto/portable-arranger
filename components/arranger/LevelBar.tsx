@@ -2,6 +2,7 @@ import { useRef } from "react"
 import { StyleSheet, Text, View } from "react-native"
 
 import { Pa } from "@/constants/theme"
+import { pagerLock } from "@/lib/pagerLock"
 
 type Props = {
   label: string
@@ -27,7 +28,13 @@ export function LevelBar({ label, value, onChange }: Props) {
         }}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
-        onResponderGrant={(event) => setFromX(event.nativeEvent.locationX)}
+        onResponderTerminationRequest={() => false}
+        onResponderRelease={pagerLock.release}
+        onResponderTerminate={pagerLock.release}
+        onResponderGrant={(event) => {
+          pagerLock.hold()
+          setFromX(event.nativeEvent.locationX)
+        }}
         onResponderMove={(event) => setFromX(event.nativeEvent.locationX)}
       >
         <View style={[styles.fill, { width: `${amount * 100}%` }]} />

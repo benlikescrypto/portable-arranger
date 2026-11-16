@@ -111,13 +111,58 @@ struct Voice {
     int drumKind = 0;
     bool releasing = false;
     bool oneShot = false;
+    float tune = 0.0f;  // semitones of sub scale offset
 };
 
-enum class MidiKind : uint8_t { NoteOn, NoteOff, Cc, Pb, Style, LoadInst, Pc, Clock };
+enum class MidiKind : uint8_t { NoteOn, NoteOff, Cc, Pb, Style, LoadInst, Pc, Clock, Control };
 
 struct MidiEvent {
     MidiKind kind{};
     int a = 0, b = 0, c = 0, d = 0;
+    float f = 0.0f;
+};
+
+// Engine::control() commands. Every one is applied on the audio thread.
+enum EngineCmd : int {
+    CmdChannelGain = 1,    // a = channel 0..15, v = 0..1.5
+    CmdChannelPan = 2,     // a = channel, v = -1..1
+    CmdChannelMute = 3,    // a = channel, b = 1 muted
+    CmdPartOctave = 4,     // a = part 0..3, b = -3..3
+    CmdSplitOn = 5,        // b = 1 split keyboard, 0 = upper parts across the whole keyboard
+    CmdChordScan = 6,      // b = 0 lower (below split), 1 full keyboard, 2 off
+    CmdChordMode = 7,      // b = 0 fingered, 1 one finger
+    CmdMemory = 8,         // b = 1 accompaniment keeps playing after the chord is released
+    CmdBassInversion = 9,  // b = 1 bass follows the lowest chord note
+    CmdManualBass = 10,    // b = 1 left hand plays the style's bass sound; style bass muted
+    CmdSynchroStop = 11,   // b = 1 releasing the chord stops the style
+    CmdFade = 12,          // b = 1 fade in (starts the style), 2 fade out (then stops); v = seconds
+    CmdMetronome = 13,     // b = 1 on; v = volume 0..1
+    CmdMetronomeRun = 14,  // b = 1 run the metronome while the style is stopped
+    CmdEnsemble = 15,      // b = 0 off, 1 duet, 2 close, 3 block, 4 octave
+    CmdVelocityCurve = 16, // b = 0 soft, 1 normal, 2 hard, 3 fixed
+    CmdScaleCents = 17,    // a = pitch class 0..11, v = cents offset (sub scale / quarter tones)
+    CmdEq = 18,            // a = band 0 low, 1 mid, 2 high; v = dB
+    CmdPadOn = 19,         // a = sound id, b = note, c = pad slot 0..3, v = velocity
+    CmdPadOff = 20,        // a = sound id, b = note, c = pad slot
+    CmdPadsOff = 21,       // stop every pad note
+    CmdScaleToStyle = 22,  // b = 1 apply the sub scale to the style tracks too
+};
+
+// Engine::query() values for the UI.
+enum EngineQuery : int {
+    QBeat = 0,       // 0..3 inside the current bar
+    QBar = 1,        // bar counter since start, from 1
+    QBooked = 2,     // booked Section, 0 none
+    QVariation = 3,  // 1..4
+    QFade = 4,       // style fade level 0..1
+    QChordHeld = 5,  // 1 when chord keys are down
+    QBassRoot = 6,   // pitch class of the bass when inverted, -1 otherwise
+    QVoices = 7,     // sounding voices
+    QPeakL = 8,      // output peak since the last read
+    QPeakR = 9,
+    QActivity = 10,  // QActivity + ch: recent note activity 0..1 for channel ch (16 entries)
+    QMetroBeat = 26, // last metronome beat 0..3, -1 never
+    QCount = 27,
 };
 
 template <size_t N>
@@ -173,10 +218,17 @@ struct ArrangerState {
     int variation = 1;
     Section current = Section::Var1;
     Section booked = Section::None;
+    Section afterFill = Section::None;
     float tempo = 100.0f;
     int chordRoot = 0;
     int chordType = 0;  // 0 maj, 1 min, 2 7, 3 min7, 4 maj7, 5 sus4, 6 dim, 7 6, 8 m6, 9 9, 10 sus2, 11 aug
     int split = 60;
+    bool memory = true;
+    bool chordHeld = false;
+    bool bassInversion = false;
+    bool manualBass = false;
+    int bassRoot = -1;
+    long long totalTicks = 0;
     double tickPos = 0;
     int barLenTicks = kPpq * 4;
     int sectionLenTicks = kPpq * 4 * 4;
@@ -184,6 +236,9 @@ struct ArrangerState {
     std::atomic<int> displayType{0};
     std::atomic<int> displaySection{4};
     std::atomic<int> playing{0};
+    std::atomic<int> displayBeat{0};
+    std::atomic<int> displayBar{0};
+    std::atomic<int> displayBooked{0};
 };
 
 class Arranger;
@@ -214,6 +269,7 @@ public:
     const char* styleName(int id) const;
     const char* styleCategory(int id) const;
     float styleTempo(int id) const;
+    int styleBeats(int id) const;
 
     struct Ev {
         uint16_t tick;
@@ -230,6 +286,7 @@ public:
         char name[40]{};
         char category[24]{};
         float tempo = 100;
+        int beats = 4;  // beats per bar (meter= in .abstyle)
         Pattern intro1, intro2, intro3;
         Pattern var[4];
         Pattern fill[4];
@@ -244,9 +301,14 @@ public:
     int holdn = 0;
 };
 
+// Moves a note recorded over C major 7 to the chord root / type being played.
+int nttNote(int srcNote, int root, int type);
 Arranger::Style completeStyle(Arranger::Style s);
 Arranger::Style fallbackStyle(const char* name, const char* cat, float tempo);
-bool parseAbStyleFile(const char* path, Arranger::Style& style, std::string& error);
+// kits (optional) receives (section name, kit= path) pairs: per-element SFZ drum kits.
+bool parseAbStyleFile(const char* path, Arranger::Style& style, std::string& error,
+                      std::vector<std::pair<std::string, std::string>>* kits = nullptr);
+Arranger::Pattern* abStyleSection(Arranger::Style& s, const std::string& name);
 bool writeAbStyleFile(const char* path, const Arranger::Style& style);
 void applyStylePrograms(Arranger::Style& style, int drum, int bass, int acc1, int acc2, int acc3);
 
@@ -284,6 +346,9 @@ public:
     void setTranspose(int semis);
     void setOctave(int oct);
     void setFx(int which, float mix);
+    // Generic thread-safe control surface (EngineCmd) and read-back (EngineQuery).
+    void control(int cmd, int a, int b, float v, int c = 0);
+    float query(int what) const;
 
     int soundCount() const { return (int)patches.size(); }
     const char* soundName(int id) const;
@@ -342,6 +407,15 @@ private:
     void applyTsfVolume(int tsfCh);
     void syncTsfMixer();
     void tsfAllNotesOff(int fromCh, int toCh);
+    void handleControl(const MidiEvent& e);
+    void stopArrangerNow();
+    void silenceAccompaniment();
+    void playEnsemble(int raw, int melody, int vel);
+    int curveVelocity(int vel) const;
+    float effGain(int ch) const;
+    bool isStyleChannel(int ch) const { return (ch >= 4 && ch <= 6) || ch == 8 || ch == 9; }
+    int currentBassProg() const;
+    void metronomeClick(int beat);
 
     MidiQueue<1024> midi;
     Voice voices[kMaxVoices];
@@ -381,6 +455,40 @@ private:
     std::mutex loadMu;
     bool factoryReady = false;
     tsf* gmFont = nullptr;
+
+    // Mixer per channel: 0-3 keyboard parts, 4-6 acc, 7 pad bus, 8 bass, 9 drums,
+    // 10-13 pads, 15 metronome.
+    float chanGain[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7f};
+    float chanPan[16]{};
+    bool chanMute[16]{};
+    float effApplied[16] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    float panApplied[16] = {-9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9};
+    int partOct[4]{};
+    bool splitOn = true;
+    int chordScan = 0;
+    int chordMode = 0;
+    bool synchroStop = false;
+    float fadeLevel = 1.0f, fadeTarget = 1.0f, fadeStep = 0.0f;
+    bool fadeStopAtEnd = false;
+    bool metroOn = false, metroRun = false;
+    double metroTicks = 0;
+    long long metroLastBeat = -1;
+    int metroKit = -1;
+    int ensemble = 0;
+    int velMode = 1;
+    float scaleCents[12]{};
+    bool scaleToStyle = false;
+    // Notes actually started per key, so key-up stops them after octave/transpose moves.
+    int8_t sounded[128][4];
+    int8_t ensNotes[128][3];
+    int8_t manualBassNote[128];
+    std::atomic<int> metroBeatShown{-1};
+    mutable std::atomic<float> peakL{0.0f}, peakR{0.0f};
+    std::atomic<float> activity[16];
+    std::atomic<int> voiceCount{0};
+    std::atomic<float> fadeShown{1.0f};
+    std::atomic<int> bassShown{-1};
+    std::atomic<int> chordHeldShown{0};
 };
 
 }  // namespace pa

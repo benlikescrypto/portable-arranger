@@ -22,10 +22,68 @@ See `docs/SOUND_ENGINE.md`, `docs/STYLE_FORMAT.md`, and `assets/factory/LICENSE_
 
 Factory sounds are **GeneralUser GS samples** played by TinySoundFont, not Korg/Yamaha/Roland ROM and not a modeled synth. TinySoundFont does not implement SoundFont modulators, so some presets are approximate. CC0 libraries (VCSL / VSCO 2 CE) may be ingested through the SFZ loader; they are not bundled.
 
+## Arranger workstation (v0.3)
+
+The app is a Pa-style workstation (`components/pro/ProScreen.tsx`) split into three horizontal slides, switched by swiping or the DISPLAY / CONTROLS / KEYS buttons: (1) the display — mode keys and the LCD pages with sounds, styles, mixer and so on; (2) the hardware control panel; (3) a full-size on-screen keyboard with octave shift (swiping is off on this slide so glissandos play keys). Layout adapts to tablet landscape, phone landscape and portrait.
+
+| Area | What it does | Where |
+| --- | --- | --- |
+| Style elements | Intro 1/2/Count-in, Variation 1–4, Fill 1/2, Break, Ending 1–3, Start/Stop. LEDs show the playing element; a booked element blinks. Variations/endings change on the next bar line; fills/break start at once at the same beat position and end on the bar line. | `Arranger.cpp`, `ControlPanel.tsx` |
+| Note transposition | Recorded style tracks (C major 7 source) follow the chord type: minor 3rd, flat 7th, dim/aug 5th, 6ths, sus. Previously they only moved by root. | `nttNote` in `Arranger.cpp` |
+| Arranger switches | Synchro Start, Synchro Stop, Memory, Auto Fill, Bass Inversion, Manual Bass, Split on/off, Tempo Lock, Fade In/Out (time in Effects). | `Engine.cpp` `handleControl` |
+| Chord recognition | Fingered or One Finger; scan Lower / Full keyboard (3+ keys) / Off; chord display shows inversions (C/E). | `Engine::detectChord` |
+| Keyboard | 4 parts, per-part octave, split point, velocity curves (Soft/Normal/Hard/Fixed), Ensemble (Duet/Close/Block/Octave) on Upper 1. | `Engine.cpp`, Style Play tabs |
+| Sub Scale | Equal, Pure Major/Minor, Pythagorean, Werckmeister, Kirnberger, Arabic Rast/Bayati, User quarter tones per key, scale Key, optional on style tracks. | `usePerformance.ts` |
+| Keyboard Sets | STS 1–4 per style (tap = recall, long press / Library = write), Keyboard Set Library (save / recall / delete). | `usePerformance.ts`, `KbdLibraryPage.tsx` |
+| Pads | 4 hit / chord / note pads with their own sound and channel, Pad Stop. Pads are sound triggers, not Pa pad patterns. | `CmdPadOn` |
+| Mixer | 11 strips (UP1–3, LOW, Drum, Bass, Acc1–3, Pads, Click) with volume, pan, mute, solo, live activity meters; output peak meters and master. | `MixerPage.tsx` |
+| Effects | Reverb, chorus, delay sends; 3-band master EQ; master / style / keyboard levels. | `EffectsPage.tsx` |
+| SongBook | Entries recall style, tempo, transpose, variation and the keyboard set; search, genre filter, favourites, notes/lyrics, Set List with order and Prev/Next. | `SongBookPage.tsx` |
+| Metronome | Click on its own channel, with the style or on its own; beat LEDs. | `Engine::metronomeClick` |
+| Persistence | `performance.json`, `kbdsets.json`, `songbook.json` in the app document folder. | `lib/storage.ts` |
+
+Engine controls go through one generic call, `control(cmd, a, b, v, c)` / `queryAll()` (see `EngineCmd` / `EngineQuery` in `Engine.h` and `modules/audio/src/index.ts`), so new controls do not need new JNI / Swift functions.
+
+Not implemented (Pa features with no equivalent here yet): Player / MP3 and MIDI file playback, Sequencer and Style/Pad Record, Sound edit, voice processor / mic, lyrics display from files, Pa pad patterns, video out.
+
+Factory styles are drum-only by an earlier decision (`drumsOnlyStyle` in `FactoryStyles.cpp`), so bass / accompaniment features (NTT, Memory, Bass Inversion, Manual Bass) are only audible on imported SET styles.
+
+## AI Lab (v0.4)
+
+The AI LAB page sends a song to the ArrangerBox AI server (`server/`, Modal GPU) and loads the results into the engine.
+
+- **Song → Drum Style:** an `.abstyle` with Intro 1/2, Variation 1–4, Fill 1–4, Break and Ending 1–3, cut from the song's own drum stem as per-element slice kits. They follow any tempo. A GM-kit transcription of the same groove comes with it.
+- **Song → Sounds:** SFZ multisamples of the instruments in the song (piano, strings, organ, …), tuned and looped, with a timeline of where each sound plays.
+
+Results are stored in `Documents/ai/<job>/` and reloaded at start. See `server/README.md`.
+
+Measured on rendered ground-truth songs (`modal run server/modal_app.py::tests`):
+
+- **Drums (pop 4/4 at 112 BPM, waltz 3/4 at 96 BPM):**
+  - tempo, meter, intro, ending and fill bars are found;
+  - downbeats are within 50 ms (median 11 ms);
+  - verse and chorus map to different variations;
+  - slices land on 100% of played hits, within 2 ticks.
+- **GM transcription:** kicks and snares 100%; hi-hats 67–86%. The waltz verse misses hats played under a snare: 1 open check.
+- **Sounds:**
+  - piano, strings and organ parts are sampled from their own notes;
+  - all zones are in tune within 25 cents;
+  - loop seams correlate above 0.99.
+  - The instrument label comes from the PANNs tagger: the rendered strings were tagged "Brass" (1 open check).
+
 ## Verified in this workspace
 
 - NDK clang (`x86_64-linux-android26`) compiled Engine, Factory, FactoryStyles, Arranger, Sampler, Pa4xLoader, SfzParser, StyleFormat, PcgParser, engine_c_api, and `tests/test_parsers.cpp`. TinySoundFont (`TsfHost.cpp`) is included in the Android CMake and iOS podspec; this pass was not host-compiled on Windows.
 - `npx tsc --noEmit` passed.
+- v0.3: host build of `test_engine` (w64devkit in `tmp/tools`) — 80 checks pass, including element timing (bar-line variation change, auto fill, ending, fade in/out), Synchro Start/Stop, One Finger chords, bass inversion, channel mute/gain on both the built-in synth and the GM SoundFont, per-part octave release, split off, Ensemble, metronome, pads and sub scale pitch. NDK clang compiled `Engine.cpp`, `Arranger.cpp`, `engine_c_api.cpp` and `jni_bridge.cpp` for arm64.
+- v0.3 slides UI was driven on EAS Simulator (iOS dev-client simulator build `4eece99a`, iPad Pro 11-inch M5 and iPhone 17 Pro, portrait and landscape, via `eas simulator` + agent-device): slide buttons and swipes, swipe lock on KEYS, fader drag inside the pager, Start/Stop, Variation, tempo, live bar/beat display, Mixer, Effects, SongBook add/delete, Global, on-screen key press reaching the output meter. The simulator has no USB-MIDI and its audio was not listened to.
+- v0.3 UI was rendered from a web export in headless Edge at 1280×800, 1024×768, 800×380, 768×1024 and 400×860 and every page / tab was opened. Web has no audio engine; it shows a preview catalog (`lib/webPreview.ts`).
+
+- v0.4: host `test_engine` has 93 checks.
+  - New: SFZ header-line opcodes, `ab_category`, `kit=` loaded once per file, 3/4 variation timing and beat display.
+  - Real AI-server output: 12 slice kits load; Var 1–4 play at 70% and 125% tempo; the fill plays and the ending stops; every extracted sound plays from C2 to C6 and goes silent after release.
+  - `server/tests/e2e.mjs` passed against the deployed API: auth, upload, polling, download, path-traversal refusal and delete.
+  - EAS Simulator (build `3b0198f6`, iPad Pro 11-inch): AI LAB ran both demo songs through upload, GPU, download and load; the drum result played in the arranger. Audio was not listened to.
 
 Host `test_engine` playback tests (polyphony, sustain, pitch bend, SFZ zones, arranger audio, KSF, PCG names) are in `modules/audio/cpp/tests`. They require a host C++ toolchain. They were **not executed on this Windows agent** when zlib/MSVC were unavailable.
 

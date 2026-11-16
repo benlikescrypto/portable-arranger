@@ -103,6 +103,10 @@ This is **not** a full EDS-X recreation. PCG oscillator/filter programs are unpu
 
 The app ships GeneralUser GS as the factory GM bank (111 named patches mapped to GM programs) plus original factory styles (31). See `docs/SOUND_ENGINE.md`, `docs/STATUS.md`, and `assets/factory/LICENSE_MANIFEST.md`.
 
+## Arranger features
+
+One workstation screen in the layout Pa-series players know: LCD pages (Style Play, SongBook, Mixer, Effects, Global) framed by a control panel with Intro / Variation / Fill / Break / Ending, Start-Stop, Synchro Start/Stop, Fade, Memory, Bass Inversion, Manual Bass, Split, Ensemble, Tempo / Tap / Lock, Metronome, Transpose, STS 1–4 and Pads. Details, and what is not implemented (Player, Sequencer, Style Record, Sound edit, mic), are in `docs/STATUS.md`.
+
 ## Remaining work
 
 - Play Internal / Gradle Play Publisher scripts remain in `legacy-android/scripts/`
