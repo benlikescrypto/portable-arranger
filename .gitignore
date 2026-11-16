@@ -79,3 +79,4 @@ server/.env.local
 __pycache__/
 *.pyc
 /modules/audio/android/build/
+supabase/.temp/
