@@ -245,7 +245,7 @@ def make_keys_song(outdir: str, seed: int = 2) -> dict:
             events["bass"].append((tb, mido.Message("note_on", channel=1, note=36, velocity=80)))
             events["bass"].append((tb + meter * beat_s * 0.9, mido.Message("note_off", channel=1, note=36, velocity=0)))
         t += nbars * meter * beat_s
-        sections.append({"family": fam, "start": round(t0, 2), "end": round(t, 2), "pitches": sorted(set(played))})
+        sections.append({"family": fam, "program": program, "start": round(t0, 2), "end": round(t, 2), "pitches": sorted(set(played))})
         bar += nbars
     _flush(tracks, events, bpm)
     base = os.path.join(outdir, "test_keys")

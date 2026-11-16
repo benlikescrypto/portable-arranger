@@ -306,7 +306,7 @@ def run_tests(only: str = "") -> str:
 
     sys.path.insert(0, "/root")
     from abai.drums import extract_drum_style
-    from abai.evaluate import check_drums, check_sounds
+    from abai.evaluate import check_drums, check_sounds, check_timbre
     from abai.sounds import extract_sounds
     from abai.testsong import make_groove_song, make_keys_song
 
@@ -318,7 +318,7 @@ def run_tests(only: str = "") -> str:
             if case == "keys":
                 truth = make_keys_song("/tmp")
                 man = extract_sounds(truth["file"], "Keys Test", f"/tmp/out_{case}")
-                checks = check_sounds(truth, man, f"/tmp/out_{case}")
+                checks = check_sounds(truth, man, f"/tmp/out_{case}") + check_timbre(truth, man, f"/tmp/out_{case}", "/assets/GeneralUser-GS.sf2")
             else:
                 truth = make_groove_song(case, "/tmp")
                 man = extract_drum_style(truth["file"], f"{case.title()} Test", f"/tmp/out_{case}")

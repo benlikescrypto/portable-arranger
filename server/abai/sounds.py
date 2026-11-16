@@ -1,9 +1,9 @@
 """Song -> playable ArrangerBox instruments (SFZ multisamples).
 
-Pipeline: Demucs 6-stem separation -> PANNs instrument tagging over time (sound
-changes) -> Basic Pitch note events -> clean, isolated notes checked with pYIN ->
-trimmed, tuned, level-matched and (for sustained sounds) seamlessly looped
-samples -> zones mapped across the keyboard.
+Pipeline: Demucs 6-stem separation -> PANNs tagging over time (which sound plays
+where) -> Basic Pitch note events (overtone ghost notes removed) -> a few of the cleanest
+notes of each sound, checked with pYIN -> trimmed, tuned, level-matched and (for
+sustained sounds) seamlessly looped samples, pitched across the keyboard.
 """
 
 from __future__ import annotations
@@ -167,6 +167,37 @@ def note_events(y: np.ndarray, tmp: str) -> list[Note]:
     return notes
 
 
+def clean_notes(raw: list[Note], bass: list[Note] | None) -> list[Note]:
+    """Remove bass-line leakage first (notes doubling the bass stem, and notes far below
+    the part's register: Demucs sometimes leaves the bass in a keys stem) - otherwise a real note an octave or a
+    fifth above a leaked bass note looks like its overtone, then overtone ghost notes, then mark
+    how much each remaining note overlaps others."""
+    notes = drop_partials(raw if bass is None else main_register(drop_bleed(raw, bass)))
+    mark_overlap(notes)
+    return notes
+
+
+PARTIALS = (12, 19, 24, 28, 31, 36)  # octave, 12th, 2 octaves, ... above a played note
+
+
+def drop_partials(notes: list[Note]) -> list[Note]:
+    """Basic Pitch reports strong overtones (organ drawbars, brass, bowed strings) as extra
+    notes that start with the real one. Remove them, so a single held organ note is not
+    mistaken for a chord and the overtone is not sampled as a note of its own."""
+    starts = np.array([n.start for n in notes])
+    keep = []
+    for n in notes:
+        i0, i1 = np.searchsorted(starts, n.start - 0.07), np.searchsorted(starts, n.start + 0.07)
+        ghost = any(
+            (n.pitch - m.pitch) in PARTIALS and m.amp >= 0.6 * n.amp and m.end >= n.end - 0.15
+            for m in notes[i0:i1]
+            if m is not n
+        )
+        if not ghost:
+            keep.append(n)
+    return keep
+
+
 def mark_overlap(notes: list[Note]) -> None:
     """Fraction of each note's length shared with other comparable notes (a chord, or a
     neighbour still ringing). Much quieter notes are bleed from other instruments and
@@ -179,6 +210,9 @@ def mark_overlap(notes: list[Note]) -> None:
                 continue
             m = notes[j]
             if m.amp < 0.4 * n.amp or m.pitch < n.pitch - 15:
+                continue
+            # An overtone or sub-octave starting with the note is part of its sound.
+            if abs(m.pitch - n.pitch) in PARTIALS and abs(m.start - n.start) < 0.07:
                 continue
             a, b = max(n.start - 0.05, m.start), min(n.end, m.end)
             if b > a:
@@ -279,8 +313,81 @@ def bake_loop(seg: np.ndarray, ls: int, le: int) -> np.ndarray:
     return out
 
 
+MAX_ZONES = 8
+STRINGS_ATTACK = 0.12  # seconds to reach full level; slower than this is bowed, not blown
+
+
+def retitle(name: str, cat: str, used: set[str]) -> str:
+    title = f"{name} {cat}"[:44]
+    k = 2
+    while title in used:
+        title = f"{name} {cat} {k}"[:44]
+        k += 1
+    return title
+
+
+def envelope(y: np.ndarray, rs: list[Region]) -> np.ndarray:
+    hop = int(0.05 * SR)
+    seg = np.concatenate([y[int(r.t0 * SR) : int(r.t1 * SR)] for r in rs])
+    n = len(seg) // hop
+    return np.sqrt((seg[: n * hop].reshape(n, hop) ** 2).mean(1) + 1e-12)
+
+
+def same_instrument(stems: dict[str, np.ndarray], a: tuple[str, list[Region]], b: tuple[str, list[Region]]) -> bool:
+    """True when sound a is another stem's copy of sound b: Demucs split one instrument
+    over two stems, so over a's time both stems swell and fade together."""
+    (sa, ra), (sb, rb) = a, b
+    if sa == sb or sa == "bass" or sb == "bass":
+        return False
+    shared = [Region(sa, "", False, max(x.t0, y.t0), min(x.t1, y.t1), 0) for x in ra for y in rb if min(x.t1, y.t1) - max(x.t0, y.t0) > 1.0]
+    if sum(r.t1 - r.t0 for r in shared) < 0.5 * sum(r.t1 - r.t0 for r in ra):
+        return False
+    ea, eb = envelope(mono(stems[sa]), shared), envelope(mono(stems[sb]), shared)
+    if len(ea) < 20:
+        return False
+    return float(np.corrcoef(np.log(ea), np.log(eb))[0, 1]) > 0.8
+
+
+def attack_time(seg: np.ndarray) -> float:
+    """Seconds from onset to 90% of the note's peak level (10 ms RMS envelope)."""
+    hop = int(0.01 * SR)
+    head = seg[: int(1.0 * SR)]
+    env = np.array([rms(head[i : i + hop]) for i in range(0, max(1, len(head) - hop), hop)])
+    if len(env) < 3 or env.max() <= 0:
+        return 0.0
+    return float(np.argmax(env >= 0.9 * env.max()) * hop / SR)
+
+
+def interior_notes(notes: list[Note], own: list[Region], others: list[Region]) -> list[Note]:
+    """Notes inside this sound's regions. Where a region borders a different sound on the
+    same stem, the change can fall anywhere in the boundary window, so notes in the half
+    window next to it are only used when the region has too few notes of its own."""
+    margin = WINDOW_S / 2
+
+    def inside(n: Note, strict: bool) -> bool:
+        for r in own:
+            a, b = r.t0 - 0.05, r.t1 + 0.5
+            if strict:
+                if any(abs(o.t1 - r.t0) < 0.1 for o in others):
+                    a = r.t0 + margin
+                if any(abs(o.t0 - r.t1) < 0.1 for o in others):
+                    b = r.t1 - margin
+            if a <= n.start and n.end <= b:
+                return True
+        return False
+
+    strict = [n for n in notes if inside(n, True)]
+    return strict if len(strict) >= 6 else [n for n in notes if inside(n, False)]
+
+
 def build_instrument(
-    stem: np.ndarray, notes: list[Note], region: Region, name: str, outdir: str, base: str
+    stem: np.ndarray,
+    notes: list[Note],
+    region: Region,
+    name: str,
+    outdir: str,
+    base: str,
+    all_notes: list[Note] | None = None,
 ) -> dict | None:
     y = mono(stem)
     min_len = 0.35 if region.sustained else 0.2
@@ -310,21 +417,23 @@ def build_instrument(
             scored[n.pitch] = n
     if not scored:
         return None
-    # At most one root per 2 semitones, best first, up to 24 zones.
+    # A few of the cleanest notes, at least 3 semitones apart, pitched to cover the
+    # keyboard. Fewer roots means every key plays one of the instrument's best notes.
     chosen: list[Note] = []
     for n in sorted(scored.values(), key=lambda n: -n.score):
-        if all(abs(n.pitch - c.pitch) >= 2 for c in chosen):
+        if all(abs(n.pitch - c.pitch) >= 3 for c in chosen):
             chosen.append(n)
-        if len(chosen) >= 24:
+        if len(chosen) >= MAX_ZONES:
             break
     chosen.sort(key=lambda n: n.pitch)
 
     regions = []
+    attacks: list[float] = []
     target_rms = 10 ** (-20 / 20)
     zones = []
     for k, n in enumerate(chosen):
         a = max(0, int((n.start - 0.012) * SR))
-        nxt = min((m.start for m in notes if m.start > n.start + 0.05), default=n.end + 1.0)
+        nxt = min((m.start for m in (all_notes or notes) if m.start > n.start + 0.05), default=n.end + 1.0)
         tail = min(0.6 if not region.sustained else 0.25, max(0.05, nxt - n.end - 0.02))
         b = min(stem.shape[1], int((n.end + tail) * SR))
         seg = stem[:, a:b].astype(np.float32).copy()
@@ -345,6 +454,7 @@ def build_instrument(
         if loop is None:
             fo = min(int(0.03 * SR), seg.shape[1] // 4)
             seg[:, seg.shape[1] - fo :] *= np.linspace(1, 0, fo)[None, :]
+        attacks.append(attack_time(mono(seg)))
         fname = f"{base}_{n.pitch:03d}.wav"
         write_wav(os.path.join(outdir, fname), seg)
         zones.append((n, fname, loop, seg.shape[1]))
@@ -386,6 +496,7 @@ def build_instrument(
         "range": [regions[0]["lo"], regions[-1]["hi"]],
         "from": [round(region.t0, 1), round(region.t1, 1)],
         "files": files,
+        "attack": round(float(np.median(attacks)), 3) if len(attacks) >= 2 else None,
     }
 
 
@@ -400,38 +511,49 @@ def extract_sounds(path: str, name: str, outdir: str, report: Report = no_report
     stems = separate(x, "htdemucs_6s")
     report("tag", 0.4, "Listening for piano, strings, organ…")
     regions = tag_regions(stems, report)
-    # Merge each (stem, category) into one span list.
+    # Each (stem, sound) pair is one instrument, played wherever that sound was heard.
     groups: dict[tuple[str, str], list[Region]] = {}
     for r in regions:
         groups.setdefault((r.stem, r.category), []).append(r)
-    ranked = sorted(groups.items(), key=lambda kv: -sum(r.score for r in kv[1]))[:6]
+    # Strongest first; a weaker sound that is a split-off copy of a stronger one is dropped.
+    level = {k: float(np.mean(envelope(mono(stems[k[0]]), rs))) for k, rs in groups.items()}
+    ranked = []
+    for key, rs in sorted(groups.items(), key=lambda kv: -level[kv[0]]):
+        if not any(same_instrument(stems, (key[0], rs), (k2[0], r2)) for k2, r2 in ranked):
+            ranked.append((key, rs))
+    ranked = sorted(ranked, key=lambda kv: -sum(r.score for r in kv[1]))[:6]
     report("notes", 0.5, "Finding clean notes (Basic Pitch)")
     note_cache: dict[str, list[Note]] = {}
     bass_notes: list[Note] = []
     if rms(mono(stems["bass"])) > 1e-3:
-        bass_notes = note_events(mono(stems["bass"]), "/tmp/bass.wav")
+        bass_notes = clean_notes(note_events(mono(stems["bass"]), "/tmp/bass.wav"), None)
         note_cache["bass"] = bass_notes
-        mark_overlap(bass_notes)
     instruments = []
     used_names: set[str] = set()
     for gi, ((stem_key, cat), rs) in enumerate(ranked):
-        report("build", 0.55 + 0.4 * gi / max(1, len(ranked)), f"Sampling {cat} from the {stem_key} stem")
+        report("build", 0.55 + 0.4 * gi / max(1, len(ranked)), f"Sampling {cat} from the {stem_key} part")
         if stem_key not in note_cache:
-            ns = note_events(mono(stems[stem_key]), f"/tmp/{stem_key}.wav")
-            mark_overlap(ns)
-            note_cache[stem_key] = ns
+            note_cache[stem_key] = clean_notes(note_events(mono(stems[stem_key]), f"/tmp/{stem_key}.wav"), bass_notes)
+        stem_notes = note_cache[stem_key]
         span = Region(stem_key, cat, rs[0].sustained, min(r.t0 for r in rs), max(r.t1 for r in rs), sum(r.score for r in rs))
-        notes = [n for n in note_cache[stem_key] if any(r.t0 - 0.05 <= n.start and n.end <= r.t1 + 0.5 for r in rs)]
+        notes = interior_notes(stem_notes, rs, [r for r in regions if r.stem == stem_key and r.category != cat])
         if stem_key != "bass":
-            notes = drop_bleed(main_register(notes), bass_notes)
-        title = f"{name} {cat}"[:44]
-        k = 2
-        while title in used_names:
-            title = f"{name} {cat} {k}"[:44]
-            k += 1
-        inst = build_instrument(stems[stem_key], notes, span, title, outdir, f"{stem_name}_{file_stem(cat)}_{stem_key}")
+            notes = main_register(notes)
+        title = retitle(name, cat, used_names)
+        inst = build_instrument(stems[stem_key], notes, span, title, outdir, f"{stem_name}_{file_stem(cat)}_{stem_key}", stem_notes)
+        if inst and stem_key != "bass" and len(inst["zones"]) < 2:
+            inst = None  # one stray note is not an instrument
+        if inst and cat in ("Brass", "Strings") and inst["attack"] is not None:
+            # Bowed strings swell in; brass speaks at once. AudioSet tagging confuses the two.
+            real = "Strings" if inst["attack"] >= STRINGS_ATTACK else "Brass"
+            if real != cat:
+                cat = real
+                inst = build_instrument(
+                    stems[stem_key], notes, Region(stem_key, cat, True, span.t0, span.t1, span.score),
+                    retitle(name, cat, used_names), outdir, f"{stem_name}_{file_stem(cat)}_{stem_key}", stem_notes,
+                )
         if inst:
-            used_names.add(title)
+            used_names.add(inst["name"])
             inst["segments"] = [[round(r.t0, 1), round(r.t1, 1)] for r in rs]
             instruments.append(inst)
     if not instruments:

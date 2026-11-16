@@ -175,3 +175,104 @@ def check_sounds(truth: dict, man: dict, outdir: str) -> list[Check]:
             if seams:
                 res.append((f"{inst['name']}: loop seams match", min(seams) > 0.85, f"min corr {min(seams):.3f}"))
     return res
+
+
+# ---- timbre: does each sample sound like the instrument that played? -------------------
+
+GM_FAMILIES = ["Piano", "Chromatic", "Organ", "Guitar", "Bass", "Strings", "Ensemble", "Brass", "Reed", "Pipe", "Synth Lead", "Synth Pad", "Synth FX", "Ethnic", "Percussive", "SFX"]
+_GM_CACHE: dict[int, np.ndarray] = {}
+
+
+def timbre_features(y: np.ndarray, sr: int = SR) -> np.ndarray:
+    """Pitch-normalised timbre: log-mel spectral envelope of the note body plus its
+    loudness envelope over the first second, unit-normalised (level does not matter)."""
+    import librosa
+
+    y = y[: int(1.5 * sr)]
+    if len(y) < sr // 4:
+        y = np.pad(y, (0, sr // 4 - len(y)))
+    S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=4096, hop_length=512, n_mels=96, fmax=16000)
+    L = np.log(S + 1e-8)
+    body = L[:, 3 : max(4, L.shape[1] * 2 // 3)].mean(1)
+    body -= body.max()
+    body = np.maximum(body, -12.0)  # ignore what is 50 dB down (noise floor, bleed)
+    env = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0][:86]
+    env = np.pad(env, (0, 86 - len(env)))
+    env = np.log(env / (env.max() + 1e-9) + 1e-3)
+    v = np.concatenate([body / 12.0, 0.5 * env / 7.0])
+    return v / (np.linalg.norm(v) + 1e-9)
+
+
+def gm_reference(pitch: int, sf2: str) -> np.ndarray:
+    """Features of all 128 GM programs playing `pitch` (2 s note each), rendered from sf2."""
+    if pitch in _GM_CACHE:
+        return _GM_CACHE[pitch]
+    import subprocess
+    import tempfile
+
+    import mido
+    import soundfile as sf
+
+    tpb, slot = 480, 3.0  # seconds per program
+    mid = mido.MidiFile(ticks_per_beat=tpb)
+    tr = mido.MidiTrack()
+    mid.tracks.append(tr)
+    tr.append(mido.MetaMessage("set_tempo", tempo=500000, time=0))  # 1 beat = 0.5 s
+    per = int(slot / 0.5 * tpb)
+    for p in range(128):
+        tr.append(mido.Message("program_change", channel=0, program=p, time=0 if p == 0 else per - int(2.0 / 0.5 * tpb)))
+        tr.append(mido.Message("note_on", channel=0, note=pitch, velocity=92, time=0))
+        tr.append(mido.Message("note_off", channel=0, note=pitch, velocity=0, time=int(2.0 / 0.5 * tpb)))
+    with tempfile.TemporaryDirectory() as td:
+        mp, wp = os.path.join(td, "gm.mid"), os.path.join(td, "gm.wav")
+        mid.save(mp)
+        subprocess.run(["fluidsynth", "-ni", "-q", "-g", "0.5", "-r", str(SR), "-F", wp, sf2, mp], check=True, capture_output=True)
+        y, _ = sf.read(wp, always_2d=True)
+    y = y.mean(1)
+    n = int(slot * SR)
+    feats = np.stack([timbre_features(y[p * n : p * n + int(2.4 * SR)]) for p in range(128)])
+    _GM_CACHE[pitch] = feats
+    return feats
+
+
+def timbre_rank(sample: np.ndarray, pitch: int, program: int, sf2: str) -> tuple[int, int, float]:
+    """(rank of the true program among 128 by similarity, 1 = best; best-matching program;
+    cosine similarity to the true program)."""
+    ref = gm_reference(pitch, sf2)
+    f = timbre_features(sample)
+    sims = ref @ f
+    order = np.argsort(-sims)
+    return int(np.where(order == program)[0][0]) + 1, int(order[0]), float(sims[program])
+
+
+def check_timbre(truth: dict, man: dict, outdir: str, sf2: str) -> list[Check]:
+    """For each sampled part: does the sample sound like the instrument that played it?
+    Rank 1 of 128 = closest of all GM sounds; same family = a listener would call it the
+    same kind of instrument."""
+    import soundfile as sf
+
+    res: list[Check] = []
+    for sec in truth["sections"]:
+        prog = sec.get("program")
+        if prog is None:
+            continue
+        fam = sec["family"]
+        cover = [i for i in man["sounds"] if i["stem"] != "bass" and any(a < sec["end"] - 1 and b > sec["start"] + 1 for a, b in i["segments"])]
+        if not cover:
+            res.append((f"{fam} timbre", False, "no sound sampled from this part"))
+            continue
+        inst = max(cover, key=lambda i: sum(min(b, sec["end"]) - max(a, sec["start"]) for a, b in i["segments"]))
+        blocks = open(os.path.join(outdir, inst["file"]), encoding="utf-8").read().split("<region>")[1:]
+        ranks, fams, sims = [], [], []
+        for z, block in zip(inst["zones"], blocks):
+            y, _ = sf.read(os.path.join(outdir, block.split("sample=")[1].split()[0]), always_2d=True)
+            r, best, s = timbre_rank(y.mean(1), z["root"], prog, sf2)
+            ranks.append(r)
+            fams.append(best // 8 == prog // 8)
+            sims.append(s)
+        med = float(np.median(ranks))
+        famok = float(np.mean(fams))
+        res.append((f"{fam} timbre: sample is identifiable as {fam} (median rank <= 3 of 128)", med <= 3, f"{inst['name']}: ranks {ranks}, sim {np.mean(sims):.3f}"))
+        res.append((f"{fam} timbre: nearest GM sound is the same family (>= 80% of zones)", famok >= 0.8, f"{famok:.0%}; nearest family {GM_FAMILIES[best // 8]}"))
+        res.append((f"{fam} named correctly", inst["category"] in (fam, {"Organ": "Organ"}.get(fam, fam)), f"category {inst['category']}"))
+    return res
