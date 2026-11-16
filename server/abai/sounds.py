@@ -373,7 +373,7 @@ def build_instrument(
         files.append(fname)
         regions.append({"root": n.pitch, "lo": lo, "hi": hi, "tune": tune, "loop": bool(loop), "seconds": round(frames / SR, 2)})
     sfz = base + ".sfz"
-    with open(os.path.join(outdir, sfz), "w") as fh:
+    with open(os.path.join(outdir, sfz), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     files.append(sfz)
     return {
@@ -446,7 +446,7 @@ def extract_sounds(path: str, name: str, outdir: str, report: Report = no_report
         "sounds": instruments,
         "files": files,
     }
-    with open(os.path.join(outdir, "manifest.json"), "w") as fh:
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=1)
     report("done", 1.0, f"{len(instruments)} sound{'s' if len(instruments) != 1 else ''}")
     return manifest

@@ -77,7 +77,7 @@ def process(job_id: str) -> None:
         manifest = fn(job["input"], job.get("name") or "Song", out, report)
         manifest["sizes"] = {f: os.path.getsize(os.path.join(out, f)) for f in manifest["files"]}
         manifest["seconds"] = round(time.time() - started, 1)
-        with open(os.path.join(out, "manifest.json"), "w") as fh:
+        with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as fh:
             json.dump(manifest, fh, indent=1)
         try:
             os.remove(job["input"])

@@ -58,6 +58,7 @@ async function run(kind, demo, name) {
   }
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(job.result, null, 1))
   check(true, `${kind}: downloaded ${job.result.files.length} files`, `${(bytesTotal / 1e6).toFixed(1)} MB`)
+  check(/[^\x00-\x7f]/.test(job.result.name) && job.result.files.every((f) => /^[A-Za-z0-9_.-]+$/.test(f)), `${kind}: non-ASCII title kept, file names ASCII`, job.result.name)
   const evil = await fetch(`${url}/v1/jobs/${id}/files/..%2F..%2Fjobs`, { headers: auth })
   check(evil.status === 400 || evil.status === 404, `${kind}: path traversal refused`, `${evil.status}`)
   const del = await fetch(`${url}/v1/jobs/${id}`, { method: "DELETE", headers: auth })
@@ -72,8 +73,8 @@ const noAuth = await fetch(`${url}/v1/jobs/x`)
 check(noAuth.status === 401, "requests without the token are refused", `${noAuth.status}`)
 const out = {}
 const jobs = []
-if (which !== "sounds") jobs.push(run("drums", "demo_groove.mp3", "Demo Groove").then((r) => (out.drums = r)))
-if (which !== "drums") jobs.push(run("sounds", "demo_keys.mp3", "Demo Keys").then((r) => (out.sounds = r)))
+if (which !== "sounds") jobs.push(run("drums", "demo_groove.mp3", "Señor Groove – Привет").then((r) => (out.drums = r)))
+if (which !== "drums") jobs.push(run("sounds", "demo_keys.mp3", "Clé Ünïcode – Тест").then((r) => (out.sounds = r)))
 await Promise.all(jobs)
 if (out.drums) console.log("AB_AI_STYLE=" + join(out.drums.dir, out.drums.manifest.styles[0].file))
 if (out.sounds) console.log("AB_AI_SFZ=" + out.sounds.manifest.sounds.map((s) => join(out.sounds.dir, s.file)).join(";"))

@@ -539,7 +539,7 @@ def write_kit(stem_stereo: np.ndarray, slices: list[Slice], wav_path: str, sfz_p
         "<group>",
         "loop_mode=one_shot lovel=1 hivel=127",
     ] + regions
-    with open(sfz_path, "w") as fh:
+    with open(sfz_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
 
@@ -722,7 +722,7 @@ def extract_drum_style(path: str, name: str, outdir: str, report: Report = no_re
                 lines.append(f"kit={kit}")
             for tick, note, vel, dur in evs:
                 lines.append(f"{tick},0,{note},{vel},{dur},abs")
-        with open(os.path.join(outdir, fname), "w") as fh:
+        with open(os.path.join(outdir, fname), "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
         files.append(fname)
 
@@ -756,7 +756,7 @@ def extract_drum_style(path: str, name: str, outdir: str, report: Report = no_re
         "sounds": [],
         "files": sorted(set(files)),
     }
-    with open(os.path.join(outdir, "manifest.json"), "w") as fh:
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=1)
     report("done", 1.0, f"{tempo:g} BPM · {grid.meter}/4 · {len(an.segments)} sections")
     return manifest

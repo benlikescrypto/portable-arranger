@@ -104,7 +104,7 @@ gpu_image = (
         extra_options="--no-deps",
     )
     .run_function(_download_models)
-    .env({"PYTHONUNBUFFERED": "1"})
+    .env({"PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
 )
 
 web_image = modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]", "python-multipart")

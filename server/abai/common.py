@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import unicodedata
 from dataclasses import dataclass
 from typing import Callable
 
@@ -235,6 +236,8 @@ def safe_name(name: str, fallback: str = "Song") -> str:
 
 
 def file_stem(name: str) -> str:
+    # File names stay ASCII (the API serves only [A-Za-z0-9_.-]): "Señor Ünïcode" -> "senor_unicode".
+    name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
     s = "".join(c.lower() if c.isalnum() else "_" for c in name)
     while "__" in s:
         s = s.replace("__", "_")
