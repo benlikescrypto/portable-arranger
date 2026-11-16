@@ -11,8 +11,27 @@ const here = dirname(fileURLToPath(import.meta.url))
 const url = (process.argv[2] || "").replace(/\/+$/, "")
 const which = process.argv[3] || "both"
 const outRoot = process.argv[4] || join(here, "..", "..", "tmp", "ai-e2e")
-const token = /AB_TOKEN=(\S+)/.exec(readFileSync(join(here, "..", ".env.local"), "utf8"))[1]
-const auth = { Authorization: `Bearer ${token}` }
+// A Supabase test user from server/.env.local: AB_TEST_EMAIL, AB_TEST_PASSWORD (signed up on first run).
+const env = Object.fromEntries(
+  readFileSync(join(here, "..", ".env.local"), "utf8")
+    .split(/\r?\n/)
+    .map((l) => /^([A-Z_]+)=(.*)$/.exec(l.trim()))
+    .filter(Boolean)
+    .map((m) => [m[1], m[2]])
+)
+const SB_URL = env.SUPABASE_URL || "https://axwjitckgchsauvntnxe.supabase.co"
+const SB_KEY = env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_MfTMzGA8JwOlsTQFrmPcXQ_66luxrAg"
+async function signIn() {
+  const creds = JSON.stringify({ email: env.AB_TEST_EMAIL, password: env.AB_TEST_PASSWORD })
+  const post = (p) =>
+    fetch(`${SB_URL}/auth/v1/${p}`, { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: creds })
+  let r = await post("token?grant_type=password")
+  if (r.status === 400) r = await post("signup")
+  const body = await r.json()
+  if (!body.access_token) throw new Error(`test user sign-in failed: ${JSON.stringify(body)}`)
+  return body.access_token
+}
+const auth = { Authorization: `Bearer ${await signIn()}` }
 let failed = 0
 const check = (ok, name, detail = "") => {
   console.log(`[${ok ? "PASS" : "FAIL"}] ${name}${detail ? ": " + detail : ""}`)
@@ -70,7 +89,7 @@ async function run(kind, demo, name) {
 const health = await fetch(`${url}/v1/health`)
 check(health.ok, "health", `${health.status}`)
 const noAuth = await fetch(`${url}/v1/jobs/x`)
-check(noAuth.status === 401, "requests without the token are refused", `${noAuth.status}`)
+check(noAuth.status === 401, "requests without a sign-in are refused", `${noAuth.status}`)
 const out = {}
 const jobs = []
 if (which !== "sounds") jobs.push(run("drums", "demo_groove.mp3", "Señor Groove – Привет").then((r) => (out.drums = r)))

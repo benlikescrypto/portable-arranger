@@ -1,4 +1,4 @@
-# Same as .gitignore, except .env is uploaded so builds carry EXPO_PUBLIC_AI_TOKEN.
+# Same as .gitignore, except .env is uploaded to EAS (optional EXPO_PUBLIC_* overrides).
 # dependencies
 node_modules/
 

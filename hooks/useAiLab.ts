@@ -159,7 +159,13 @@ export function useAiLab(vm: Vm) {
         try {
           job = await getJob(id)
         } catch (error) {
-          // A lost connection is not a failed job: keep waiting.
+          if (error instanceof AiError && error.status === 404) {
+            pendingRef.current = pendingRef.current.filter((p) => p.id !== id)
+            persist()
+            patch(kind, { phase: "error", message: error.message })
+            return
+          }
+          // A lost connection (or signed out) is not a failed job: keep waiting.
           patch(kind, { message: error instanceof Error ? `${error.message} Retrying…` : "Retrying…" })
           await new Promise((r) => setTimeout(r, POLL_MS * 2))
           continue

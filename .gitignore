@@ -71,7 +71,7 @@ yarn-error.*
 # EAS Simulator session (contains access tokens)
 .env.eas-simulator
 
-# AI server token (also in Modal secret arrangerbox-ai)
+# Local env (Supabase test user, overrides)
 server/.env.local
 .env
 

@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react"
-import { ScrollView, StyleSheet, Text, View } from "react-native"
+import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 
 import { LcdButton, LcdHeader, LcdTabs } from "@/components/pro/ui"
 import { Lcd, noteName } from "@/constants/theme"
+import { useAuth, type Auth } from "@/hooks/useAuth"
 import { AI_STAGES, stepOf, type AiActive, type AiLab, type AiLoaded } from "@/hooks/useAiLab"
 import type { useArranger } from "@/hooks/useArranger"
 import type { AiKind, AiManifest } from "@/lib/ai/client"
@@ -42,6 +43,7 @@ const ELEMENTS: { id: string; label: string }[] = [
 const SOUND_COLORS = ["#F2B35B", "#7FB4FF", "#C79BFF", "#6FD9A8", "#E39B45", "#E26A6A"]
 
 export function AiPage({ vm, ai, wide }: { vm: Vm; ai: AiLab; wide: boolean }) {
+  const auth = useAuth()
   const [tab, setTab] = useState<Tab>("drums")
   const [openId, setOpenId] = useState<Record<AiKind, string | null>>({ drums: null, sounds: null })
   const status = !ai.configured ? "Not set up" : ai.online == null ? "Connecting…" : ai.online ? "Server online" : "Server offline"
@@ -65,7 +67,9 @@ export function AiPage({ vm, ai, wide }: { vm: Vm; ai: AiLab; wide: boolean }) {
             </Text>
           </Section>
         ) : null}
-        {tab === "library" ? (
+        {auth.ready && !auth.user && tab !== "library" ? (
+          <SignIn auth={auth} />
+        ) : tab === "library" ? (
           <LibraryList
             ai={ai}
             onOpen={(e) => {
@@ -99,6 +103,12 @@ export function AiPage({ vm, ai, wide }: { vm: Vm; ai: AiLab; wide: boolean }) {
               <Text style={styles.small}>
                 The song is processed on the ArrangerBox GPU server and deleted when the job ends; results stay on this device.
               </Text>
+              <View style={styles.row}>
+                <Text style={[styles.small, styles.flex]} numberOfLines={1}>
+                  Signed in as {auth.user?.email}
+                </Text>
+                <LcdButton label="Sign out" disabled={auth.busy} onPress={() => void auth.signOut()} />
+              </View>
             </Section>
             {ai.active[kind] ? (
               <JobCard
@@ -451,6 +461,51 @@ function Stat({ label, value, unit }: { label: string; value: string; unit?: str
   )
 }
 
+function SignIn({ auth }: { auth: Auth }) {
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const ok = /.+@.+\..+/.test(email.trim()) && password.length >= 8
+  return (
+    <Section title="Sign in to use AI Lab">
+      <Text style={styles.hint}>
+        AI Lab runs on the ArrangerBox GPU server, so it needs an account. Everything else in the app works without one.
+      </Text>
+      <TextInput
+        value={email}
+        onChangeText={setEmail}
+        placeholder="Email"
+        placeholderTextColor={Lcd.dim}
+        style={styles.input}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="email"
+        keyboardType="email-address"
+        textContentType="emailAddress"
+        selectionColor={Lcd.tabOn}
+      />
+      <TextInput
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Password (8+ characters)"
+        placeholderTextColor={Lcd.dim}
+        style={styles.input}
+        secureTextEntry
+        autoCapitalize="none"
+        autoComplete="password"
+        textContentType="password"
+        selectionColor={Lcd.tabOn}
+        onSubmitEditing={() => ok && void auth.signIn(email, password)}
+      />
+      {auth.error ? <Text style={[styles.value, { color: "#FFD3D3" }]}>{auth.error}</Text> : null}
+      {auth.notice ? <Text style={styles.value}>{auth.notice}</Text> : null}
+      <View style={styles.row}>
+        <LcdButton label="Sign in" primary disabled={!ok || auth.busy} onPress={() => void auth.signIn(email, password)} style={styles.flex} />
+        <LcdButton label="Create account" disabled={!ok || auth.busy} onPress={() => void auth.signUp(email, password)} style={styles.flex} />
+      </View>
+    </Section>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
@@ -470,6 +525,17 @@ const styles = StyleSheet.create({
   value: { color: Lcd.text, fontSize: 12.5, fontWeight: "700" },
   row: { flexDirection: "row", alignItems: "center", gap: 8 },
   flex: { flex: 1 },
+  input: {
+    height: 34,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Lcd.line,
+    backgroundColor: Lcd.bg,
+    color: Lcd.text,
+    paddingHorizontal: 10,
+    fontSize: 13,
+    fontWeight: "700",
+  },
   dot: { width: 8, height: 8, borderRadius: 4, alignSelf: "center" },
   steps: { flexDirection: "row", gap: 4 },
   step: { flex: 1, alignItems: "center", gap: 3 },

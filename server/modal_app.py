@@ -4,13 +4,15 @@
     modal run modal_app.py::run_tests  # ground-truth pipeline tests on GPU
     modal run modal_app.py::make_demo  # demo songs served at /v1/demo/<name>
 
-API (Authorization: Bearer <AB_TOKEN from the arrangerbox-ai secret>):
+API (Authorization: Bearer <Supabase access token of a signed-in user>):
     POST   /v1/jobs                 multipart: file, kind=drums|sounds, name
     GET    /v1/jobs/{id}            status, stage, progress, message, result manifest
     GET    /v1/jobs/{id}/files/{f}  a result file (manifest.json, .abstyle, .sfz, .wav)
     DELETE /v1/jobs/{id}
     GET    /v1/demo/{name}          demo song (demo_groove.mp3, demo_keys.mp3, demo_waltz.mp3)
 Uploaded songs are deleted as soon as a job finishes; results expire after 24 hours.
+Job state lives in Supabase (public.ai_jobs, see server/db.py); users only see their own jobs.
+Modal secret "arrangerbox-ai": SUPABASE_URL, SUPABASE_SECRET_KEY, optional AI_DAILY_LIMIT.
 """
 
 
@@ -32,25 +34,28 @@ AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".aif", ".aiff", "
 
 app = modal.App("arrangerbox-ai")
 vol = modal.Volume.from_name("arrangerbox-ai-data", create_if_missing=True)
-jobs = modal.Dict.from_name("arrangerbox-ai-jobs", create_if_missing=True)
 secret = modal.Secret.from_name("arrangerbox-ai")
 
 # Deployed containers import this file, so they need images.py (and the pipeline) too.
 worker_image = (
-    gpu_image.add_local_python_source("images")
+    gpu_image.add_local_python_source("images", "db")
     .add_local_dir(HERE / "abai", "/root/abai")
     .add_local_file(SF2, "/assets/GeneralUser-GS.sf2")
 )
-api_image = web_image.add_local_python_source("images")
+api_image = web_image.add_local_python_source("images", "db")
+DAILY_LIMIT_DEFAULT = 20
 
 
 def _update(job_id: str, **fields) -> None:
-    job = jobs.get(job_id) or {}
-    job.update(fields, updated=time.time())
-    jobs[job_id] = job
+    import db
+
+    try:
+        db.update_job(job_id, **fields)
+    except Exception as exc:  # a progress update must never kill the job
+        print(f"[{job_id}] status update failed: {exc}", flush=True)
 
 
-@app.function(image=worker_image, gpu=GPUS, volumes={DATA: vol}, timeout=1800, memory=16384, max_containers=8)
+@app.function(image=worker_image, gpu=GPUS, volumes={DATA: vol}, secrets=[secret], timeout=1800, memory=16384, max_containers=8)
 def process(job_id: str) -> None:
     import shutil
     import sys
@@ -60,10 +65,13 @@ def process(job_id: str) -> None:
     from abai.drums import extract_drum_style
     from abai.sounds import extract_sounds
 
+    import db
+
     vol.reload()
-    job = jobs.get(job_id)
+    job = db.get_job(job_id)
     if not job:
         return
+    job["input"] = job["input_path"]
     out = f"{DATA}/jobs/{job_id}/out"
     started = time.time()
 
@@ -102,7 +110,6 @@ def process(job_id: str) -> None:
 @modal.concurrent(max_inputs=40)
 @modal.asgi_app()
 def api():
-    import hmac
     import re
     import threading
     import uuid
@@ -110,17 +117,25 @@ def api():
     from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
     from fastapi.responses import Response
 
+    import db
+
     web = FastAPI(title="ArrangerBox AI", docs_url=None, redoc_url=None)
-    token = os.environ["AB_TOKEN"]
+    daily_limit = int(os.environ.get("AI_DAILY_LIMIT") or DAILY_LIMIT_DEFAULT)
     reload_lock = threading.Lock()
 
-    def auth(authorization: str | None) -> None:
-        want = f"Bearer {token}"
-        if not authorization or not hmac.compare_digest(authorization, want):
-            raise HTTPException(401, "Missing or wrong ArrangerBox AI token.")
+    def auth(authorization: str | None) -> str:
+        user = db.verify_user(authorization)
+        if not user:
+            raise HTTPException(401, "Sign in to use ArrangerBox AI.")
+        return user
 
-    def public(job: dict) -> dict:
-        return {k: v for k, v in job.items() if k not in ("input",)}
+    def own_job(job_id: str, user: str) -> dict:
+        if not re.fullmatch(r"[a-f0-9]{16}", job_id):
+            raise HTTPException(404, "No such job.")
+        job = db.get_job(job_id)
+        if not job or job["user_id"] != user:
+            raise HTTPException(404, "No such job (results expire after 24 hours).")
+        return job
 
     def read_file(path: str) -> bytes:
         for attempt in range(4):
@@ -149,9 +164,11 @@ def api():
         name: str = Form(""),
         authorization: str | None = Header(None),
     ):
-        auth(authorization)
+        user = auth(authorization)
         if kind not in ("drums", "sounds"):
             raise HTTPException(400, "kind must be drums or sounds")
+        if db.jobs_today(user) >= daily_limit:
+            raise HTTPException(429, f"Daily limit reached ({daily_limit} songs per 24 hours). Try again later.")
         ext = os.path.splitext(file.filename or "")[1].lower()
         if ext not in AUDIO_EXT:
             ext = ".audio"
@@ -172,38 +189,34 @@ def api():
             raise HTTPException(400, "The file is empty.")
         vol.commit()
         title = (name or os.path.splitext(file.filename or "Song")[0]).strip()[:60] or "Song"
-        now = time.time()
-        jobs[job_id] = {
-            "id": job_id,
-            "kind": kind,
-            "name": title,
-            "status": "queued",
-            "stage": "queued",
-            "progress": 0.0,
-            "message": "Waiting for a GPU",
-            "created": now,
-            "updated": now,
-            "bytes": size,
-            "input": path,
-        }
+        db.insert_job(
+            {
+                "id": job_id,
+                "user_id": user,
+                "kind": kind,
+                "name": title,
+                "status": "queued",
+                "stage": "queued",
+                "progress": 0.0,
+                "message": "Waiting for a GPU",
+                "bytes": size,
+                "input_path": path,
+            }
+        )
         process.spawn(job_id)
         return {"id": job_id, "status": "queued"}
 
     @web.get("/v1/jobs/{job_id}")
     def status(job_id: str, authorization: str | None = Header(None)):
-        auth(authorization)
-        job = jobs.get(job_id)
-        if not job:
-            raise HTTPException(404, "No such job (results expire after 24 hours).")
-        return public(job)
+        return db.to_api(own_job(job_id, auth(authorization)))
 
     @web.get("/v1/jobs/{job_id}/files/{name}")
     def result_file(job_id: str, name: str, authorization: str | None = Header(None)):
-        auth(authorization)
+        user = auth(authorization)
         if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,96}", name) or ".." in name:
             raise HTTPException(400, "bad file name")
-        job = jobs.get(job_id)
-        if not job or job.get("status") != "done":
+        job = own_job(job_id, user)
+        if job.get("status") != "done":
             raise HTTPException(404, "No finished job with that id.")
         if name != "manifest.json" and name not in job["result"]["files"]:
             raise HTTPException(404, "Not a file of this job.")
@@ -216,7 +229,7 @@ def api():
 
     @web.delete("/v1/jobs/{job_id}")
     def delete(job_id: str, authorization: str | None = Header(None)):
-        auth(authorization)
+        own_job(job_id, auth(authorization))
         remove_job(job_id)
         return {"ok": True}
 
@@ -237,24 +250,25 @@ def api():
 def remove_job(job_id: str) -> None:
     import shutil
 
+    import db
+
     shutil.rmtree(f"{DATA}/jobs/{job_id}", ignore_errors=True)
-    try:
-        jobs.pop(job_id)
-    except KeyError:
-        pass
+    db.delete_job(job_id)
     vol.commit()
 
 
-@app.function(image=api_image, volumes={DATA: vol}, schedule=modal.Period(hours=1))
+@app.function(image=api_image, volumes={DATA: vol}, secrets=[secret], schedule=modal.Period(hours=1))
 def cleanup() -> None:
+    import db
+
     now = time.time()
-    for job_id, job in list(jobs.items()):
-        if now - job.get("created", now) > RESULT_TTL_S:
-            remove_job(job_id)
+    for job_id in db.expired_jobs(RESULT_TTL_S):
+        remove_job(job_id)
+    known = db.all_job_ids()
     root = f"{DATA}/jobs"
     if os.path.isdir(root):
         for job_id in os.listdir(root):
-            if job_id not in jobs:
+            if job_id not in known:
                 path = os.path.join(root, job_id)
                 if now - os.path.getmtime(path) > RESULT_TTL_S:
                     import shutil

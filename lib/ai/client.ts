@@ -1,5 +1,7 @@
 import { Directory, File, Paths, UploadType } from "expo-file-system"
 
+import { accessToken } from "@/lib/supabase"
+
 import { aiConfig } from "./config"
 
 export type AiKind = "drums" | "sounds"
@@ -53,14 +55,24 @@ export type AiJob = {
   result?: AiManifest
 }
 
-export class AiError extends Error {}
+export class AiError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message)
+  }
+}
 
-const authHeaders = () => ({ Authorization: `Bearer ${aiConfig.token}` })
+/** The signed-in user's Supabase access token; the server checks it on every call. */
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await accessToken()
+  if (!token) throw new AiError("Sign in to use ArrangerBox AI.")
+  return { Authorization: `Bearer ${token}` }
+}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const auth = path === "/v1/health" ? {} : await authHeaders()
   let res: Response
   try {
-    res = await fetch(aiConfig.url + path, { ...init, headers: { ...authHeaders(), ...(init?.headers ?? {}) } })
+    res = await fetch(aiConfig.url + path, { ...init, headers: { ...auth, ...(init?.headers ?? {}) } })
   } catch {
     throw new AiError("No connection to the ArrangerBox AI server.")
   }
@@ -71,7 +83,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // not JSON
     }
-    throw new AiError(detail || `The AI server answered ${res.status}.`)
+    throw new AiError(detail || `The AI server answered ${res.status}.`, res.status)
   }
   return (await res.json()) as T
 }
@@ -115,7 +127,7 @@ export async function startJob(
     uploadType: UploadType.MULTIPART,
     fieldName: "file",
     httpMethod: "POST",
-    headers: authHeaders(),
+    headers: await authHeaders(),
     parameters: { kind, name },
     mimeType: mimeOf(song.name),
     sessionType: "foreground",
@@ -177,10 +189,11 @@ export async function downloadResult(job: AiJob, onProgress: (fraction: number) 
   const sizes = manifest.sizes ?? {}
   const total = names.reduce((a, n) => a + (sizes[n] ?? 1), 0) || 1
   let done = 0
+  const headers = await authHeaders()
   for (const name of names) {
     const dest = new File(dir, name)
     const task = File.createDownloadTask(`${aiConfig.url}/v1/jobs/${job.id}/files/${encodeURIComponent(name)}`, dest, {
-      headers: authHeaders(),
+      headers,
       sessionType: "foreground",
       onProgress: (p) => onProgress(Math.min(1, (done + (Number(p.bytesWritten) || 0)) / total)),
     })
@@ -204,7 +217,7 @@ export async function fetchDemo(name: "demo_groove.mp3" | "demo_keys.mp3" | "dem
   if (dest.exists && dest.size > 10000) return dest
   if (dest.exists) dest.delete()
   const task = File.createDownloadTask(`${aiConfig.url}/v1/demo/${name}`, dest, {
-    headers: authHeaders(),
+    headers: await authHeaders(),
     sessionType: "foreground",
   })
   const file = await task.downloadAsync().catch(() => null)

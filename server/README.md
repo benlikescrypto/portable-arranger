@@ -28,13 +28,21 @@ The engine side is `kit=` / `meter=` in `.abstyle` and the `ab_kit` / `ab_catego
 
 ```sh
 cd server
-modal secret create arrangerbox-ai AB_TOKEN=<random>   # once; keep the same value in server/.env.local
-modal deploy modal_app.py                              # API + GPU worker + hourly cleanup
+# once (Supabase project "arrangerbox"; secret key from Dashboard -> Settings -> API keys):
+modal secret create arrangerbox-ai SUPABASE_URL=https://axwjitckgchsauvntnxe.supabase.co SUPABASE_SECRET_KEY=<secret key> AI_DAILY_LIMIT=20
+modal deploy modal_app.py                              # API + GPU worker + hourly cleanup (GitHub Actions does this on push to main)
 modal run modal_app.py::make_demo                      # demo songs for the app's "Try demo song"
 node scripts/write-app-config.mjs https://<workspace>--arrangerbox-ai-api.us-east.modal.run
 ```
 
-The script writes the URL to `lib/ai/server.generated.ts` (committed) and the token to the gitignored root `.env` as `EXPO_PUBLIC_AI_TOKEN`. `.easignore` uploads `.env` to EAS, so builds carry the token while the public repo does not. It is still an app key: every build contains it.
+The script writes the URL to `lib/ai/server.generated.ts` (committed).
+
+## Auth and data (Supabase)
+
+- Users sign in with Supabase Auth (email + password) in AI Lab. Every API call carries the user's Supabase access token; `db.verify_user` checks it against the project's JWKS (ES256), so no app key ships in builds.
+- Job state lives in `public.ai_jobs`: owners can read their own rows, only the server writes (secret key). `public.ai_usage` is an append-only log for the daily quota (`AI_DAILY_LIMIT`, default 20 per 24 h); deleting a job does not refund it.
+- Result files stay on the Modal volume for 24 h.
+- `node tests/e2e.mjs <api url>` signs in as `AB_TEST_EMAIL` / `AB_TEST_PASSWORD` from `server/.env.local`.
 
 ## Tests
 

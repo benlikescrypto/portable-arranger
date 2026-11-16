@@ -96,6 +96,8 @@ gpu_image = (
         "huggingface_hub",
         "safetensors",
         "fastapi[standard]",
+        "httpx",
+        "pyjwt[crypto]",
     )
     # basic-pitch pulls TensorFlow on Linux; the ONNX model needs only onnxruntime.
     .pip_install("basic-pitch==0.4.0", extra_options="--no-deps")
@@ -107,4 +109,4 @@ gpu_image = (
     .env({"PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
 )
 
-web_image = modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]", "python-multipart")
+web_image = modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]", "python-multipart", "httpx", "pyjwt[crypto]")

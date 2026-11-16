@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
     "arrangerbox-audio": "file:modules/audio",
     "arrangerbox-device": "file:modules/device",
     "arrangerbox-midi": "file:modules/midi",
