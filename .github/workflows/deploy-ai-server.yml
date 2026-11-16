@@ -1,0 +1,51 @@
+# Deploys the AI server (server/) to Modal whenever server code on main changes.
+#
+# Secrets: MODAL_TOKEN_ID, MODAL_TOKEN_SECRET (modal.com → Settings → API tokens).
+# The API token the app uses lives in the Modal secret "arrangerbox-ai", not here.
+
+name: Deploy AI server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "!server/**/*.md"
+      - "modules/audio/factory/GeneralUser-GS.sf2"
+      - ".github/workflows/deploy-ai-server.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ai-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Modal CLI
+        run: pip install "modal==1.6.4"
+
+      - name: Deploy
+        working-directory: server
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy modal_app.py
+
+      - name: Health check
+        run: |
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" https://benlikescrypto--arrangerbox-ai-api.us-east.modal.run/v1/health || true)
+            echo "health: $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          exit 1
