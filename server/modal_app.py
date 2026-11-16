@@ -325,7 +325,7 @@ def run_tests(only: str = "") -> str:
                 checks = check_drums(truth, man, f"/tmp/out_{case}")
             summary = {k: man[k] for k in ("bpm", "meter", "sections", "elements", "fills", "timeline") if k in man}
             if "sounds" in man:
-                summary["sounds"] = [{k: v for k, v in s.items() if k != "zones"} | {"roots": [z["root"] for z in s["zones"]]} for s in man["sounds"]]
+                summary["sounds"] = [{k: v for k, v in s.items() if k != "zones"} | {"roots": [(z["root"], z.get("at")) for z in s["zones"]]} for s in man["sounds"]]
             report[case] = {
                 "seconds": round(time.time() - t0, 1),
                 "checks": [[n, bool(ok), d] for n, ok, d in checks],

@@ -1,6 +1,7 @@
 """Song -> playable ArrangerBox instruments (SFZ multisamples).
 
-Pipeline: Demucs 6-stem separation -> PANNs tagging over time (which sound plays
+Pipeline: Demucs 6-stem separation (piano + other + guitar summed into one keys
+stem; drums and vocals dropped) -> PANNs tagging over time (which sound plays
 where) -> Basic Pitch note events (overtone ghost notes removed) -> a few of the cleanest
 notes of each sound, checked with pYIN -> trimmed, tuned, level-matched and (for
 sustained sounds) seamlessly looped samples, pitched across the keyboard.
@@ -16,8 +17,14 @@ import numpy as np
 
 from .common import SR, Report, decode, file_stem, mono, no_report, rms, safe_name, separate, write_wav
 
-STEMS = ("piano", "other", "guitar", "bass")
-WINDOW_S = 6.0
+# Demucs's piano/other/guitar split is unreliable for keyboard sounds (an organ part
+# moves between the piano and other stems from one section, or one run, to the next),
+# so those three are summed into one "keys" stem; drums and vocals are left out.
+STEMS = ("keys", "bass")
+KEYS_STEMS = ("piano", "other", "guitar")
+WINDOW_S = 6.0  # PANNs listens to 6 s at a time...
+STEP_S = 2.0  # ...centred on every 2 s slot, so a change of sound is placed within ~2 s
+EDGE_S = 3.0  # notes this close to a change of sound are not sampled
 
 # AudioSet label -> (ArrangerBox sound category as the app browser files it, sustained?)
 FAMILY: dict[str, tuple[str, bool]] = {
@@ -58,7 +65,10 @@ FAMILY: dict[str, tuple[str, bool]] = {
     "Glockenspiel": ("Percussion", False),
 }
 SUSTAINED = {cat: sus for cat, sus in FAMILY.values()}
-STEM_DEFAULT = {"piano": ("Piano", False), "other": ("Synth", True), "guitar": ("Guitar", False), "bass": ("Bass", False)}
+# AudioSet tagging flips between strings and brass on the same section, so they are
+# tracked as one sound and named afterwards from the sampled notes' attack.
+TRACK_AS = {"Brass": "Strings"}
+STEM_DEFAULT = {"keys": ("Synth", True), "bass": ("Bass", False)}
 
 
 @dataclass
@@ -98,18 +108,23 @@ def tag_regions(stems: dict[str, np.ndarray], report: Report) -> list[Region]:
         if level < 1e-3:
             continue
         y32 = librosa.resample(y, orig_sr=SR, target_sr=32000).astype(np.float32)
-        hop = int(WINDOW_S * 32000)
-        wins = [y32[i : i + hop] for i in range(0, max(1, len(y32) - hop // 2), hop)]
-        loud = np.array([rms(w) for w in wins])
-        batch = np.stack([np.pad(w, (0, hop - len(w))) for w in wins])
-        clip, _ = tagger.inference(batch)
+        win, step = int(WINDOW_S * 32000), int(STEP_S * 32000)
+        n_slots = max(1, int(np.ceil(len(y32) / step)))
+        wins = []
+        for k in range(n_slots):
+            c = k * step + step // 2
+            a = min(max(0, c - win // 2), max(0, len(y32) - win))
+            wins.append(y32[a : a + win])
+        loud = np.array([rms(y32[k * step : (k + 1) * step]) for k in range(n_slots)])
+        batch = np.stack([np.pad(w, (0, win - len(w))) for w in wins])
+        clip = np.concatenate([tagger.inference(batch[i : i + 32])[0] for i in range(0, len(batch), 32)])
         quiet = loud < max(level * 0.25, 1e-3)
         fam_labels = [labels[i] for i in wanted]
-        cats = sorted({FAMILY[lab][0] for lab in fam_labels})
+        cats = sorted({TRACK_AS.get(FAMILY[lab][0], FAMILY[lab][0]) for lab in fam_labels})
         # Window scores per category (max over the AudioSet labels of that family).
         sc = np.zeros((len(wins), len(cats)))
         for j, lab in enumerate(fam_labels):
-            c = cats.index(FAMILY[lab][0])
+            c = cats.index(TRACK_AS.get(FAMILY[lab][0], FAMILY[lab][0]))
             sc[:, c] = np.maximum(sc[:, c], clip[:, wanted[j]])
         # Smooth over neighbouring loud windows: one sound rarely lasts a single window.
         sm = sc.copy()
@@ -127,19 +142,23 @@ def tag_regions(stems: dict[str, np.ndarray], report: Report) -> list[Region]:
                 lab_k.append(STEM_DEFAULT[stem_name][0])
             else:
                 lab_k.append(cats[int(np.argmax(sm[k]))])
-        # A one-window blip between two windows of one sound belongs to that sound.
-        for k in range(1, len(wins) - 1):
-            if lab_k[k] and lab_k[k - 1] and lab_k[k - 1] == lab_k[k + 1] and lab_k[k] != lab_k[k - 1]:
-                lab_k[k] = lab_k[k - 1]
+        # A blip of up to 8 s inside one sound belongs to that sound.
+        for width in (1, 2, 3, 4):
+            for k in range(1, len(wins) - width):
+                prev, nxt = lab_k[k - 1], lab_k[k + width]
+                if prev and prev == nxt and any(lab_k[k + j] != prev for j in range(width)):
+                    for j in range(width):
+                        if lab_k[k + j]:
+                            lab_k[k + j] = prev
         cur: Region | None = None
-        for k, w in enumerate(wins):
-            t0, t1 = k * WINDOW_S, k * WINDOW_S + len(w) / 32000
+        for k in range(len(wins)):
+            t0, t1 = k * STEP_S, min((k + 1) * STEP_S, len(y32) / 32000)
             cat = lab_k[k]
             if cat is None:
                 cur = None
                 continue
             sus = SUSTAINED.get(cat, STEM_DEFAULT[stem_name][1])
-            score = float(sm[k].max())
+            score = float(sm[k].max()) * STEP_S / WINDOW_S
             if cur is not None and cur.category == cat:
                 cur.t1 = t1
                 cur.score += score
@@ -211,8 +230,9 @@ def mark_overlap(notes: list[Note]) -> None:
             m = notes[j]
             if m.amp < 0.4 * n.amp or m.pitch < n.pitch - 15:
                 continue
-            # An overtone or sub-octave starting with the note is part of its sound.
-            if abs(m.pitch - n.pitch) in PARTIALS and abs(m.start - n.start) < 0.07:
+            # Overtones and sub-octaves (organ drawbars, brass) are part of the note's
+            # own sound, even when Basic Pitch starts them a little later.
+            if abs(m.pitch - n.pitch) in PARTIALS:
                 continue
             a, b = max(n.start - 0.05, m.start), min(n.end, m.end)
             if b > a:
@@ -274,6 +294,44 @@ def measure_pitch(seg: np.ndarray, midi: int) -> tuple[float, float]:
     return float(np.median(cents)), float(ok.mean())
 
 
+def spectral_pitch(seg: np.ndarray, midi: int) -> tuple[float, bool]:
+    """(cents offset, found) from a clear spectral peak at the note's fundamental. Used
+    when pYIN cannot follow the note: an organ's 16' stop or a sub-oscillator makes
+    the waveform repeat an octave lower, though the note itself is plainly there."""
+    import librosa
+
+    x = seg[int(0.05 * SR) :]
+    if len(x) < int(0.25 * SR):
+        return 0.0, False
+    n_fft = 1 << int(np.log2(min(len(x), 1 << 16)))
+    frames = [x[i : i + n_fft] * np.hanning(n_fft) for i in range(0, len(x) - n_fft + 1, n_fft // 2)]
+    mag = np.mean([np.abs(np.fft.rfft(f)) for f in frames], axis=0)
+    f0 = float(librosa.midi_to_hz(midi))
+    k0 = f0 * n_fft / SR
+    lo, hi = int(k0 * 2 ** (-0.6 / 12)), int(np.ceil(k0 * 2 ** (0.6 / 12))) + 1
+    if hi >= len(mag) - 1 or lo < 2:
+        return 0.0, False
+    k = lo + int(np.argmax(mag[lo:hi]))
+    # A real peak: a local maximum standing well clear of the spectrum around it.
+    around = mag[max(1, int(k0 * 0.8)) : int(k0 * 1.25)]
+    if not (mag[k] >= mag[k - 1] and mag[k] >= mag[k + 1]) or mag[k] < 4 * np.median(around) or mag[k] < 0.05 * mag[1:].max():
+        return 0.0, False
+    a, b, c = np.log(mag[k - 1] + 1e-12), np.log(mag[k] + 1e-12), np.log(mag[k + 1] + 1e-12)
+    d = 0.5 * (a - c) / (a - 2 * b + c) if (a - 2 * b + c) != 0 else 0.0
+    f = (k + d) * SR / n_fft
+    return float(1200 * np.log2(f / f0)), True
+
+
+def overtone_of_another(n: Note, notes: list[Note]) -> bool:
+    """A note sounding together with a lower note at a harmonic interval is (or may be)
+    that note's overtone; a spectral peak would confirm it either way."""
+    return any(
+        (n.pitch - m.pitch) in PARTIALS and m.start <= n.start + 0.1 and m.end >= n.start + 0.2
+        for m in notes
+        if m is not n and abs(m.start - n.start) < 3.0
+    )
+
+
 def find_loop(x: np.ndarray, a: int, b: int, midi: int) -> tuple[int, int] | None:
     """Loop points inside x[a:b] (mono analysis) with the best waveform match."""
     import librosa
@@ -326,28 +384,6 @@ def retitle(name: str, cat: str, used: set[str]) -> str:
     return title
 
 
-def envelope(y: np.ndarray, rs: list[Region]) -> np.ndarray:
-    hop = int(0.05 * SR)
-    seg = np.concatenate([y[int(r.t0 * SR) : int(r.t1 * SR)] for r in rs])
-    n = len(seg) // hop
-    return np.sqrt((seg[: n * hop].reshape(n, hop) ** 2).mean(1) + 1e-12)
-
-
-def same_instrument(stems: dict[str, np.ndarray], a: tuple[str, list[Region]], b: tuple[str, list[Region]]) -> bool:
-    """True when sound a is another stem's copy of sound b: Demucs split one instrument
-    over two stems, so over a's time both stems swell and fade together."""
-    (sa, ra), (sb, rb) = a, b
-    if sa == sb or sa == "bass" or sb == "bass":
-        return False
-    shared = [Region(sa, "", False, max(x.t0, y.t0), min(x.t1, y.t1), 0) for x in ra for y in rb if min(x.t1, y.t1) - max(x.t0, y.t0) > 1.0]
-    if sum(r.t1 - r.t0 for r in shared) < 0.5 * sum(r.t1 - r.t0 for r in ra):
-        return False
-    ea, eb = envelope(mono(stems[sa]), shared), envelope(mono(stems[sb]), shared)
-    if len(ea) < 20:
-        return False
-    return float(np.corrcoef(np.log(ea), np.log(eb))[0, 1]) > 0.8
-
-
 def attack_time(seg: np.ndarray) -> float:
     """Seconds from onset to 90% of the note's peak level (10 ms RMS envelope)."""
     hop = int(0.01 * SR)
@@ -359,25 +395,22 @@ def attack_time(seg: np.ndarray) -> float:
 
 
 def interior_notes(notes: list[Note], own: list[Region], others: list[Region]) -> list[Note]:
-    """Notes inside this sound's regions. Where a region borders a different sound on the
-    same stem, the change can fall anywhere in the boundary window, so notes in the half
-    window next to it are only used when the region has too few notes of its own."""
-    margin = WINDOW_S / 2
-
-    def inside(n: Note, strict: bool) -> bool:
+    """Notes inside this sound's regions, keeping EDGE_S seconds away from any
+    edge where the stem changes to a different sound: the change is only placed to
+    within a slot or so, and a note of the neighbouring sound would poison the instrument."""
+    out = []
+    for n in notes:
         for r in own:
             a, b = r.t0 - 0.05, r.t1 + 0.5
-            if strict:
-                if any(abs(o.t1 - r.t0) < 0.1 for o in others):
-                    a = r.t0 + margin
-                if any(abs(o.t0 - r.t1) < 0.1 for o in others):
-                    b = r.t1 - margin
+            # Another sound ending or starting at (or within a short gap of) this edge.
+            if any(r.t0 - 2 * STEP_S - 0.1 <= o.t1 <= r.t0 + 0.1 for o in others):
+                a = r.t0 + EDGE_S
+            if any(r.t1 - 0.1 <= o.t0 <= r.t1 + 2 * STEP_S + 0.1 for o in others):
+                b = r.t1 - EDGE_S
             if a <= n.start and n.end <= b:
-                return True
-        return False
-
-    strict = [n for n in notes if inside(n, True)]
-    return strict if len(strict) >= 6 else [n for n in notes if inside(n, False)]
+                out.append(n)
+                break
+    return out
 
 
 def build_instrument(
@@ -409,6 +442,10 @@ def build_instrument(
         if rms(seg) < lo_rms:
             continue
         cents, voiced = measure_pitch(seg, n.pitch)
+        if voiced < 0.5 and region.stem != "bass" and not overtone_of_another(n, all_notes or notes):
+            c2, found = spectral_pitch(seg, n.pitch)
+            if found:
+                cents, voiced = c2, 0.6
         if voiced < 0.5 or abs(cents) > 60:
             continue
         n.cents = cents
@@ -481,7 +518,7 @@ def build_instrument(
             op += " loop_mode=no_loop"
         lines.append(op)
         files.append(fname)
-        regions.append({"root": n.pitch, "lo": lo, "hi": hi, "tune": tune, "loop": bool(loop), "seconds": round(frames / SR, 2)})
+        regions.append({"root": n.pitch, "lo": lo, "hi": hi, "tune": tune, "loop": bool(loop), "seconds": round(frames / SR, 2), "at": round(n.start, 2)})
     sfz = base + ".sfz"
     with open(os.path.join(outdir, sfz), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
@@ -508,20 +545,15 @@ def extract_sounds(path: str, name: str, outdir: str, report: Report = no_report
     x = decode(path)
     duration = x.shape[1] / SR
     report("separate", 0.08, "Separating the instruments (Demucs 6 stems)")
-    stems = separate(x, "htdemucs_6s")
+    six = separate(x, "htdemucs_6s")
+    stems = {"keys": sum(six[k] for k in KEYS_STEMS), "bass": six["bass"]}
     report("tag", 0.4, "Listening for piano, strings, organ…")
     regions = tag_regions(stems, report)
     # Each (stem, sound) pair is one instrument, played wherever that sound was heard.
     groups: dict[tuple[str, str], list[Region]] = {}
     for r in regions:
         groups.setdefault((r.stem, r.category), []).append(r)
-    # Strongest first; a weaker sound that is a split-off copy of a stronger one is dropped.
-    level = {k: float(np.mean(envelope(mono(stems[k[0]]), rs))) for k, rs in groups.items()}
-    ranked = []
-    for key, rs in sorted(groups.items(), key=lambda kv: -level[kv[0]]):
-        if not any(same_instrument(stems, (key[0], rs), (k2[0], r2)) for k2, r2 in ranked):
-            ranked.append((key, rs))
-    ranked = sorted(ranked, key=lambda kv: -sum(r.score for r in kv[1]))[:6]
+    ranked = sorted(groups.items(), key=lambda kv: -sum(r.score for r in kv[1]))[:6]
     report("notes", 0.5, "Finding clean notes (Basic Pitch)")
     note_cache: dict[str, list[Note]] = {}
     bass_notes: list[Note] = []
