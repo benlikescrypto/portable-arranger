@@ -54,7 +54,9 @@ async function run(kind, demo, name) {
   let lastStage = ""
   for (;;) {
     await new Promise((r) => setTimeout(r, 2000))
-    job = await (await fetch(`${url}/v1/jobs/${id}`, { headers: auth })).json()
+    const res = await fetch(`${url}/v1/jobs/${id}`, { headers: auth }).catch(() => null)
+    if (!res || res.status >= 500) continue // a transient server error: poll again, as the app does
+    job = await res.json()
     if (job.stage !== lastStage) {
       console.log(`  ${((Date.now() - t0) / 1000).toFixed(0)}s ${job.status} ${job.stage} ${job.message ?? ""}`)
       lastStage = job.stage
