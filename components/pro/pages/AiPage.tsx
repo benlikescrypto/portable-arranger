@@ -330,8 +330,17 @@ function SoundResult({ entry, ids, vm, onLoad }: { entry: AiEntry; ids?: AiLoade
                   {snd.name}
                 </Text>
                 <Text style={styles.small} numberOfLines={1}>
-                  {`${snd.category} · ${snd.zones.length} sample${snd.zones.length === 1 ? "" : "s"} · ${noteName(snd.range[0])}–${noteName(snd.range[1])}${snd.sustained ? " · looped" : ""} · from the ${snd.stem} part`}
+                  {snd.source === "library"
+                    ? `${snd.category} · ${snd.library} matched to the song · full keyboard`
+                    : snd.source === "resynth"
+                      ? `${snd.category} · rebuilt from the song's tone · full keyboard`
+                      : `${snd.category} · ${snd.zones.length} sample${snd.zones.length === 1 ? "" : "s"} cut from the song · ${noteName(snd.range[0])}–${noteName(snd.range[1])}${snd.sustained ? " · looped" : ""}`}
                 </Text>
+                {snd.credit ? (
+                  <Text style={styles.small} numberOfLines={1}>
+                    {`Samples: ${snd.credit}`}
+                  </Text>
+                ) : null}
               </View>
             </View>
             <KeyMap zones={snd.zones.map((z) => [z.lo, z.hi, z.root])} color={SOUND_COLORS[i % SOUND_COLORS.length]} />

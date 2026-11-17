@@ -19,6 +19,12 @@ export type AiSound = {
   zones: AiZone[]
   range: [number, number]
   segments: [number, number][]
+  /** "library": a professionally sampled instrument matched to the song; "resynth": the
+   *  song's organ/synth tone rebuilt cleanly; "song": notes cut from the song itself. */
+  source?: "library" | "resynth" | "song"
+  /** Library instrument it was matched to, and the sample library's licence credit. */
+  library?: string
+  credit?: string
 }
 
 export type AiManifest = {
@@ -178,7 +184,18 @@ export function jobFolder(id: string) {
   return new Directory(aiRoot(), id)
 }
 
-/** Downloads every result file of a finished job into Documents/ai/<id>/. */
+/** Shared library samples live in Documents/ai/lib/<instrument>/ and are downloaded once;
+ *  a job's .sfz points at them as "../lib/<instrument>/<file>.wav". */
+function libraryTarget(name: string): { url: string; dest: File } | null {
+  const m = /^lib\/([a-z0-9_]{1,40})\/([a-z0-9_]{1,60}\.wav)$/.exec(name)
+  if (!m) return null
+  const dir = new Directory(aiRoot(), "lib", m[1])
+  if (!dir.exists) dir.create({ intermediates: true, idempotent: true })
+  return { url: `${aiConfig.url}/v1/library/${m[1]}/${m[2]}`, dest: new File(dir, m[2]) }
+}
+
+/** Downloads every result file of a finished job into Documents/ai/<id>/ (library
+ *  samples into the shared Documents/ai/lib/, skipping ones already there). */
 export async function downloadResult(job: AiJob, onProgress: (fraction: number) => void): Promise<Directory> {
   const manifest = job.result
   if (!manifest) throw new AiError("The job has no result.")
@@ -191,8 +208,17 @@ export async function downloadResult(job: AiJob, onProgress: (fraction: number) 
   let done = 0
   const headers = await authHeaders()
   for (const name of names) {
-    const dest = new File(dir, name)
-    const task = File.createDownloadTask(`${aiConfig.url}/v1/jobs/${job.id}/files/${encodeURIComponent(name)}`, dest, {
+    const lib = name.startsWith("lib/") ? libraryTarget(name) : null
+    if (name.startsWith("lib/") && !lib) throw new AiError(`Unexpected file ${name}.`)
+    if (lib && lib.dest.exists && (sizes[name] == null || lib.dest.size === sizes[name])) {
+      done += sizes[name] ?? 1
+      onProgress(done / total)
+      continue
+    }
+    if (lib?.dest.exists) lib.dest.delete()
+    const dest = lib ? lib.dest : new File(dir, name)
+    const url = lib ? lib.url : `${aiConfig.url}/v1/jobs/${job.id}/files/${encodeURIComponent(name)}`
+    const task = File.createDownloadTask(url, dest, {
       headers,
       sessionType: "foreground",
       onProgress: (p) => onProgress(Math.min(1, (done + (Number(p.bytesWritten) || 0)) / total)),

@@ -132,7 +132,11 @@ def check_sounds(truth: dict, man: dict, outdir: str) -> list[Check]:
     import soundfile as sf
 
     res: list[Check] = []
-    insts = man["sounds"]
+    clean = [i for i in man["sounds"] if i.get("source") in ("library", "resynth")]
+    insts = [i for i in man["sounds"] if i not in clean]
+    for inst in clean:
+        missing = [f for f in sample_files(outdir, inst["file"]) if not os.path.exists(f)]
+        res.append((f"{inst['name']}: clean {inst['source']} sound loads", not missing, f"{inst.get('library') or inst['source']}, missing {missing[:3]}"))
     res.append(("instruments built (not too many)", 2 <= len(insts) <= 5, ", ".join(f"{i['name']} ({len(i['zones'])})" for i in insts)))
     for sec in truth["sections"]:
         fam = sec["family"]
@@ -245,6 +249,18 @@ def timbre_rank(sample: np.ndarray, pitch: int, program: int, sf2: str) -> tuple
     return int(np.where(order == program)[0][0]) + 1, int(order[0]), float(sims[program])
 
 
+def sample_path(outdir: str, rel: str) -> str:
+    """Where a .sfz sample lives in the test: shared library samples sit in /data/lib."""
+    if rel.startswith("../lib/"):
+        return "/data/lib/" + rel[len("../lib/") :]
+    return os.path.join(outdir, rel)
+
+
+def sample_files(outdir: str, sfz: str) -> list[str]:
+    blocks = open(os.path.join(outdir, sfz), encoding="utf-8").read().split("<region>")[1:]
+    return [sample_path(outdir, b.split("sample=")[1].split()[0]) for b in blocks]
+
+
 def check_timbre(truth: dict, man: dict, outdir: str, sf2: str) -> list[Check]:
     """For each sampled part: does the sample sound like the instrument that played it?
     Rank 1 of 128 = closest of all GM sounds; same family = a listener would call it the
@@ -261,7 +277,26 @@ def check_timbre(truth: dict, man: dict, outdir: str, sf2: str) -> list[Check]:
         if not cover:
             res.append((f"{fam} timbre", False, "no sound sampled from this part"))
             continue
-        inst = max(cover, key=lambda i: sum(min(b, sec["end"]) - max(a, sec["start"]) for a, b in i["segments"]))
+        overlap = lambda i: sum(min(b, sec["end"]) - max(a, sec["start"]) for a, b in i["segments"])  # noqa: E731
+        songs = [i for i in cover if i.get("source", "song") == "song"] or cover
+        inst = max(songs, key=overlap)
+        cleans = [i for i in cover if i.get("source") in ("library", "resynth") and i["segments"] == inst["segments"]]
+        if cleans:
+            c = cleans[0]
+            blocks = open(os.path.join(outdir, c["file"]), encoding="utf-8").read().split("<region>")[1:]
+            seen, cr, cf = set(), [], []
+            lo_p, hi_p = min(sec["pitches"]), max(sec["pitches"])
+            for block in blocks:
+                root = int(block.split("pitch_keycenter=")[1].split()[0])
+                if root in seen or not (lo_p - 3 <= root <= hi_p + 3) or "lovel=0 hivel=90" in block:
+                    continue
+                seen.add(root)
+                y, _ = sf.read(sample_path(outdir, block.split("sample=")[1].split()[0]), always_2d=True)
+                r, best, _s = timbre_rank(y.mean(1), root, prog, sf2)
+                cr.append(r)
+                cf.append(best // 8 == prog // 8)
+            ok = bool(cf) and float(np.mean(cf)) >= 0.5
+            res.append((f"{fam} clean sound ({c.get('library') or c['source']}) is heard as {fam}", ok, f"{c['name']}: GM ranks {cr}, same family {np.mean(cf) if cf else 0:.0%}"))
         blocks = open(os.path.join(outdir, inst["file"]), encoding="utf-8").read().split("<region>")[1:]
         ranks, fams, sims = [], [], []
         for z, block in zip(inst["zones"], blocks):

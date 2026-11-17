@@ -466,6 +466,7 @@ def build_instrument(
 
     regions = []
     attacks: list[float] = []
+    heard: list[tuple[int, float, np.ndarray]] = []  # the chosen notes as the song played them
     target_rms = 10 ** (-20 / 20)
     zones = []
     for k, n in enumerate(chosen):
@@ -474,6 +475,7 @@ def build_instrument(
         tail = min(0.6 if not region.sustained else 0.25, max(0.05, nxt - n.end - 0.02))
         b = min(stem.shape[1], int((n.end + tail) * SR))
         seg = stem[:, a:b].astype(np.float32).copy()
+        heard.append((n.pitch, n.cents, mono(stem[:, a : min(stem.shape[1], int(n.end * SR))]).astype(np.float32)))
         fade_in = int(0.004 * SR)
         seg[:, :fade_in] *= np.linspace(0, 1, fade_in)[None, :]
         body = seg[:, int(0.05 * SR) : max(int(0.06 * SR), seg.shape[1] - int(tail * SR))]
@@ -534,7 +536,30 @@ def build_instrument(
         "from": [round(region.t0, 1), round(region.t1, 1)],
         "files": files,
         "attack": round(float(np.median(attacks)), 3) if len(attacks) >= 2 else None,
+        "_heard": heard,
     }
+
+
+LIB_ROOT = "/data/lib"
+RESYNTH = {"Organ": "organ", "Synth": "synth", "Accordion": "synth"}
+
+
+def clean_instrument(cat: str, heard: list[tuple[int, float, np.ndarray]], name: str, outdir: str, base: str, lib_index: dict | None) -> dict | None:
+    """A clean, playable version of an instrument heard in the song: the closest
+    professionally sampled library instrument (brightness matched to the song), or for
+    organ and synth tones a resynthesis from the song's own harmonics."""
+    from . import library, resynth
+
+    if lib_index and cat in library.categories(lib_index):
+        m = library.match(cat, [(p, y) for p, _, y in heard], LIB_ROOT, lib_index)
+        if m:
+            inst = lib_index["instruments"][m["id"]]
+            out = library.write_sfz(m["id"], inst, name, cat, m["cutoff"], outdir, base)
+            out["match"] = m["score"]
+            return out
+    if cat in RESYNTH:
+        return resynth.build(RESYNTH[cat], heard, name, cat, outdir, base)
+    return None
 
 
 def extract_sounds(path: str, name: str, outdir: str, report: Report = no_report) -> dict:
@@ -562,6 +587,9 @@ def extract_sounds(path: str, name: str, outdir: str, report: Report = no_report
         note_cache["bass"] = bass_notes
     instruments = []
     used_names: set[str] = set()
+    from .library import load_index
+
+    lib_index = load_index(LIB_ROOT)
     for gi, ((stem_key, cat), rs) in enumerate(ranked):
         report("build", 0.55 + 0.4 * gi / max(1, len(ranked)), f"Sampling {cat} from the {stem_key} part")
         if stem_key not in note_cache:
@@ -585,8 +613,23 @@ def extract_sounds(path: str, name: str, outdir: str, report: Report = no_report
                     retitle(name, cat, used_names), outdir, f"{stem_name}_{file_stem(cat)}_{stem_key}", stem_notes,
                 )
         if inst:
-            used_names.add(inst["name"])
+            heard = inst.pop("_heard")
             inst["segments"] = [[round(r.t0, 1), round(r.t1, 1)] for r in rs]
+            inst["source"] = "song"
+            clean = None
+            try:
+                clean = clean_instrument(cat, heard, inst["name"], outdir, f"{stem_name}_{file_stem(cat)}_{stem_key}_clean", lib_index)
+            except Exception as exc:  # the song's own samples are still a usable sound
+                print("clean instrument failed:", repr(exc), flush=True)
+            if clean:
+                # The clean instrument takes the plain name; the song's own notes stay as an extra.
+                clean["segments"] = inst["segments"]
+                clean["stem"] = inst["stem"]
+                clean["from"] = inst["from"]
+                inst["name"] = f"{inst['name'][:37]} (song)"
+                instruments.append(clean)
+                used_names.add(clean["name"])
+            used_names.add(inst["name"])
             instruments.append(inst)
     if not instruments:
         raise ValueError("No clean notes were found to sample. Try a song with a solo instrument part.")

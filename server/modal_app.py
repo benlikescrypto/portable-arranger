@@ -83,7 +83,7 @@ def process(job_id: str) -> None:
         report("start", 0.01, "GPU ready")
         fn = extract_drum_style if job["kind"] == "drums" else extract_sounds
         manifest = fn(job["input"], job.get("name") or "Song", out, report)
-        manifest["sizes"] = {f: os.path.getsize(os.path.join(out, f)) for f in manifest["files"]}
+        manifest["sizes"] = {f: os.path.getsize(f"{DATA}/{f}" if f.startswith("lib/") else os.path.join(out, f)) for f in manifest["files"]}
         manifest["seconds"] = round(time.time() - started, 1)
         with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as fh:
             json.dump(manifest, fh, indent=1)
@@ -227,6 +227,18 @@ def api():
         kind = {".json": "application/json", ".wav": "audio/wav", ".sfz": "text/plain", ".abstyle": "text/plain"}
         return Response(data, media_type=kind.get(os.path.splitext(name)[1], "application/octet-stream"))
 
+    @web.get("/v1/library/{inst}/{name}")
+    def library_file(inst: str, name: str, authorization: str | None = Header(None)):
+        """A shared library sample (a song's .sfz points at these; the app keeps them)."""
+        auth(authorization)
+        if not re.fullmatch(r"[a-z0-9_]{1,40}", inst) or not re.fullmatch(r"[a-z0-9_]{1,60}\.wav", name):
+            raise HTTPException(400, "bad file name")
+        try:
+            data = read_file(f"{DATA}/lib/{inst}/{name}")
+        except FileNotFoundError:
+            raise HTTPException(404, "No such library file.")
+        return Response(data, media_type="audio/wav", headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
     @web.delete("/v1/jobs/{job_id}")
     def delete(job_id: str, authorization: str | None = Header(None)):
         own_job(job_id, auth(authorization))
@@ -298,7 +310,28 @@ def make_demo() -> str:
     return ", ".join(made)
 
 
-@app.function(image=worker_image, gpu=GPUS, timeout=1800, memory=16384)
+@app.function(image=worker_image, volumes={DATA: vol}, timeout=3600, memory=16384, cpu=8)
+def build_library() -> str:
+    """Download the openly licensed sample libraries and prepare them for the app
+    (once; again whenever abai.library.LIB_VERSION changes)."""
+    import shutil
+    import sys
+
+    sys.path.insert(0, "/root")
+    from abai.library import build_library as build
+
+    shutil.rmtree(f"{DATA}/lib", ignore_errors=True)
+    index = build("/tmp/libsrc", f"{DATA}/lib")
+    vol.commit()
+    return json.dumps({k: [v["name"], len(v["zones"]), round(v["bytes"] / 1e6, 1)] for k, v in index["instruments"].items()})
+
+
+@app.local_entrypoint()
+def library():
+    print(build_library.remote())
+
+
+@app.function(image=worker_image, gpu=GPUS, volumes={DATA: vol}, timeout=1800, memory=16384)
 def run_tests(only: str = "") -> str:
     """Render ground-truth songs, run both pipelines, score them. Returns a JSON report."""
     import sys

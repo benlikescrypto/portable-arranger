@@ -69,16 +69,23 @@ async function run(kind, demo, name) {
   mkdirSync(dir, { recursive: true })
   let bytesTotal = 0
   for (const f of job.result.files) {
-    const r = await fetch(`${url}/v1/jobs/${id}/files/${encodeURIComponent(f)}`, { headers: auth })
+    // Shared library samples ("lib/<instrument>/<file>") sit next to the job folder, as in the app.
+    const lib = /^lib\/([a-z0-9_]+)\/([a-z0-9_]+\.wav)$/.exec(f)
+    const src = lib ? `${url}/v1/library/${lib[1]}/${lib[2]}` : `${url}/v1/jobs/${id}/files/${encodeURIComponent(f)}`
+    const dest = lib ? join(outRoot, "lib", lib[1], lib[2]) : join(dir, f)
+    if (lib) mkdirSync(join(outRoot, "lib", lib[1]), { recursive: true })
+    const r = await fetch(src, { headers: auth })
     if (!r.ok) check(false, `${kind}: download ${f}`, `${r.status}`)
     const b = new Uint8Array(await r.arrayBuffer())
     bytesTotal += b.length
-    writeFileSync(join(dir, f), b)
+    writeFileSync(dest, b)
   }
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(job.result, null, 1))
   check(true, `${kind}: downloaded ${job.result.files.length} files`, `${(bytesTotal / 1e6).toFixed(1)} MB`)
-  check(/[^\x00-\x7f]/.test(job.result.name) && job.result.files.every((f) => /^[A-Za-z0-9_.-]+$/.test(f)), `${kind}: non-ASCII title kept, file names ASCII`, job.result.name)
+  check(/[^\x00-\x7f]/.test(job.result.name) && job.result.files.every((f) => /^(lib\/[a-z0-9_]+\/)?[A-Za-z0-9_.-]+$/.test(f)), `${kind}: non-ASCII title kept, file names ASCII`, job.result.name)
   const evil = await fetch(`${url}/v1/jobs/${id}/files/..%2F..%2Fjobs`, { headers: auth })
+  const evilLib = await fetch(`${url}/v1/library/..%2Fjobs/x.wav`, { headers: auth })
+  check(evilLib.status === 400 || evilLib.status === 404, `${kind}: library path traversal refused`, `${evilLib.status}`)
   check(evil.status === 400 || evil.status === 404, `${kind}: path traversal refused`, `${evil.status}`)
   const del = await fetch(`${url}/v1/jobs/${id}`, { method: "DELETE", headers: auth })
   const gone = await fetch(`${url}/v1/jobs/${id}`, { headers: auth })
