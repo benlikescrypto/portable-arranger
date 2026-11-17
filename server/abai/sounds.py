@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .capture import capture
 from .common import SR, Report, decode, file_stem, mono, no_report, rms, safe_name, separate, write_wav
 
 # Demucs's piano/other/guitar split is unreliable for keyboard sounds (an organ part
@@ -471,14 +472,34 @@ def build_instrument(
     zones = []
     for k, n in enumerate(chosen):
         a = max(0, int((n.start - 0.012) * SR))
-        nxt = min((m.start for m in (all_notes or notes) if m.start > n.start + 0.05), default=n.end + 1.0)
-        tail = min(0.6 if not region.sustained else 0.25, max(0.05, nxt - n.end - 0.02))
-        b = min(stem.shape[1], int((n.end + tail) * SR))
-        seg = stem[:, a:b].astype(np.float32).copy()
+        nxt = min((m.start for m in (all_notes or notes) if m.start > n.start + 0.05), default=n.end + 2.0)
+        if region.sustained:
+            tail = min(0.25, max(0.05, nxt - n.end - 0.02))
+            b = min(stem.shape[1], int((n.end + tail) * SR))
+        else:
+            # A decaying note keeps ringing after Basic Pitch's note end: use the
+            # recording up to whatever the song plays next.
+            tail = 0.0
+            b = min(stem.shape[1], int(min(nxt - 0.02, n.end + 2.0) * SR))
+        raw = stem[:, a:b].astype(np.float32)
         heard.append((n.pitch, n.cents, mono(stem[:, a : min(stem.shape[1], int(n.end * SR))]).astype(np.float32)))
+        if CAPTURE and not region.sustained:
+            # Decaying sounds (piano, guitar, bass, EP): the note's own harmonics only (no drums, bleed or other notes), and rung
+            # out naturally where the song cut it short.
+            seg, _ = capture(
+                raw,
+                440.0 * 2 ** ((n.pitch - 69 + n.cents / 100) / 12),
+                (n.end - n.start + 0.012) if region.sustained else raw.shape[1] / SR,
+                region.sustained,
+                region.category in INHARMONIC,
+                max(raw.shape[1] / SR, SUSTAIN_S if region.sustained else DECAY_S),
+            )
+            tail = 0.0 if not region.sustained else min(tail, seg.shape[1] / SR / 4)
+        else:
+            seg = raw.copy()
         fade_in = int(0.004 * SR)
         seg[:, :fade_in] *= np.linspace(0, 1, fade_in)[None, :]
-        body = seg[:, int(0.05 * SR) : max(int(0.06 * SR), seg.shape[1] - int(tail * SR))]
+        body = seg[:, int(0.05 * SR) : max(int(0.06 * SR), min(int(1.0 * SR), seg.shape[1] - int(tail * SR)))]
         g = target_rms / max(rms(body), 1e-6)
         seg *= min(g, 30.0)
         loop = None
@@ -491,7 +512,7 @@ def build_instrument(
                 seg = bake_loop(seg, *pts)
                 loop = pts
         if loop is None:
-            fo = min(int(0.03 * SR), seg.shape[1] // 4)
+            fo = min(int(0.35 * SR) if CAPTURE and not region.sustained else int(0.03 * SR), seg.shape[1] // 4)
             seg[:, seg.shape[1] - fo :] *= np.linspace(1, 0, fo)[None, :]
         attacks.append(attack_time(mono(seg)))
         fname = f"{base}_{n.pitch:03d}.wav"
@@ -541,6 +562,14 @@ def build_instrument(
 
 
 LIB_ROOT = "/data/lib"
+# Clean each decaying note from the recording (capture.py) instead of a raw cut. Measured
+# against the dry instrument it makes piano notes closer (sim 0.984 -> 0.996); held sounds
+# (strings, organ) loop well from the raw recording and lose texture when filtered.
+CAPTURE = True
+SUSTAIN_S = 1.0  # sustained notes shorter than this are continued, so they can loop
+DECAY_S = 3.5  # decaying notes ring out to this long
+INHARMONIC = {"Piano", "Electric", "Guitar", "Bass", "Percussion"}
+USE_LIBRARY = False  # the song's own recording is the sound; library matching is off
 RESYNTH = {"Organ": "organ", "Synth": "synth", "Accordion": "synth"}
 
 
@@ -550,7 +579,7 @@ def clean_instrument(cat: str, heard: list[tuple[int, float, np.ndarray]], name:
     organ and synth tones a resynthesis from the song's own harmonics."""
     from . import library, resynth
 
-    if lib_index and cat in library.categories(lib_index):
+    if USE_LIBRARY and lib_index and cat in library.categories(lib_index):
         m = library.match(cat, [(p, y) for p, _, y in heard], LIB_ROOT, lib_index)
         if m:
             inst = lib_index["instruments"][m["id"]]
@@ -622,11 +651,12 @@ def extract_sounds(path: str, name: str, outdir: str, report: Report = no_report
             except Exception as exc:  # the song's own samples are still a usable sound
                 print("clean instrument failed:", repr(exc), flush=True)
             if clean:
-                # The clean instrument takes the plain name; the song's own notes stay as an extra.
+                # The sound captured from the recording keeps the plain name; a rebuilt
+                # (resynthesised) version is offered next to it.
                 clean["segments"] = inst["segments"]
                 clean["stem"] = inst["stem"]
                 clean["from"] = inst["from"]
-                inst["name"] = f"{inst['name'][:37]} (song)"
+                clean["name"] = f"{inst['name'][:34]} (rebuilt)"
                 instruments.append(clean)
                 used_names.add(clean["name"])
             used_names.add(inst["name"])

@@ -332,7 +332,7 @@ def library():
 
 
 @app.function(image=worker_image, gpu=GPUS, volumes={DATA: vol}, timeout=1800, memory=16384)
-def run_tests(only: str = "") -> str:
+def run_tests(only: str = "", capture: int = 1) -> str:
     """Render ground-truth songs, run both pipelines, score them. Returns a JSON report."""
     import sys
     import traceback
@@ -340,9 +340,11 @@ def run_tests(only: str = "") -> str:
     sys.path.insert(0, "/root")
     from abai.drums import extract_drum_style
     from abai.evaluate import check_drums, check_sounds, check_timbre
+    import abai.sounds
     from abai.sounds import extract_sounds
     from abai.testsong import make_groove_song, make_keys_song
 
+    abai.sounds.CAPTURE = bool(capture)
     report: dict = {}
     cases = [c for c in ("pop", "waltz", "keys") if not only or c in only.split(",")]
     for case in cases:
@@ -370,8 +372,8 @@ def run_tests(only: str = "") -> str:
 
 
 @app.local_entrypoint()
-def tests(only: str = ""):
-    rep = json.loads(run_tests.remote(only))
+def tests(only: str = "", capture: int = 1):
+    rep = json.loads(run_tests.remote(only, capture))
     failed = 0
     for case, r in rep.items():
         print(f"\n=== {case} ({r.get('seconds', '?')} s)")

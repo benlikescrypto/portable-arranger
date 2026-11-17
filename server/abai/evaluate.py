@@ -184,7 +184,7 @@ def check_sounds(truth: dict, man: dict, outdir: str) -> list[Check]:
 # ---- timbre: does each sample sound like the instrument that played? -------------------
 
 GM_FAMILIES = ["Piano", "Chromatic", "Organ", "Guitar", "Bass", "Strings", "Ensemble", "Brass", "Reed", "Pipe", "Synth Lead", "Synth Pad", "Synth FX", "Ethnic", "Percussive", "SFX"]
-_GM_CACHE: dict[int, np.ndarray] = {}
+_GM_CACHE: dict[tuple[int, bool], np.ndarray] = {}
 
 
 def timbre_features(y: np.ndarray, sr: int = SR) -> np.ndarray:
@@ -207,10 +207,12 @@ def timbre_features(y: np.ndarray, sr: int = SR) -> np.ndarray:
     return v / (np.linalg.norm(v) + 1e-9)
 
 
-def gm_reference(pitch: int, sf2: str) -> np.ndarray:
-    """Features of all 128 GM programs playing `pitch` (2 s note each), rendered from sf2."""
-    if pitch in _GM_CACHE:
-        return _GM_CACHE[pitch]
+def gm_reference(pitch: int, sf2: str, dry: bool = False) -> np.ndarray:
+    """Features of all 128 GM programs playing `pitch` (2 s note each), rendered from sf2;
+    dry = without fluidsynth's reverb and chorus (the instrument alone)."""
+    key = (pitch, dry)
+    if key in _GM_CACHE:
+        return _GM_CACHE[key]
     import subprocess
     import tempfile
 
@@ -230,19 +232,20 @@ def gm_reference(pitch: int, sf2: str) -> np.ndarray:
     with tempfile.TemporaryDirectory() as td:
         mp, wp = os.path.join(td, "gm.mid"), os.path.join(td, "gm.wav")
         mid.save(mp)
-        subprocess.run(["fluidsynth", "-ni", "-q", "-g", "0.5", "-r", str(SR), "-F", wp, sf2, mp], check=True, capture_output=True)
+        fx = ["-R", "0", "-C", "0"] if dry else []
+        subprocess.run(["fluidsynth", "-ni", "-q", *fx, "-g", "0.5", "-r", str(SR), "-F", wp, sf2, mp], check=True, capture_output=True)
         y, _ = sf.read(wp, always_2d=True)
     y = y.mean(1)
     n = int(slot * SR)
     feats = np.stack([timbre_features(y[p * n : p * n + int(2.4 * SR)]) for p in range(128)])
-    _GM_CACHE[pitch] = feats
+    _GM_CACHE[key] = feats
     return feats
 
 
-def timbre_rank(sample: np.ndarray, pitch: int, program: int, sf2: str) -> tuple[int, int, float]:
+def timbre_rank(sample: np.ndarray, pitch: int, program: int, sf2: str, dry: bool = False) -> tuple[int, int, float]:
     """(rank of the true program among 128 by similarity, 1 = best; best-matching program;
     cosine similarity to the true program)."""
-    ref = gm_reference(pitch, sf2)
+    ref = gm_reference(pitch, sf2, dry)
     f = timbre_features(sample)
     sims = ref @ f
     order = np.argsort(-sims)
@@ -298,13 +301,17 @@ def check_timbre(truth: dict, man: dict, outdir: str, sf2: str) -> list[Check]:
             ok = bool(cf) and float(np.mean(cf)) >= 0.5
             res.append((f"{fam} clean sound ({c.get('library') or c['source']}) is heard as {fam}", ok, f"{c['name']}: GM ranks {cr}, same family {np.mean(cf) if cf else 0:.0%}"))
         blocks = open(os.path.join(outdir, inst["file"]), encoding="utf-8").read().split("<region>")[1:]
-        ranks, fams, sims = [], [], []
+        ranks, fams, sims, dranks, dsims = [], [], [], [], []
         for z, block in zip(inst["zones"], blocks):
             y, _ = sf.read(os.path.join(outdir, block.split("sample=")[1].split()[0]), always_2d=True)
             r, best, s = timbre_rank(y.mean(1), z["root"], prog, sf2)
             ranks.append(r)
             fams.append(best // 8 == prog // 8)
             sims.append(s)
+            dr, _b, ds = timbre_rank(y.mean(1), z["root"], prog, sf2, dry=True)
+            dranks.append(dr)
+            dsims.append(ds)
+        res.append((f"{fam}: sounds like the instrument alone, dry (median rank <= 3 of 128)", float(np.median(dranks)) <= 3, f"{inst['name']}: dry ranks {dranks}, sim {np.mean(dsims):.4f}"))
         med = float(np.median(ranks))
         famok = float(np.mean(fams))
         res.append((f"{fam} timbre: sample is identifiable as {fam} (median rank <= 3 of 128)", med <= 3, f"{inst['name']}: ranks {ranks}, sim {np.mean(sims):.3f}"))
