@@ -14,7 +14,7 @@ import numpy as np
 from .common import SR, Report, db, decode, rms, separate
 
 MODEL = "htdemucs_6s"
-MAX_SECONDS = 360.0  # the app holds every track in RAM: about 70 MB per minute of song
+MAX_SECONDS = 600.0  # the app holds every track in RAM: about 70 MB per minute of song
 BITRATE = "320k"
 LABELS = {
     "original": "Original",

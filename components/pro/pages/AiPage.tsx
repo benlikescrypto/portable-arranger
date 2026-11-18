@@ -65,7 +65,7 @@ export function AiPage({ ai }: { ai: AiSongs }) {
               <LcdButton label="Choose song…" primary disabled={!ai.configured || busy} onPress={() => void ai.pickAndRun()} style={styles.flex} />
               <LcdButton label="Try demo song" disabled={!ai.configured || busy} onPress={() => void ai.runDemo()} style={styles.flex} />
             </View>
-            <Text style={styles.small}>Songs up to 6 minutes. The song is deleted from the server when the job ends; the stems stay on this device.</Text>
+            <Text style={styles.small}>Songs up to 10 minutes. The song is deleted from the server when the job ends; the stems stay on this device.</Text>
             {!ai.canPlay ? (
               <Text style={[styles.hint, { color: "#FFE2B0" }]}>This app build has no stem player yet. Install the new build to listen.</Text>
             ) : null}
@@ -189,7 +189,7 @@ function StemPlayer({ song, ai }: { song: AiSong; ai: AiSongs }) {
         )}
       </View>
       <Text style={styles.small}>
-        {`${m.model ?? "Demucs"} · ${fmtTime(m.duration)}${m.cut ? " (cut to the first 6 min)" : ""}${
+        {`${m.model ?? "Demucs"} · ${fmtTime(m.duration)}${m.cut ? " (cut to the first 10 min)" : ""}${
           m.residual_db != null ? ` · stems add up to the song within ${m.residual_db} dB` : ""
         } · dB = loudness against the whole song`}
       </Text>

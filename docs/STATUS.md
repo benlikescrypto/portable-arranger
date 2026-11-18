@@ -53,7 +53,7 @@ Factory styles are drum-only by an earlier decision (`drumsOnlyStyle` in `Factor
 One **AI** tab. Each step of the pipeline is brought back only after it has been checked on its own.
 
 **Step 1: stems (live).**
-- Upload a song (up to 6 min). The server runs Demucs `htdemucs_6s` and returns the original plus vocals, drums, bass, piano, guitar and other as 320 kbps MP3. Each stem's loudness and how well the stems add back up to the song come with them.
+- Upload a song (up to 10 min). The server runs Demucs `htdemucs_6s` and returns the original plus vocals, drums, bass, piano, guitar and other as 320 kbps MP3. Each stem's loudness and how well the stems add back up to the song come with them.
 - The engine's `StemPlayer` (`modules/audio/cpp/StemPlayer.cpp`, MP3 via `dr_mp3`) decodes them to 16-bit RAM (about 70 MB per minute of song). It plays them sample-locked with per-stem gain, seek and declicked play/pause. The tab has mute/solo and Original/Stems A/B.
 - Checked:
   - Host `test_engine` stem checks: sync, resampling 44.1 → 48 kHz, mute, seek, end of song, replace while playing.

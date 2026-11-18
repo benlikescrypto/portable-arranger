@@ -29,7 +29,7 @@ HERE = Path(__file__).parent
 DATA = "/data"
 RESULT_TTL_S = 24 * 3600
 GPUS = ["L4", "A10G", "L40S", "T4"]  # first free one wins
-MAX_UPLOAD = 80 * 1024 * 1024
+MAX_UPLOAD = 128 * 1024 * 1024  # a 10 min WAV is about 106 MB
 AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".aif", ".aiff", ".mp4", ".opus", ".wma"}
 
 app = modal.App("arrangerbox-ai")
