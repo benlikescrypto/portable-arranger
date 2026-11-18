@@ -50,6 +50,8 @@ Factory styles are drum-only by an earlier decision (`drumsOnlyStyle` in `Factor
 
 ## AI Lab (v0.4)
 
+**Parked for v2:** the AI LAB tab is hidden in the app (`ProScreen.tsx`). Sounds from real songs were not convincing enough. The page, hook and server are kept unchanged.
+
 The AI LAB page sends a song to the ArrangerBox AI server (`server/`, Modal GPU) and loads the results into the engine.
 
 - **Song → Drum Style:** an `.abstyle` with Intro 1/2, Variation 1–4, Fill 1–4, Break and Ending 1–3, cut from the song's own drum stem as per-element slice kits. They follow any tempo. A GM-kit transcription of the same groove comes with it.

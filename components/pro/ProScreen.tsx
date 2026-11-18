@@ -20,7 +20,6 @@ import {
   VariationGroup,
   VolumeGroup,
 } from "@/components/pro/ControlPanel"
-import { AiPage } from "@/components/pro/pages/AiPage"
 import { EffectsPage } from "@/components/pro/pages/EffectsPage"
 import { GlobalPage } from "@/components/pro/pages/GlobalPage"
 import { KbdLibraryPage } from "@/components/pro/pages/KbdLibraryPage"
@@ -29,14 +28,15 @@ import { SongBookPage } from "@/components/pro/pages/SongBookPage"
 import { StylePlayPage } from "@/components/pro/pages/StylePlayPage"
 import { HwButton, Meter } from "@/components/pro/ui"
 import { Hw, noteName } from "@/constants/theme"
-import { useAiLab } from "@/hooks/useAiLab"
 import { useArranger } from "@/hooks/useArranger"
 import { usePerformance } from "@/hooks/usePerformance"
 import { paSoundCategory, SOUND_CATS_LEFT, SOUND_CATS_RIGHT } from "@/lib/library/soundSelect"
 import { pagerLock } from "@/lib/pagerLock"
 import { useTelemetry } from "@/lib/telemetry"
 
-type Page = "style" | "songbook" | "mixer" | "fx" | "ai" | "global"
+// AI Lab (sounds and styles from a song) is parked for v2: components/pro/pages/AiPage.tsx,
+// hooks/useAiLab.ts and server/ are kept but not shown in the app.
+type Page = "style" | "songbook" | "mixer" | "fx" | "global"
 type Overlay =
   | { kind: "style" }
   | { kind: "sound"; part: 0 | 1 | 2 | 3 }
@@ -49,14 +49,12 @@ const PAGES: { id: Page; label: string; short: string }[] = [
   { id: "songbook", label: "SONGBOOK", short: "SONG" },
   { id: "mixer", label: "MIXER", short: "MIX" },
   { id: "fx", label: "EFFECTS", short: "FX" },
-  { id: "ai", label: "AI LAB", short: "AI" },
   { id: "global", label: "GLOBAL", short: "GLOBAL" },
 ]
 
 export function ProScreen() {
   const vm = useArranger()
   const perf = usePerformance(vm)
-  const ai = useAiLab(vm)
   const s = vm.state
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
@@ -154,8 +152,6 @@ export function ProScreen() {
         return <MixerPage vm={vm} perf={perf} />
       case "fx":
         return <EffectsPage vm={vm} perf={perf} />
-      case "ai":
-        return <AiPage vm={vm} ai={ai} wide={wide} />
       case "global":
         return <GlobalPage vm={vm} perf={perf} />
       default:
