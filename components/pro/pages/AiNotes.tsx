@@ -91,10 +91,15 @@ export function FindNotes({ ai, notes }: { ai: AiSongs; notes: AiNotes }) {
         <LcdButton label="▶ Hear stretch" disabled={busy} onPress={() => void notes.previewStretch()} style={styles.flex} />
         <LcdButton label="Find notes" primary disabled={busy || len < MIN_STRETCH || len > MAX_STRETCH} onPress={() => void notes.find()} style={styles.flex} />
       </View>
-      {!lossless ? (
+      {song.manifest.lossless_days === undefined ? (
         <Text style={[styles.hint, { color: "#FFE2B0" }]}>
-          This song was not uploaded as WAV, FLAC or AIFF, so its attacks are already smeared by a few ms. Notes and starts will be close, but none can
-          be proven exact. For sample-exact cuts, split a lossless copy of the song.
+          This song was split before the server kept Demucs's own stems, so the app will send its MP3 stem instead: starts close, never exact. Split the
+          song again (as WAV, FLAC or AIFF) for exact timing.
+        </Text>
+      ) : !lossless ? (
+        <Text style={[styles.hint, { color: "#FFE2B0" }]}>
+          The server has Demucs's own stems for this song, but the song itself was uploaded as MP3, so its attacks were smeared before splitting.
+          Starts will be close, but none can be proven exact. For sample-exact cuts, split a WAV, FLAC or AIFF copy of the song.
         </Text>
       ) : expired ? (
         <Text style={[styles.hint, { color: "#FFE2B0" }]}>
