@@ -307,8 +307,14 @@ function KeyMap({ doc, onKey }: { doc: AiNotesDoc; onKey: (i: number) => void })
       <Text style={styles.small}>{`Keys played: ${keys.length} · with an exact take: ${exactKeys}. Tap a key to hear its best take.`}</Text>
       <View style={styles.keys}>
         {keys.map(([midi, ids]) => {
-          // Best take: exact first, then the loudest.
-          const best = [...ids].sort((a, b) => Number(doc.notes[b].exact) - Number(doc.notes[a].exact) || doc.notes[b].vel - doc.notes[a].vel)[0]
+          // Best take: the calmest, with the most room around it (the server's take score;
+          // older results: exact first, then the loudest).
+          const best = [...ids].sort(
+            (a, b) =>
+              (doc.notes[b].take ?? 0) - (doc.notes[a].take ?? 0) ||
+              Number(doc.notes[b].exact) - Number(doc.notes[a].exact) ||
+              doc.notes[b].vel - doc.notes[a].vel
+          )[0]
           const n = doc.notes[best]
           return (
             <Pressable key={midi} onPress={() => onKey(best)} style={[styles.key, { borderColor: noteColor(n) }]} accessibilityLabel={`${n.name}, ${ids.length} takes`}>
@@ -337,6 +343,14 @@ function NoteDetail({ n, doc, mp3, notes }: { n: AiNote; doc: AiNotesDoc; mp3: b
       <Line k="Attack" v={`${n.sharp ? "sharp" : "swell"} · within 20 dB of its peak in ${n.rise_ms.toFixed(1)} ms`} />
       <Line k="Before it" v={n.clear_db <= -30 ? `quiet (${n.clear_db.toFixed(0)} dB): isolated` : `other sound at ${n.clear_db.toFixed(0)} dB`} />
       <Line k="Length" v={`${((n.end - n.t) * 1000).toFixed(0)} ms · loudness ${(n.vel * 100).toFixed(0)}%`} />
+      {n.next !== undefined ? (
+        <Line
+          k="On its own"
+          v={n.next == null ? "nothing is struck after it in the stretch" : `${((n.next - n.t) * 1000).toFixed(0)} ms, then the next key is struck (play stops there)`}
+        />
+      ) : null}
+      {n.take !== undefined ? <Line k="Take" v={`${n.take}/100 for sampling (room after it, quiet before it, nothing else ringing)`} /> : null}
+      {n.via && n.via !== "pitch" ? <Line k="Found" v={n.via === "short" ? "a short, fast note" : "the same key struck again"} /> : null}
       <View style={styles.row}>
         <LcdButton label="◀ Prev" disabled={i <= 0} onPress={() => void notes.playNote(i - 1)} style={styles.flex} />
         <LcdButton label="▶ Play note" primary onPress={() => void notes.playNote(i)} style={styles.flex} />

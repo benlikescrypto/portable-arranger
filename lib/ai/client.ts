@@ -63,6 +63,15 @@ export type AiNote = {
   clear_db: number
   /** 120 min/max columns (-100..100), 6 ms before to 14 ms after `t`. */
   wave: [number, number][]
+  /** When the next key is struck (seconds into the stretch; chord notes excluded), or null.
+   * Until then this note sounds on its own. Absent in results from before it existed. */
+  next?: number | null
+  /** How the note was found: Basic Pitch's own note ("pitch"), or split off where the same
+   * key was struck again ("split"/"strong"), or a short fast note ("short"). */
+  via?: "pitch" | "split" | "strong" | "short"
+  /** How good a take of its key this is for sampling, 0-100: room before the next key,
+   * quiet before it, nothing else ringing, exact start. Absent in older results. */
+  take?: number
 }
 
 export type AiNoteMode = "held" | "oneshot"

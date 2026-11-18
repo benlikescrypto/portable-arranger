@@ -131,14 +131,18 @@ def _swell_start(x: np.ndarray, sr: int, c: int, earliest: float, pw: int) -> in
     return lo + min(good, key=lambda i: abs(i - k))
 
 
-def refine(x: np.ndarray, sr: int, coarse: float, earliest: float = 0.0, crowded: bool = False, midi: float | None = None) -> Onset:
+def refine(
+    x: np.ndarray, sr: int, coarse: float, earliest: float = 0.0, crowded: bool = False, midi: float | None = None, after_strike: bool = False
+) -> Onset:
     """Exact onset for a note Basic Pitch placed at `coarse` seconds in mono signal x.
 
     `earliest`: do not look before this (just after the previous note's onset).
     `crowded`: another note starts within 25 ms, so this attack could be its; the
     onset is still found but never marked exact.
     `midi`: the note's pitch; level measurements then span at least one period, so a low
-    note's waveform swings are not mistaken for attacks."""
+    note's waveform swings are not mistaken for attacks.
+    `after_strike`: the note before (at `earliest`) was struck (a sharp attack): when this one
+    has no sharp attack of its own, do not fall back into that note's attack."""
     n = x.size
     c = int(round(coarse * sr))
     lo = max(int(earliest * sr), c - int(SEARCH_BACK_S * sr), 1)
@@ -210,10 +214,19 @@ def refine(x: np.ndarray, sr: int, coarse: float, earliest: float = 0.0, crowded
         if s0 is not None and onset - int(0.060 * sr) <= s0 < onset - int(0.002 * sr):
             sharp = False
     if not sharp:
-        s0 = _swell_start(x, sr, c, earliest, pw)
-        # No quiet before it (it fades in under other notes): its start is hidden. Basic Pitch
-        # hears swells late, so fall back well before its guess: early, never late.
-        onset = s0 if s0 is not None else max(int(earliest * sr), min(onset, c - int(SWELL_BACK_S * sr)), 0)
+        e0 = int(earliest * sr)
+        if after_strike and earliest > 0 and c - e0 < int(0.100 * sr):
+            # Another note started just before (fast playing): going 80 ms back would take in
+            # that note's attack, which is worse than a few ms late. Stay in the second half of
+            # the gap, a little before Basic Pitch's guess (it is typically 5-10 ms late).
+            mid = (e0 + c) // 2
+            s0 = _swell_start(x, sr, c, mid / sr, pw)
+            onset = s0 if s0 is not None and s0 >= mid else max(mid, min(onset, c - int(0.012 * sr)))
+        else:
+            s0 = _swell_start(x, sr, c, earliest, pw)
+            # No quiet before it (it fades in under other notes): its start is hidden. Basic Pitch
+            # hears swells late, so fall back well before its guess: early, never late.
+            onset = s0 if s0 is not None else max(e0, min(onset, c - int(SWELL_BACK_S * sr)), 0)
 
     # Isolation, on the plain level: the quiet before the note against the note's first 20 ms.
     # Only an isolated note's start can be proven; under other sound the first part of an
@@ -298,6 +311,94 @@ def refine(x: np.ndarray, sr: int, coarse: float, earliest: float = 0.0, crowded
     # 30 dB down), under 0.25 ms of it hidden below the quiet, no other note within 25 ms.
     exact = bool(sharp and steep and not crowded and iso_db <= ISOLATED_DB)
     return Onset(onset / sr, cut / sr, coarse, sharp, round(rise_ms, 2), round(snr, 1), modelled, exact, round(pre_post_db, 1))
+
+
+SCAN_HOP_S = 0.005  # a new predictor every 5 ms
+SCAN_FIT_S = 0.060  # learned on the 60 ms before
+SCAN_ORDER = 120
+SCAN_PREV_S = 0.030  # an attack beats everything the prediction error did in the 30 ms before
+SCAN_RISE_DB = 9.0
+SCAN_GAP_S = 0.020  # two attacks closer than this are one
+
+
+@dataclass
+class Attack:
+    t: float  # seconds, to about 1 ms (refine() then finds the exact sample)
+    rise_db: float  # how far the new energy rose over the 30 ms before
+    level_db: float  # the new energy against what was sounding just before (dB)
+
+
+def attacks(x: np.ndarray, sr: int, start: float = 0.0, end: float | None = None) -> list[Attack]:
+    """Every attack in x[start:end], independent of pitch: each strike of a key, including the
+    same key struck again while it still rings, which a pitch model hears as one long note.
+
+    What is sounding is learned every 5 ms by a linear predictor (as in _innovation(), but
+    autocorrelation/Levinson so a 120 s stretch takes about a second) and removed. An attack is
+    where the energy left over jumps above everything it did in the 30 ms before. Comparing
+    with the maximum of the 30 ms, not its average, keeps a low note's once-per-period pulse
+    from counting (it repeats; an attack does not). Swells (strings, pads) rise too slowly to
+    count; Basic Pitch finds those."""
+    from scipy.linalg import solve_toeplitz
+
+    n = x.size
+    a0 = max(0, int(start * sr))
+    a1 = n if end is None else min(n, int(end * sr))
+    hop, fitn, p = int(SCAN_HOP_S * sr), int(SCAN_FIT_S * sr), SCAN_ORDER
+    prev, w1 = int(SCAN_PREV_S * sr), max(2, int(0.001 * sr))
+    xd = x.astype(np.float64)
+    win = np.hanning(fitn)
+    nfft = 1 << int(np.ceil(np.log2(2 * fitn)))
+    # Loud enough to matter: within 50 dB of the stretch's loudest 10 ms.
+    loud = float(np.max(_box(xd[a0:a1] ** 2, int(0.010 * sr)))) if a1 > a0 else 0.0
+    gate = 10 * np.log10(loud + 1e-20) - 50.0
+    from numpy.lib.stride_tricks import sliding_window_view
+    from scipy.ndimage import maximum_filter1d
+
+    ahead = int(0.002 * sr)
+    cand: list[tuple[int, float, float]] = []  # (sample, rise dB, level over what sounded before)
+    for b in range(max(a0, fitn + p), a1, hop):
+        fit = xd[b - fitn : b] * win
+        r = np.fft.irfft(np.abs(np.fft.rfft(fit, nfft)) ** 2, nfft)[: p + 1]
+        if r[0] < 1e-14:
+            continue
+        r[0] *= 1.0 + 1e-6  # a touch of ridge, as in _innovation()
+        try:
+            a = solve_toeplitz(r[:p], r[1 : p + 1])
+        except (np.linalg.LinAlgError, ValueError):
+            continue
+        # The prediction error from 30 ms before this block to 2 ms after it, all with this one
+        # predictor, so the before and the after are measured alike.
+        s0 = max(p + 1, b - prev - w1)
+        s1 = min(n, b + hop + ahead + w1)
+        seg = xd[s0 - p : s1]
+        W = sliding_window_view(seg[:-1], p)[:, ::-1]  # row k: x[k-1] .. x[k-p]
+        err = seg[p:] - W[: s1 - s0] @ a
+        L = 10 * np.log10(_box(err * err, w1) + 1e-20)
+        sig = 10 * np.log10(float(np.mean(xd[max(0, b - prev) : b] ** 2)) + 1e-20)
+        # after[k]: max over [k, k + 2 ms); before[k]: max over [k - 30 ms, k - 1 ms).
+        after = maximum_filter1d(L, size=ahead, origin=-(ahead // 2), mode="nearest")
+        bw = prev - w1
+        mx = maximum_filter1d(L, size=bw, origin=-(bw // 2), mode="nearest")  # max over [i, i + bw)
+        k0 = b - s0
+        ks = np.arange(max(k0, prev), min(k0 + hop, L.size - ahead))
+        if ks.size == 0:
+            continue
+        before = mx[ks - prev]
+        rise = after[ks] - before
+        hit = (rise >= SCAN_RISE_DB) & (after[ks] >= gate) & (after[ks] >= sig - 30.0)
+        for k, rz in zip(ks[hit], rise[hit]):
+            cand.append((s0 + int(k), float(rz), float(after[k] - sig)))
+    # Keep the strongest rise within each 20 ms.
+    cand.sort(key=lambda c: -c[1])
+    gap = int(SCAN_GAP_S * sr)
+    taken = np.zeros(n + 1, bool)
+    kept: list[tuple[int, float, float]] = []
+    for c in cand:
+        if not taken[max(0, c[0] - gap + 1) : c[0] + gap].any():
+            kept.append(c)
+            taken[c[0]] = True
+    kept.sort()
+    return [Attack(round(s / sr, 6), round(rise, 1), round(lvl, 1)) for s, rise, lvl in kept]
 
 
 def zoom(x: np.ndarray, sr: int, t: float, before_s: float = 0.006, after_s: float = 0.014, cols: int = 120) -> list[list[int]]:

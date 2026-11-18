@@ -379,16 +379,17 @@ def cleanup() -> None:
 
 
 @app.function(image=worker_image, timeout=1800, cpu=4, memory=8192)
-def notes_selftest(only: str = "", debug: bool = False, lossless: bool = False) -> list:
+def notes_selftest(only: str = "", debug: bool = False, lossless: bool = False, scenes: str = "", compare: bool = False) -> list:
     """Step 2a end to end on real instrument sounds with sample-exact truth (see notes_selftest.py)."""
     import sys
 
     sys.path.insert(0, "/root")
     if debug:
         os.environ["AB_DEBUG"] = "1"
+        os.environ["AB_DIAG"] = "1"
     from abai.notes_selftest import run
 
-    return run(only=only, lossless_too=lossless)
+    return run(only=only, lossless_too=lossless, scenes=scenes, compare=compare)
 
 
 @app.function(image=worker_image, volumes={DATA: vol}, timeout=900)

@@ -70,6 +70,14 @@ One **AI** tab. Each step of the pipeline is brought back only after it has been
   - Isolated notes are then checked on the plain level, which catches quiet lead-ins (finger noise) that prediction hides. The part of the attack still below the quiet is estimated from how fast the note grows, and the cut goes before it.
   - Swells: where the level climbs out of the quiet; cut early, never late.
 - "Exact" means proven: sharp, isolated (30 dB quiet before), under 0.25 ms hidden, and no other note within 25 ms.
+- Fast playing (notes 50–125 ms apart, the same key struck again):
+  - Basic Pitch's own note builder dropped every note shorter than 60 ms, so a key struck again quickly vanished into the note before it. Notes are now rebuilt from its raw onset output (`notes.segment()`): 30 ms notes are allowed, and a held note is split where its own key's onset output peaks again.
+  - A split or a short note must prove it was struck: an attack found by `onsets.attacks()` with no other key starting then (splits), or a sharp attack (short notes). Otherwise it goes back into the note before.
+  - `onsets.attacks()` scans the whole stretch for strikes, independent of pitch. It never reported a false strike in testing (`server/tests/test_attacks.py`), but in dense playing it finds only some of the strikes. Its predictor cancels about 60 ringing frequencies, and a fast passage can have 150. So it only confirms, it does not decide.
+  - A note with no sharp attack right after a struck note no longer falls back 80 ms (the swell rule), which used to pull in the previous key. It stays in the second half of the gap.
+  - Every note now has `next`: when the next key is struck. Tapping a note stops there, so a fast passage is heard one key at a time.
+  - Every note has a take score (`take`, 0–100): room before the next key (40), quiet before it (30), no other notes still ringing under it (20), exact start (10). The key map's best take for each key is the highest score, so a calm, isolated note beats a loud one in a fast run. Step 2b samples from these.
+  - SwiftF0 was considered and not used: it reports one pitch every 16 ms with no note starts and no chords, so it cannot separate a repeated key.
 - Measured:
   - Synthetic notes, 20 random sets (`server/tests/test_onsets.py`): no note marked exact is more than 1 ms off (median 0.02 ms); at least 90% of truly isolated notes are marked exact; swell cuts are never late.
   - Real instrument samples (GeneralUser GS, each note placed at a known sample; `modal run server/modal_app.py::notes_selftest`), separated notes, lossless:

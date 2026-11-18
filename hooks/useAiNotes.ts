@@ -353,7 +353,8 @@ export function useAiNotes(ai: AiSongs) {
     audio.control(EngineCmd.StemPlay, 0, 0, 0)
   }, [])
 
-  /** Plays one note from its cut point to its end (plus a short tail). */
+  /** Plays one note from its cut point to its end (plus a short tail), stopping before the
+   * next key is struck so a fast passage is heard one key at a time. */
   const playNote = useCallback(
     async (i: number) => {
       const n = doc?.notes[i]
@@ -364,7 +365,8 @@ export function useAiNotes(ai: AiSongs) {
       // The player fades in over 6 ms after a seek: start 10 ms early so the cut is heard whole.
       audio.control(EngineCmd.StemSeek, 0, 0, Math.max(0, n.cut - 0.01))
       audio.control(EngineCmd.StemPlay, 0, 0, 1)
-      const len = Math.min(4, Math.max(0.15, n.end - n.cut) + 0.3)
+      const stopAt = n.next != null ? Math.min(n.end + 0.3, n.next - 0.003) : n.end + 0.3
+      const len = Math.min(4, Math.max(0.05, stopAt - n.cut) + 0.01)
       stopTimer.current = setTimeout(() => audio.control(EngineCmd.StemPlay, 0, 0, 0), len * 1000)
     },
     [doc, ensureCrop]
