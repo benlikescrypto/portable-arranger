@@ -272,4 +272,20 @@ int arrangerbox_load_soundfont(const char* path) {
     return e->loadSoundfont(path);
 }
 
+int arrangerbox_load_stems(const char* paths, char* report, int reportLen) {
+    auto* e = live();
+    if (!e || !paths) {
+        if (report && reportLen > 0) {
+            std::strncpy(report, "{\"ok\":0}", static_cast<size_t>(reportLen - 1));
+            report[reportLen - 1] = 0;
+        }
+        return -1;
+    }
+    return e->loadStems(paths, report, reportLen);
+}
+
+void arrangerbox_clear_stems(void) {
+    if (auto* e = live()) e->clearStems();
+}
+
 }  // extern "C"

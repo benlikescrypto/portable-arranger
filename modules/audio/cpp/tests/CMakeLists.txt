@@ -21,6 +21,7 @@ set(PA_ENGINE_SRC
         ${PA_CPP}/SfzParser.cpp
         ${PA_CPP}/StyleFormat.cpp
         ${PA_CPP}/PcgParser.cpp
+        ${PA_CPP}/StemPlayer.cpp
         ${PA_CPP}/TsfHost.cpp)
 
 add_executable(test_engine

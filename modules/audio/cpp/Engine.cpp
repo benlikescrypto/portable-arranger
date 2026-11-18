@@ -127,8 +127,12 @@ float Engine::query(int what) const {
         case QPeakL: return peakL.exchange(0.0f);
         case QPeakR: return peakR.exchange(0.0f);
         case QMetroBeat: return (float)metroBeatShown.load();
+        case QStemPos: return stems.posShown.load();
+        case QStemLen: return stems.lenShown.load();
+        case QStemPlaying: return (float)stems.playingShown.load();
         default:
             if (what >= QActivity && what < QActivity + 16) return activity[what - QActivity].load();
+            if (what >= QStemLevel && what < QStemLevel + kMaxStems) return stems.level[what - QStemLevel].load();
             return 0.0f;
     }
 }
@@ -222,6 +226,9 @@ void Engine::handleControl(const MidiEvent& e) {
     const int a = e.b, b = e.c, c = e.d;
     const float v = e.f;
     switch (e.a) {
+        case CmdStemPlay:
+        case CmdStemSeek:
+        case CmdStemGain: stems.command(e.a, a, v); break;
         case CmdChannelGain: chanGain[a & 15] = clampf(v, 0.0f, 1.5f); break;
         case CmdChannelPan: chanPan[a & 15] = clampf(v, -1.0f, 1.0f); break;
         case CmdChannelMute:
@@ -1652,6 +1659,9 @@ void Engine::renderVoice(Voice& v, float* buses, float* sends, int) {
 }
 
 void Engine::render(float* out, int frames) {
+    // Take the current stem set first, so stem commands queued right after a load
+    // (gains, play) apply to the new set instead of being reset by it.
+    StemSet* stemSet = stems.beginBlock();
     MidiEvent e;
     while (midi.pop(e)) handle(e);
 
@@ -1727,6 +1737,8 @@ void Engine::render(float* out, int frames) {
         R += revR * reverb.mix;
         L = eqHighL.process(eqMidL.process(eqLowL.process(L)));
         R = eqHighR.process(eqMidR.process(eqLowR.process(R)));
+        // AI stems go out as they are: no EQ or effects on them.
+        stems.mix(stemSet, L, R, sampleRate);
         L *= mix.g[BusMaster];
         R *= mix.g[BusMaster];
         L = limiter.process(outDcL.process(L));
@@ -1736,6 +1748,7 @@ void Engine::render(float* out, int frames) {
         blockPeakL = std::max(blockPeakL, std::fabs(out[i * 2]));
         blockPeakR = std::max(blockPeakR, std::fabs(out[i * 2 + 1]));
     }
+    stems.endBlock(stemSet, frames, sampleRate);
     if (blockPeakL > peakL.load()) peakL.store(blockPeakL);
     if (blockPeakR > peakR.load()) peakR.store(blockPeakR);
     int nv = 0;

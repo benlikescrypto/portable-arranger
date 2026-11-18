@@ -26,6 +26,11 @@ export type Telemetry = {
   metroBeat: number
   tempo: number
   live: boolean
+  /** AI stem player (StemPlayer in the engine). */
+  stemPos: number
+  stemLen: number
+  stemPlaying: boolean
+  stemLevels: number[]
 }
 
 const empty: Telemetry = {
@@ -48,6 +53,10 @@ const empty: Telemetry = {
   metroBeat: -1,
   tempo: 120,
   live: false,
+  stemPos: 0,
+  stemLen: 0,
+  stemPlaying: false,
+  stemLevels: new Array(8).fill(0),
 }
 
 let current: Telemetry = empty
@@ -85,6 +94,10 @@ function poll() {
     metroBeat: q[EngineQuery.MetroBeat] ?? -1,
     tempo: snap?.tempo ?? current.tempo,
     live,
+    stemPos: q[EngineQuery.StemPos] ?? 0,
+    stemLen: q[EngineQuery.StemLen] ?? 0,
+    stemPlaying: (q[EngineQuery.StemPlaying] ?? 0) > 0.5,
+    stemLevels: q.length > EngineQuery.StemLevel ? q.slice(EngineQuery.StemLevel, EngineQuery.StemLevel + 8) : empty.stemLevels,
   }
   current = next
   listeners.forEach((fn) => fn())

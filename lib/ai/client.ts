@@ -4,7 +4,7 @@ import { accessToken } from "@/lib/supabase"
 
 import { aiConfig } from "./config"
 
-export type AiKind = "drums" | "sounds"
+export type AiKind = "stems" | "drums" | "sounds"
 
 export type AiSection = { role: string; bar0: number; bar1: number; start: number; end: number; cluster: number }
 
@@ -27,6 +27,17 @@ export type AiSound = {
   credit?: string
 }
 
+/** One track of a stems job: the original mix or a Demucs stem (MP3). */
+export type AiStem = {
+  key: string
+  label: string
+  file: string
+  rms_db: number
+  /** Loudness relative to the whole song, dB. */
+  share_db: number
+  peak: number
+}
+
 export type AiManifest = {
   kind: AiKind
   name: string
@@ -41,6 +52,13 @@ export type AiManifest = {
   timeline?: { stem: string; category: string; start: number; end: number }[]
   styles: { name: string; file: string; type: "audio" | "gm" }[]
   sounds: AiSound[]
+  /** Stems job: original first, then the Demucs stems. */
+  stems?: AiStem[]
+  model?: string
+  /** Song minus the stems added together, dB below the song (lower is better). */
+  residual_db?: number
+  /** The song was longer than the server keeps and was cut. */
+  cut?: boolean
   files: string[]
   sizes?: Record<string, number>
   seconds?: number

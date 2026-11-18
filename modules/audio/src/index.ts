@@ -62,6 +62,8 @@ type AudioNative = {
   listPa4xCatalog?: (path: string) => Promise<string>
   loadSfz?: (path: string) => Promise<string>
   loadAbStyle?: (path: string) => Promise<string>
+  loadStems?: (paths: string) => Promise<string>
+  clearStems?: () => Promise<void>
 }
 
 const native = requireOptionalNativeModule<AudioNative>("ArrangerBoxAudio")
@@ -203,6 +205,18 @@ export const audio = {
     const load = native?.loadAbStyle
     return load ? load(path) : Promise.resolve('{"ok":0}')
   },
+  /** True when this app build has the stem player (added with the AI stems step). */
+  hasStemPlayer(): boolean {
+    return native?.loadStems != null
+  },
+  /** Loads MP3 stems to play in sync; replaces any loaded set. Returns the JSON report. */
+  loadStems(paths: string[]) {
+    const load = native?.loadStems
+    return load ? load(paths.join("\n")) : Promise.resolve('{"ok":0,"reason":"this app build has no stem player"}')
+  },
+  clearStems() {
+    return native?.clearStems ? native.clearStems() : Promise.resolve()
+  },
 }
 
 export default audio
@@ -231,6 +245,9 @@ export const EngineCmd = {
   PadOff: 20,
   PadsOff: 21,
   ScaleToStyle: 22,
+  StemPlay: 23,
+  StemSeek: 24,
+  StemGain: 25,
 } as const
 
 /** Mirrors pa::EngineQuery. */
@@ -247,5 +264,9 @@ export const EngineQuery = {
   PeakR: 9,
   Activity: 10,
   MetroBeat: 26,
-  Count: 27,
+  StemPos: 27,
+  StemLen: 28,
+  StemPlaying: 29,
+  StemLevel: 30,
+  Count: 38,
 } as const

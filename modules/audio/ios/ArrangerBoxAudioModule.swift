@@ -138,6 +138,12 @@ func arrangerbox_load_sfz(_ path: UnsafePointer<CChar>, _ report: UnsafeMutableP
 @_silgen_name("arrangerbox_load_abstyle")
 func arrangerbox_load_abstyle(_ path: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
 
+@_silgen_name("arrangerbox_load_stems")
+func arrangerbox_load_stems(_ paths: UnsafePointer<CChar>, _ report: UnsafeMutablePointer<CChar>, _ reportLen: Int32) -> Int32
+
+@_silgen_name("arrangerbox_clear_stems")
+func arrangerbox_clear_stems()
+
 @_silgen_name("arrangerbox_load_soundfont")
 func arrangerbox_load_soundfont(_ path: UnsafePointer<CChar>) -> Int32
 
@@ -359,6 +365,16 @@ public class ArrangerBoxAudioModule: Module {
       loadReport(path, capacity: 1024) { p, report, len in
         _ = arrangerbox_load_abstyle(p, report, len)
       }
+    }
+
+    AsyncFunction("loadStems") { (paths: String) in
+      loadReport(paths, capacity: 512) { p, report, len in
+        _ = arrangerbox_load_stems(p, report, len)
+      }
+    }
+
+    AsyncFunction("clearStems") {
+      arrangerbox_clear_stems()
     }
   }
 }

@@ -899,5 +899,115 @@ int main() {
         expect(all && count > 0, "ai_server_sounds_play_and_release");
     }
 
+    // AI stems: two MP3s (440 Hz and 1 kHz, 1.5 s) play in sync, mute, seek and stop at the end.
+    {
+        std::string here = __FILE__;
+        here = here.substr(0, here.find_last_of("/\\"));
+        const std::string paths = here + "/fixtures/stem_a440.mp3\n" + here + "/fixtures/stem_b1000.mp3";
+        auto e = std::make_unique<pa::Engine>();
+        e->prepare(48000.0f);
+        char rep[256];
+        const int n = e->loadStems(paths.c_str(), rep, sizeof(rep));
+        std::printf("stems: %s\n", rep);
+        expect(n == 2 && std::strstr(rep, "\"rate\":44100") != nullptr, "stems_load_mp3");
+        std::vector<float> b((size_t)48000 * 2);
+        auto run = [&](int frames) {
+            for (int off = 0; off < frames; off += 256) e->render(b.data() + off * 2, std::min(256, frames - off));
+        };
+        auto tone = [&](float f, int from, int count) {  // Goertzel power at f (left channel)
+            const float w = 2.0f * 3.14159265f * f / 48000.0f, c = 2.0f * std::cos(w);
+            float s1 = 0, s2 = 0;
+            for (int i = 0; i < count; ++i) {
+                const float s0 = b[(size_t)(from + i) * 2] + c * s1 - s2;
+                s2 = s1;
+                s1 = s0;
+            }
+            return std::sqrt(std::max(0.0f, s1 * s1 + s2 * s2 - c * s1 * s2)) / (float)count;
+        };
+        run(4800);
+        expect(std::fabs(e->query(pa::QStemLen) - 1.5f) < 0.06f && e->query(pa::QStemPlaying) == 0.0f &&
+                   rms(b.data(), 4800 * 2) < 1e-4f,
+               "stems_loaded_stopped_and_silent");
+        e->control(pa::CmdStemGain, 0, 0, 1.0f);
+        e->control(pa::CmdStemGain, 1, 0, 1.0f);
+        e->control(pa::CmdStemPlay, 0, 0, 1.0f);
+        run(24000);
+        const float pos = e->query(pa::QStemPos);
+        const float a1 = tone(440, 12000, 9600), b1 = tone(1000, 12000, 9600);
+        std::printf("  both: pos %.3f s, 440 Hz %.3f, 1 kHz %.3f, playing %.0f\n", pos, a1, b1, e->query(pa::QStemPlaying));
+        expect(std::fabs(pos - 0.5f) < 0.02f, "stems_play_at_real_speed_after_resampling");
+        expect(a1 > 0.05f && b1 > 0.05f && e->query(pa::QStemLevel + 0) > 0.2f && e->query(pa::QStemLevel + 1) > 0.2f,
+               "stems_mix_both");
+        e->control(pa::CmdStemGain, 1, 0, 0.0f);
+        run(12000);
+        const float a2 = tone(440, 4800, 7200), b2 = tone(1000, 4800, 7200);
+        std::printf("  stem 2 muted: 440 Hz %.3f, 1 kHz %.4f\n", a2, b2);
+        expect(a2 > 0.05f && b2 < a2 * 0.01f, "stems_mute_one");
+        e->control(pa::CmdStemSeek, 0, 0, 0.2f);
+        run(4800);
+        expect(std::fabs(e->query(pa::QStemPos) - 0.3f) < 0.03f, "stems_seek");
+        run(48000);
+        run(48000);
+        expect(e->query(pa::QStemPlaying) == 0.0f, "stems_stop_at_end");
+        e->control(pa::CmdStemPlay, 0, 0, 1.0f);
+        run(4800);
+        expect(e->query(pa::QStemPlaying) == 1.0f && e->query(pa::QStemPos) < 0.15f, "stems_replay_from_start");
+        const int n2 = e->loadStems((here + "/fixtures/stem_b1000.mp3").c_str(), rep, sizeof(rep));
+        run(4800);
+        expect(n2 == 1 && e->query(pa::QStemPlaying) == 0.0f && std::fabs(e->query(pa::QStemLen) - 1.5f) < 0.06f,
+               "stems_replace_while_playing");
+        expect(e->loadStems((here + "/fixtures/missing.mp3").c_str(), rep, sizeof(rep)) < 0 &&
+                   std::strstr(rep, "\"ok\":0") != nullptr,
+               "stems_missing_file_reported");
+        e->clearStems();
+        run(4800);
+        expect(e->query(pa::QStemLen) == 0.0f, "stems_clear");
+    }
+
+    // Real AI-server stems (AB_AI_STEMS="original.mp3;vocals.mp3;…" from server/tests/e2e.mjs stems):
+    // they decode, line up with each other, and the stems added together sound like the original.
+    if (const char* aiStems = std::getenv("AB_AI_STEMS")) {
+        std::string list = aiStems;
+        for (char& ch : list)
+            if (ch == ';') ch = '\n';
+        auto e = std::make_unique<pa::Engine>();
+        e->prepare(48000.0f);
+        char rep[256];
+        const int n = e->loadStems(list.c_str(), rep, sizeof(rep));
+        std::printf("AI stems -> %s\n", rep);
+        expect(n >= 2, "ai_server_stems_load");
+        const int len = 48000 * 2;
+        std::vector<float> orig((size_t)len * 2), sum((size_t)len * 2), tmp((size_t)len * 2);
+        auto take = [&](std::vector<float>& dst, bool original) {
+            for (int i = 0; i < n; ++i) e->control(pa::CmdStemGain, i, 0, (i == 0) == original ? 1.0f : 0.0f);
+            e->control(pa::CmdStemSeek, 0, 0, 20.0f);
+            e->control(pa::CmdStemPlay, 0, 0, 1.0f);
+            for (int off = 0; off < 9600; off += 256) e->render(tmp.data(), 256);  // seek + gain glide
+            for (int off = 0; off < len; off += 256) e->render(dst.data() + off * 2, std::min(256, len - off));
+            e->control(pa::CmdStemPlay, 0, 0, 0.0f);
+            for (int off = 0; off < 4800; off += 256) e->render(tmp.data(), 256);
+        };
+        take(orig, true);
+        take(sum, false);
+        auto corr = [&](int lag) {
+            double xy = 0, xx = 0, yy = 0;
+            for (int i = 2000; i < len - 2000; ++i) {
+                const double x = orig[(size_t)i * 2], y = sum[(size_t)(i + lag) * 2];
+                xy += x * y;
+                xx += x * x;
+                yy += y * y;
+            }
+            return xy / std::sqrt(xx * yy + 1e-20);
+        };
+        int best = 0;
+        double bestC = -2;
+        for (int lag = -400; lag <= 400; ++lag) {
+            const double c = corr(lag);
+            if (c > bestC) bestC = c, best = lag;
+        }
+        std::printf("  original vs stems added up: correlation %.4f at lag %d samples\n", bestC, best);
+        expect(bestC > 0.97 && best == 0, "ai_server_stems_aligned_and_sum_to_song");
+    }
+
     return fails ? 1 : 0;
 }

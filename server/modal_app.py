@@ -5,7 +5,7 @@
     modal run modal_app.py::make_demo  # demo songs served at /v1/demo/<name>
 
 API (Authorization: Bearer <Supabase access token of a signed-in user>):
-    POST   /v1/jobs                 multipart: file, kind=drums|sounds, name
+    POST   /v1/jobs                 multipart: file, kind=stems|drums|sounds, name
     GET    /v1/jobs/{id}            status, stage, progress, message, result manifest
     GET    /v1/jobs/{id}/files/{f}  a result file (manifest.json, .abstyle, .sfz, .wav)
     DELETE /v1/jobs/{id}
@@ -64,6 +64,7 @@ def process(job_id: str) -> None:
     sys.path.insert(0, "/root")
     from abai.drums import extract_drum_style
     from abai.sounds import extract_sounds
+    from abai.stems import extract_stems
 
     import db
 
@@ -81,7 +82,7 @@ def process(job_id: str) -> None:
 
     try:
         report("start", 0.01, "GPU ready")
-        fn = extract_drum_style if job["kind"] == "drums" else extract_sounds
+        fn = {"drums": extract_drum_style, "stems": extract_stems}.get(job["kind"], extract_sounds)
         manifest = fn(job["input"], job.get("name") or "Song", out, report)
         manifest["sizes"] = {f: os.path.getsize(f"{DATA}/{f}" if f.startswith("lib/") else os.path.join(out, f)) for f in manifest["files"]}
         manifest["seconds"] = round(time.time() - started, 1)
@@ -165,8 +166,8 @@ def api():
         authorization: str | None = Header(None),
     ):
         user = auth(authorization)
-        if kind not in ("drums", "sounds"):
-            raise HTTPException(400, "kind must be drums or sounds")
+        if kind not in ("stems", "drums", "sounds"):
+            raise HTTPException(400, "kind must be stems, drums or sounds")
         if db.jobs_today(user) >= daily_limit:
             raise HTTPException(429, f"Daily limit reached ({daily_limit} songs per 24 hours). Try again later.")
         ext = os.path.splitext(file.filename or "")[1].lower()
@@ -224,7 +225,7 @@ def api():
             data = read_file(f"{DATA}/jobs/{job_id}/out/{name}")
         except FileNotFoundError:
             raise HTTPException(404, "File is gone.")
-        kind = {".json": "application/json", ".wav": "audio/wav", ".sfz": "text/plain", ".abstyle": "text/plain"}
+        kind = {".json": "application/json", ".wav": "audio/wav", ".mp3": "audio/mpeg", ".sfz": "text/plain", ".abstyle": "text/plain"}
         return Response(data, media_type=kind.get(os.path.splitext(name)[1], "application/octet-stream"))
 
     @web.get("/v1/library/{inst}/{name}")

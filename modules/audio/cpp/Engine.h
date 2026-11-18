@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Dsp.h"
+#include "StemPlayer.h"
 
 #include <atomic>
 #include <cstdint>
@@ -146,6 +147,9 @@ enum EngineCmd : int {
     CmdPadOff = 20,        // a = sound id, b = note, c = pad slot
     CmdPadsOff = 21,       // stop every pad note
     CmdScaleToStyle = 22,  // b = 1 apply the sub scale to the style tracks too
+    CmdStemPlay = 23,      // v = 1 play, 0 pause (AI stems, see StemPlayer)
+    CmdStemSeek = 24,      // v = seconds
+    CmdStemGain = 25,      // a = stem 0..7, v = gain 0..2
 };
 
 // Engine::query() values for the UI.
@@ -162,7 +166,11 @@ enum EngineQuery : int {
     QPeakR = 9,
     QActivity = 10,  // QActivity + ch: recent note activity 0..1 for channel ch (16 entries)
     QMetroBeat = 26, // last metronome beat 0..3, -1 never
-    QCount = 27,
+    QStemPos = 27,   // stem player position, seconds
+    QStemLen = 28,   // loaded stems length, seconds (0 none)
+    QStemPlaying = 29,
+    QStemLevel = 30, // QStemLevel + i: recent peak of stem i (8 entries)
+    QCount = 38,
 };
 
 template <size_t N>
@@ -371,6 +379,8 @@ public:
     int loadSfz(const char* path, char* report, int reportLen);
     int loadAbStyle(const char* path, char* report, int reportLen);
     int loadSoundfont(const char* path);
+    int loadStems(const char* paths, char* report, int reportLen) { return stems.load(paths, report, reportLen); }
+    void clearStems() { stems.clear(); }
     bool hasSoundfont() const { return gmFont != nullptr; }
 
     float latencyMs() const { return latency.load(); }
@@ -453,6 +463,7 @@ private:
     std::atomic<float> latency{8.0f};
     std::atomic<uint32_t> clockTicks{0};
     std::mutex loadMu;
+    StemPlayer stems;
     bool factoryReady = false;
     tsf* gmFont = nullptr;
 

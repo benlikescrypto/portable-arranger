@@ -248,6 +248,17 @@ Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadSfz(JNIEnv* env, jclas
     return jutf(env, buf);
 }
 JNIEXPORT jstring JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadStems(JNIEnv* env, jclass, jstring paths) {
+    const auto p = jstr(env, paths);
+    char buf[512];
+    arrangerbox_load_stems(p.c_str(), buf, sizeof(buf));
+    return jutf(env, buf);
+}
+JNIEXPORT void JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeClearStems(JNIEnv*, jclass) {
+    arrangerbox_clear_stems();
+}
+JNIEXPORT jstring JNICALL
 Java_expo_modules_arrangerboxaudio_EngineNative_nativeLoadAbStyle(JNIEnv* env, jclass, jstring path) {
     const auto p = jstr(env, path);
     char buf[1024];

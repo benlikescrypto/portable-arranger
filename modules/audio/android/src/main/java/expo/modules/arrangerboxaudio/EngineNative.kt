@@ -51,4 +51,6 @@ internal object EngineNative {
   @JvmStatic external fun nativeListPa4xCatalog(path: String): String
   @JvmStatic external fun nativeLoadSfz(path: String): String
   @JvmStatic external fun nativeLoadAbStyle(path: String): String
+  @JvmStatic external fun nativeLoadStems(paths: String): String
+  @JvmStatic external fun nativeClearStems()
 }

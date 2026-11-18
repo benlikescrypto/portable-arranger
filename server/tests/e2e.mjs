@@ -1,8 +1,8 @@
 // End-to-end test of the deployed API, the same calls the app makes:
 // health, auth, demo download, multipart upload, polling, result download, delete.
-//   node server/tests/e2e.mjs <api url> [drums|sounds|both] [out dir]
+//   node server/tests/e2e.mjs <api url> [stems|drums|sounds|both|all] [out dir]   (both = drums + sounds)
 // Then the C++ host test plays the downloaded files:
-//   AB_AI_STYLE=<out>/drums/<name>.abstyle AB_AI_SFZ="<a.sfz>;<b.sfz>" test_engine
+//   AB_AI_STYLE=<out>/drums/<name>.abstyle AB_AI_SFZ="<a.sfz>;<b.sfz>" AB_AI_STEMS="<a.mp3>;…" test_engine
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -101,9 +101,17 @@ const noAuth = await fetch(`${url}/v1/jobs/x`)
 check(noAuth.status === 401, "requests without a sign-in are refused", `${noAuth.status}`)
 const out = {}
 const jobs = []
-if (which !== "sounds") jobs.push(run("drums", "demo_groove.mp3", "Señor Groove – Привет").then((r) => (out.drums = r)))
-if (which !== "drums") jobs.push(run("sounds", "demo_keys.mp3", "Clé Ünïcode – Тест").then((r) => (out.sounds = r)))
+const want = (k) => which === "all" || which === k || (which === "both" && k !== "stems")
+if (want("stems")) jobs.push(run("stems", "demo_keys.mp3", "Stems Ünïcode – Тест").then((r) => (out.stems = r)))
+if (want("drums")) jobs.push(run("drums", "demo_groove.mp3", "Señor Groove – Привет").then((r) => (out.drums = r)))
+if (want("sounds")) jobs.push(run("sounds", "demo_keys.mp3", "Clé Ünïcode – Тест").then((r) => (out.sounds = r)))
 await Promise.all(jobs)
+if (out.stems) {
+  const m = out.stems.manifest
+  check(m.stems.length === 7 && m.stems[0].key === "original" && m.files.every((f) => f.endsWith(".mp3")), "stems: original + 6 Demucs stems as MP3", m.stems.map((t) => `${t.label} ${t.share_db} dB`).join(", "))
+  check(m.residual_db < -20, "stems: stems add back up to the song", `residual ${m.residual_db} dB`)
+  console.log("AB_AI_STEMS=" + m.stems.map((t) => join(out.stems.dir, t.file)).join(";"))
+}
 if (out.drums) console.log("AB_AI_STYLE=" + join(out.drums.dir, out.drums.manifest.styles[0].file))
 if (out.sounds) console.log("AB_AI_SFZ=" + out.sounds.manifest.sounds.map((s) => join(out.sounds.dir, s.file)).join(";"))
 console.log(failed ? `${failed} failed` : "all passed")

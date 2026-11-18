@@ -11,13 +11,15 @@ import {
   serverOnline,
   startJob,
   type AiJob,
-  type AiKind,
+  type AiKind as AnyAiKind,
 } from "@/lib/ai/client"
 import { aiConfigured } from "@/lib/ai/config"
 import { enginePaths, readAiLibrary, removeAiFiles, writeAiLibrary, type AiEntry, type AiPending } from "@/lib/ai/library"
 import type { useArranger } from "@/hooks/useArranger"
 
 type Vm = ReturnType<typeof useArranger>
+// The drum-style and sound builders (parked until their step of the AI pipeline is retested).
+type AiKind = Exclude<AnyAiKind, "stems">
 
 export type AiPhase = "uploading" | "queued" | "processing" | "downloading" | "loading" | "done" | "error"
 

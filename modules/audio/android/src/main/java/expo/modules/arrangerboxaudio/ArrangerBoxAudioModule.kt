@@ -164,5 +164,13 @@ class ArrangerBoxAudioModule : Module() {
     AsyncFunction("loadAbStyle") { path: String ->
       EngineNative.nativeLoadAbStyle(path)
     }
+
+    AsyncFunction("loadStems") { paths: String ->
+      EngineNative.nativeLoadStems(paths)
+    }
+
+    AsyncFunction("clearStems") {
+      EngineNative.nativeClearStems()
+    }
   }
 }

@@ -73,6 +73,9 @@ int arrangerbox_list_pa4x_catalog(const char* folder, char* report, int reportLe
 int arrangerbox_load_sfz(const char* path, char* report, int reportLen);
 int arrangerbox_load_abstyle(const char* path, char* report, int reportLen);
 int arrangerbox_load_soundfont(const char* path);
+// AI stems: newline-separated MP3 paths, played in sync (CmdStem* / QStem*).
+int arrangerbox_load_stems(const char* paths, char* report, int reportLen);
+void arrangerbox_clear_stems(void);
 
 #ifdef __cplusplus
 }
