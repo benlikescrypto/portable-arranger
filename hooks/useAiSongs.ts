@@ -296,6 +296,13 @@ export function useAiSongs() {
     [persist]
   )
 
+  /** Something else (a note audition) took over the stem player: the song is no longer loaded. */
+  const release = useCallback(() => {
+    const next = { ...playerRef.current, songId: null, loading: false }
+    playerRef.current = next
+    setPlayer(next)
+  }, [])
+
   // Transport.
   const play = useCallback((on: boolean) => audio.control(EngineCmd.StemPlay, 0, 0, on ? 1 : 0), [])
   const seek = useCallback((seconds: number) => audio.control(EngineCmd.StemSeek, 0, 0, Math.max(0, seconds)), [])
@@ -342,6 +349,7 @@ export function useAiSongs() {
     dismiss,
     remove,
     open,
+    release,
     play,
     seek,
     setMode,

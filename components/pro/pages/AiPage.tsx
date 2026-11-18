@@ -1,9 +1,11 @@
 import { useState } from "react"
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 
+import { FindNotes, NotesResults, NotesView } from "@/components/pro/pages/AiNotes"
 import { LcdButton, LcdHeader } from "@/components/pro/ui"
 import { Lcd } from "@/constants/theme"
 import { useAuth, type Auth } from "@/hooks/useAuth"
+import type { AiNotes } from "@/hooks/useAiNotes"
 import type { AiSong, AiSongs, SongJob } from "@/hooks/useAiSongs"
 import { useTelemetry } from "@/lib/telemetry"
 
@@ -33,7 +35,7 @@ const STEPS: { label: string; done: (j: SongJob) => boolean; now: (j: SongJob) =
   { label: "Download", done: (j) => j.phase === "done", now: (j) => j.phase === "downloading" },
 ]
 
-export function AiPage({ ai }: { ai: AiSongs }) {
+export function AiPage({ ai, notes }: { ai: AiSongs; notes: AiNotes }) {
   const auth = useAuth()
   const status = !ai.configured ? "Not set up" : ai.online == null ? "Connecting…" : ai.online ? "Server online" : "Server offline"
   const busy = !!ai.job && ai.job.phase !== "done" && ai.job.phase !== "error"
@@ -89,6 +91,15 @@ export function AiPage({ ai }: { ai: AiSongs }) {
           </Section>
         ) : null}
         {loaded ? <StemPlayer song={loaded} ai={ai} /> : null}
+        {notes.auditioning && notes.song ? (
+          <Section title={`${notes.song.name} · auditioning notes`}>
+            <Text style={styles.hint}>The stem player holds the stretch you searched. Go back to hear the whole song.</Text>
+            <LcdButton label="Back to song" onPress={() => void notes.backToSong()} />
+          </Section>
+        ) : null}
+        <NotesView notes={notes} />
+        {loaded || notes.auditioning ? <FindNotes ai={ai} notes={notes} /> : null}
+        <NotesResults notes={notes} />
         <SongList ai={ai} />
       </ScrollView>
     </View>

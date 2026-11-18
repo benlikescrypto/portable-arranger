@@ -19,7 +19,7 @@ import type { useArranger } from "@/hooks/useArranger"
 
 type Vm = ReturnType<typeof useArranger>
 // The drum-style and sound builders (parked until their step of the AI pipeline is retested).
-type AiKind = Exclude<AnyAiKind, "stems">
+type AiKind = Exclude<AnyAiKind, "stems" | "notes">
 
 export type AiPhase = "uploading" | "queued" | "processing" | "downloading" | "loading" | "done" | "error"
 

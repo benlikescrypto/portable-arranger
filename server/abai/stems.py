@@ -39,8 +39,22 @@ def write_mp3(path: str, x: np.ndarray) -> None:
         raise RuntimeError("MP3 encode failed: " + proc.stderr.decode(errors="replace")[-300:])
 
 
-def extract_stems(path: str, name: str, out: str, report: Report) -> dict:
+LOSSLESS_EXT = {".wav", ".flac", ".aif", ".aiff"}
+KEEP_DAYS = 30  # lossless copies kept on the server for exact note timing (step 2)
+
+
+def write_flac(path: str, x: np.ndarray) -> None:
+    import soundfile as sf
+
+    sf.write(path, np.clip(x.T, -1.0, 1.0), SR, format="FLAC", subtype="PCM_16")
+
+
+def extract_stems(path: str, name: str, out: str, report: Report, keep_dir: str | None = None) -> dict:
+    """keep_dir: also save every track there as lossless FLAC (MP3 smears attacks by several
+    ms, so exact note timing in step 2 reads these instead of the app's MP3s)."""
     os.makedirs(out, exist_ok=True)
+    if keep_dir:
+        os.makedirs(keep_dir, exist_ok=True)
     report("decode", 0.03, "Reading the song")
     x = decode(path, max_seconds=MAX_SECONDS)
     duration = x.shape[1] / SR
@@ -58,6 +72,8 @@ def extract_stems(path: str, name: str, out: str, report: Report) -> dict:
         y = x if key == "original" else stems[key]
         fname = f"{key}.mp3"
         write_mp3(os.path.join(out, fname), y)
+        if keep_dir:
+            write_flac(os.path.join(keep_dir, f"{key}.flac"), y)
         files.append(fname)
         level = rms(y)
         tracks.append(
@@ -82,6 +98,9 @@ def extract_stems(path: str, name: str, out: str, report: Report) -> dict:
         # What the stems miss when added back together (lower is better; Demucs is
         # usually below -30 dB).
         "residual_db": round(float(db(rms(residual) / max(song_rms, 1e-9))), 1),
+        # Exact note timing needs a lossless song: an MP3 upload already smears attacks.
+        "source_lossless": os.path.splitext(path)[1].lower() in LOSSLESS_EXT,
+        "lossless_days": KEEP_DAYS if keep_dir else 0,
         "styles": [],
         "sounds": [],
         "files": files,

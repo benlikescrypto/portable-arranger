@@ -3,7 +3,7 @@ import { Directory, File } from "expo-file-system"
 import { aiRoot, jobFolder, nativePath, type AiKind as AnyAiKind, type AiManifest } from "./client"
 
 // Drum styles and sounds (the stems step keeps its own index, see hooks/useAiSongs.ts).
-type AiKind = Exclude<AnyAiKind, "stems">
+type AiKind = Exclude<AnyAiKind, "stems" | "notes">
 
 /** One finished AI result kept on the device (Documents/ai/<id>/ + ai/library.json). */
 export type AiEntry = {

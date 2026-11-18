@@ -4,7 +4,7 @@ import { accessToken } from "@/lib/supabase"
 
 import { aiConfig } from "./config"
 
-export type AiKind = "stems" | "drums" | "sounds"
+export type AiKind = "stems" | "notes" | "drums" | "sounds"
 
 export type AiSection = { role: string; bar0: number; bar1: number; start: number; end: number; cluster: number }
 
@@ -38,6 +38,44 @@ export type AiStem = {
   peak: number
 }
 
+/** Step 2a: one note found in a stretch of a stem. Times are seconds from the stretch start. */
+export type AiNote = {
+  i: number
+  midi: number
+  name: string
+  /** Exact start (sample-accurate when `exact`). */
+  t: number
+  /** Where a sample cut starts: at or before `t` (on a zero crossing). */
+  cut: number
+  end: number
+  /** Basic Pitch loudness 0..1. */
+  vel: number
+  /** Basic Pitch's own start, and how far the exact start moved from it. */
+  coarse: number
+  shift_ms: number
+  sharp: boolean
+  /** The start is proven to the sample: sharp, isolated, nothing hidden, no neighbour. */
+  exact: boolean
+  crowded: boolean
+  rise_ms: number
+  snr_db: number
+  /** The quiet before the note, relative to the note (dB): -30 or lower is isolated. */
+  clear_db: number
+  /** 120 min/max columns (-100..100), 6 ms before to 14 ms after `t`. */
+  wave: [number, number][]
+}
+
+export type AiNoteMode = "held" | "oneshot"
+
+export type AiNotesDoc = {
+  stem: string
+  start: number
+  end: number
+  mode: string
+  suggest: { mode: AiNoteMode; why: string; decay_db_s?: number; sharp?: number }
+  notes: AiNote[]
+}
+
 export type AiManifest = {
   kind: AiKind
   name: string
@@ -59,6 +97,22 @@ export type AiManifest = {
   residual_db?: number
   /** The song was longer than the server keeps and was cut. */
   cut?: boolean
+  /** Stems job: the uploaded song was lossless (WAV/FLAC/AIFF), so exact note timing is possible. */
+  source_lossless?: boolean
+  /** Stems job: days the server keeps lossless copies of the stems for note searches. */
+  lossless_days?: number
+  /** Notes job. */
+  stem?: string
+  start?: number
+  end?: number
+  mode?: string
+  suggest?: AiNotesDoc["suggest"]
+  /** Notes job: read from the server's lossless stem, or from the app's MP3 (never exact). */
+  audio?: "lossless" | "mp3"
+  count?: number
+  exact?: number
+  keys?: number[]
+  exact_keys?: number[]
   files: string[]
   sizes?: Record<string, number>
   seconds?: number
@@ -145,14 +199,15 @@ export async function startJob(
   kind: AiKind,
   name: string,
   onProgress: (fraction: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  fields: Record<string, string> = {}
 ): Promise<string> {
   const task = song.createUploadTask(`${aiConfig.url}/v1/jobs`, {
     uploadType: UploadType.MULTIPART,
     fieldName: "file",
     httpMethod: "POST",
     headers: await authHeaders(),
-    parameters: { kind, name },
+    parameters: { kind, name, ...fields },
     mimeType: mimeOf(song.name),
     sessionType: "foreground",
     signal,
@@ -180,6 +235,31 @@ export async function startJob(
     throw new AiError(body.detail || `Upload refused (${result.status}).`)
   }
   return body.id
+}
+
+export type NotesRequest = { songId: string; stem: string; start: number; end: number; mode: AiNoteMode | "" ; name: string }
+
+/** Starts a notes job on the server's lossless copy of a stem (no upload). Throws AiError with
+ *  status 410 when the server no longer has it; then call startJob with the stem's MP3. */
+export async function startNotesJob(r: NotesRequest): Promise<string> {
+  const form = new FormData()
+  const fields: Record<string, string> = {
+    kind: "notes",
+    name: r.name,
+    source: r.songId,
+    stem: r.stem,
+    start: r.start.toFixed(4),
+    end: r.end.toFixed(4),
+    mode: r.mode,
+  }
+  for (const [k, v] of Object.entries(fields)) form.append(k, v)
+  const body = await api<{ id?: string }>("/v1/jobs", { method: "POST", body: form })
+  if (!body.id) throw new AiError("The server did not start the job.")
+  return body.id
+}
+
+export function notesFields(r: NotesRequest): Record<string, string> {
+  return { stem: r.stem, start: r.start.toFixed(4), end: r.end.toFixed(4), mode: r.mode }
 }
 
 export const getJob = (id: string) => api<AiJob>(`/v1/jobs/${id}`)
@@ -214,10 +294,10 @@ function libraryTarget(name: string): { url: string; dest: File } | null {
 
 /** Downloads every result file of a finished job into Documents/ai/<id>/ (library
  *  samples into the shared Documents/ai/lib/, skipping ones already there). */
-export async function downloadResult(job: AiJob, onProgress: (fraction: number) => void): Promise<Directory> {
+export async function downloadResult(job: AiJob, onProgress: (fraction: number) => void, target?: Directory): Promise<Directory> {
   const manifest = job.result
   if (!manifest) throw new AiError("The job has no result.")
-  const dir = jobFolder(job.id)
+  const dir = target ?? jobFolder(job.id)
   if (dir.exists) dir.delete()
   dir.create({ intermediates: true, idempotent: true })
   const names = [...manifest.files]

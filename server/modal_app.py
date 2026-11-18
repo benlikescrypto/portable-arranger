@@ -5,12 +5,15 @@
     modal run modal_app.py::make_demo  # demo songs served at /v1/demo/<name>
 
 API (Authorization: Bearer <Supabase access token of a signed-in user>):
-    POST   /v1/jobs                 multipart: file, kind=stems|drums|sounds, name
+    POST   /v1/jobs                 multipart: file, kind=stems|notes|drums|sounds, name
+                                    (notes: also start, end seconds, stem, mode=held|oneshot)
     GET    /v1/jobs/{id}            status, stage, progress, message, result manifest
     GET    /v1/jobs/{id}/files/{f}  a result file (manifest.json, .abstyle, .sfz, .wav)
     DELETE /v1/jobs/{id}
     GET    /v1/demo/{name}          demo song (demo_groove.mp3, demo_keys.mp3, demo_waltz.mp3)
-Uploaded songs are deleted as soon as a job finishes; results expire after 24 hours.
+Uploaded songs are deleted as soon as a job finishes; results expire after 24 hours. A stems job
+also keeps lossless FLAC copies of the stems for 30 days (/data/stems/<job>), so a notes job can
+pass source=<stems job id> instead of a file and get exact timing (MP3 smears attacks).
 Job state lives in Supabase (public.ai_jobs, see server/db.py); users only see their own jobs.
 Modal secret "arrangerbox-ai": SUPABASE_URL, SUPABASE_SECRET_KEY, optional AI_DAILY_LIMIT.
 """
@@ -44,6 +47,7 @@ worker_image = (
 )
 api_image = web_image.add_local_python_source("images", "db")
 DAILY_LIMIT_DEFAULT = 20
+NOTES_DAILY_LIMIT = 300
 
 
 def _update(job_id: str, **fields) -> None:
@@ -57,12 +61,26 @@ def _update(job_id: str, **fields) -> None:
 
 @app.function(image=worker_image, gpu=GPUS, volumes={DATA: vol}, secrets=[secret], timeout=1800, memory=16384, max_containers=8)
 def process(job_id: str) -> None:
+    """GPU jobs: stems (Demucs), drums, sounds."""
+    _process(job_id)
+
+
+@app.function(image=worker_image, volumes={DATA: vol}, secrets=[secret], timeout=900, cpu=4, memory=8192, max_containers=8)
+def process_cpu(job_id: str) -> None:
+    """CPU jobs: notes (Basic Pitch runs fine without a GPU and starts faster)."""
+    _process(job_id)
+
+
+def _process(job_id: str) -> None:
     import shutil
     import sys
     import traceback
 
     sys.path.insert(0, "/root")
+    import functools
+
     from abai.drums import extract_drum_style
+    from abai.notes import extract_notes
     from abai.sounds import extract_sounds
     from abai.stems import extract_stems
 
@@ -81,17 +99,26 @@ def process(job_id: str) -> None:
         print(f"[{job_id}] {stage} {frac:.2f} {msg}", flush=True)
 
     try:
-        report("start", 0.01, "GPU ready")
-        fn = {"drums": extract_drum_style, "stems": extract_stems}.get(job["kind"], extract_sounds)
+        report("start", 0.01, "Server ready" if job["kind"] == "notes" else "GPU ready")
+        params_path = f"{DATA}/jobs/{job_id}/in/params.json"
+        params = json.load(open(params_path)) if os.path.exists(params_path) else {}
+        notes = functools.partial(extract_notes, params=params)
+        stems = functools.partial(extract_stems, keep_dir=f"{DATA}/stems/{job_id}")
+        if job["kind"] == "stems":
+            os.makedirs(f"{DATA}/stems/{job_id}", exist_ok=True)
+            with open(f"{DATA}/stems/{job_id}/owner", "w") as fh:
+                fh.write(job["user_id"])
+        fn = {"drums": extract_drum_style, "stems": stems, "notes": notes}.get(job["kind"], extract_sounds)
         manifest = fn(job["input"], job.get("name") or "Song", out, report)
         manifest["sizes"] = {f: os.path.getsize(f"{DATA}/{f}" if f.startswith("lib/") else os.path.join(out, f)) for f in manifest["files"]}
         manifest["seconds"] = round(time.time() - started, 1)
         with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as fh:
             json.dump(manifest, fh, indent=1)
-        try:
-            os.remove(job["input"])
-        except OSError:
-            pass
+        if job["input"].startswith(f"{DATA}/jobs/{job_id}/in/"):
+            try:
+                os.remove(job["input"])
+            except OSError:
+                pass
         vol.commit()  # files must be visible before the app sees "done"
         _update(job_id, status="done", stage="done", progress=1.0, result=manifest)
     except Exception as exc:
@@ -99,10 +126,11 @@ def process(job_id: str) -> None:
         msg = str(exc) if isinstance(exc, ValueError) else f"Processing failed ({type(exc).__name__})."
         _update(job_id, status="error", stage="error", message=msg)
     finally:
-        try:
-            os.remove(job["input"])
-        except OSError:
-            pass
+        if job["input"].startswith(f"{DATA}/jobs/{job_id}/in/"):  # never a kept lossless stem
+            try:
+                os.remove(job["input"])
+            except OSError:
+                pass
         shutil.rmtree(f"{DATA}/jobs/{job_id}/in", ignore_errors=True)
         vol.commit()
 
@@ -158,38 +186,89 @@ def api():
     def health():
         return {"ok": True, "version": 1}
 
+    def kept_stem(source: str, stem: str, user: str) -> str | None:
+        """The lossless copy of a stem from this user's stems job, if the server still has it."""
+        if not re.fullmatch(r"[a-f0-9]{16}", source) or not re.fullmatch(r"[a-z]{3,12}", stem):
+            return None
+        folder = f"{DATA}/stems/{source}"
+        for attempt in range(2):
+            try:
+                with open(f"{folder}/owner") as fh:
+                    if fh.read().strip() != user:
+                        return None
+                path = f"{folder}/{stem}.flac"
+                if os.path.exists(path):
+                    return path
+            except FileNotFoundError:
+                pass
+            if attempt == 0:
+                with reload_lock:
+                    try:
+                        vol.reload()
+                    except Exception as exc:
+                        print("reload:", exc)
+        return None
+
     @web.post("/v1/jobs")
     async def create(
-        file: UploadFile = File(...),
+        file: UploadFile | None = File(None),
         kind: str = Form("drums"),
         name: str = Form(""),
+        start: float = Form(0.0),
+        end: float = Form(0.0),
+        stem: str = Form(""),
+        mode: str = Form(""),
+        source: str = Form(""),
         authorization: str | None = Header(None),
     ):
         user = auth(authorization)
-        if kind not in ("stems", "drums", "sounds"):
-            raise HTTPException(400, "kind must be stems, drums or sounds")
-        if db.jobs_today(user) >= daily_limit:
+        if kind not in ("stems", "notes", "drums", "sounds"):
+            raise HTTPException(400, "kind must be stems, notes, drums or sounds")
+        params = {}
+        if kind == "notes":
+            if not (0 <= start and end - start >= 0.5 and end - start <= 120.0):
+                raise HTTPException(400, "Choose between 0.5 and 120 seconds of the stem.")
+            if mode not in ("", "held", "oneshot"):
+                raise HTTPException(400, "mode must be held or oneshot")
+            params = {"start": start, "end": end, "stem": stem[:40], "mode": mode}
+            kept = kept_stem(source, stem, user) if source else None
+            if kept:
+                params["lossless"] = kept
+            elif file is None:
+                raise HTTPException(410, "The server no longer has this song's lossless stems. Send the stem file.")
+            # Finding notes is quick; it has its own, larger allowance.
+            if db.jobs_today(user, notes=True) >= NOTES_DAILY_LIMIT:
+                raise HTTPException(429, f"Daily limit reached ({NOTES_DAILY_LIMIT} note searches per 24 hours). Try again later.")
+        elif db.jobs_today(user) >= daily_limit:
             raise HTTPException(429, f"Daily limit reached ({daily_limit} songs per 24 hours). Try again later.")
-        ext = os.path.splitext(file.filename or "")[1].lower()
-        if ext not in AUDIO_EXT:
-            ext = ".audio"
         job_id = uuid.uuid4().hex[:16]
         folder = f"{DATA}/jobs/{job_id}/in"
         os.makedirs(folder, exist_ok=True)
-        path = f"{folder}/song{ext}"
         size = 0
-        with open(path, "wb") as fh:
-            while chunk := await file.read(1 << 20):
-                size += len(chunk)
-                if size > MAX_UPLOAD:
-                    fh.close()
-                    os.remove(path)
-                    raise HTTPException(413, "The file is larger than 80 MB.")
-                fh.write(chunk)
-        if size < 1024:
-            raise HTTPException(400, "The file is empty.")
+        if params.get("lossless"):
+            path = params["lossless"]  # read in place; the job never deletes it
+        else:
+            if file is None:
+                raise HTTPException(400, "No file.")
+            ext = os.path.splitext(file.filename or "")[1].lower()
+            if ext not in AUDIO_EXT:
+                ext = ".audio"
+            path = f"{folder}/song{ext}"
+            with open(path, "wb") as fh:
+                while chunk := await file.read(1 << 20):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD:
+                        fh.close()
+                        os.remove(path)
+                        raise HTTPException(413, "The file is larger than 128 MB.")
+                    fh.write(chunk)
+            if size < 1024:
+                raise HTTPException(400, "The file is empty.")
+        if params:
+            with open(f"{folder}/params.json", "w") as fh:
+                json.dump(params, fh)
         vol.commit()
-        title = (name or os.path.splitext(file.filename or "Song")[0]).strip()[:60] or "Song"
+        title = (name or os.path.splitext((file.filename if file else "") or "Song")[0]).strip()[:60] or "Song"
         db.insert_job(
             {
                 "id": job_id,
@@ -199,12 +278,12 @@ def api():
                 "status": "queued",
                 "stage": "queued",
                 "progress": 0.0,
-                "message": "Waiting for a GPU",
+                "message": "Waiting for the server" if kind == "notes" else "Waiting for a GPU",
                 "bytes": size,
                 "input_path": path,
             }
         )
-        process.spawn(job_id)
+        (process_cpu if kind == "notes" else process).spawn(job_id)
         return {"id": job_id, "status": "queued"}
 
     @web.get("/v1/jobs/{job_id}")
@@ -287,7 +366,29 @@ def cleanup() -> None:
                     import shutil
 
                     shutil.rmtree(path, ignore_errors=True)
+    # Lossless stems kept for exact note timing (abai/stems.py KEEP_DAYS).
+    root = f"{DATA}/stems"
+    if os.path.isdir(root):
+        import shutil
+
+        for job_id in os.listdir(root):
+            path = os.path.join(root, job_id)
+            if now - os.path.getmtime(path) > 30 * 86400:
+                shutil.rmtree(path, ignore_errors=True)
     vol.commit()
+
+
+@app.function(image=worker_image, timeout=1800, cpu=4, memory=8192)
+def notes_selftest(only: str = "", debug: bool = False, lossless: bool = False) -> list:
+    """Step 2a end to end on real instrument sounds with sample-exact truth (see notes_selftest.py)."""
+    import sys
+
+    sys.path.insert(0, "/root")
+    if debug:
+        os.environ["AB_DEBUG"] = "1"
+    from abai.notes_selftest import run
+
+    return run(only=only, lossless_too=lossless)
 
 
 @app.function(image=worker_image, volumes={DATA: vol}, timeout=900)

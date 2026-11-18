@@ -126,12 +126,13 @@ def all_job_ids() -> set[str]:
     return {r["id"] for r in rows}
 
 
-def jobs_today(user_id: str) -> int:
+def jobs_today(user_id: str, notes: bool = False) -> int:
+    """Jobs in the last 24 hours: note searches (notes=True) or everything else."""
     cutoff = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() - 86400, timezone.utc).isoformat()
     r = _rest(
         "HEAD",
         "ai_usage",
-        params={"user_id": f"eq.{user_id}", "created_at": f"gte.{cutoff}", "select": "id"},
+        params={"user_id": f"eq.{user_id}", "created_at": f"gte.{cutoff}", "kind": "eq.notes" if notes else "neq.notes", "select": "id"},
         headers=_headers(Prefer="count=exact"),
     )
     return int(r.headers.get("content-range", "*/0").split("/")[-1] or 0)

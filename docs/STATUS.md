@@ -60,6 +60,30 @@ One **AI** tab. Each step of the pipeline is brought back only after it has been
   - The real server stems line up with the original at lag 0, correlation 0.9985.
   - `server/tests/e2e.mjs <url> stems` passes against the deployed API.
 - Needs an app build that includes `StemPlayer`; older builds show a notice instead of playing.
+- The stems job also keeps lossless FLAC copies of the stems on the server for 30 days (`/data/stems/<job>`), because MP3 smears attacks (step 2 reads these).
+
+**Step 2a: notes in a stretch of a stem (live, no new build needed).**
+- In the AI tab, pick a stem and a stretch (0.5–120 s; "Here" marks the playhead), then Find notes. The server (CPU) runs Basic Pitch on the stretch, drops overtone ghosts, and moves every note's start to the exact sample (`server/abai/onsets.py`). It returns `crop.mp3` and `notes.json`.
+- The app shows a piano roll (green = exact, amber = close estimate, blue = swell), a key map with each key's best take, and per note: start in ms, the cut point (on a zero crossing, before the start), Basic Pitch's error, attack type, how quiet it was before, and a zoomed 20 ms waveform with the start and cut marked. Tapping a note plays it from its cut. It also suggests Held or One-shot.
+- How a start is found:
+  - Sharp attacks: a linear predictor (order 160) learns what was already sounding and cancels it (about 40 dB); the onset is the first sample of energy it cannot explain.
+  - Isolated notes are then checked on the plain level, which catches quiet lead-ins (finger noise) that prediction hides. The part of the attack still below the quiet is estimated from how fast the note grows, and the cut goes before it.
+  - Swells: where the level climbs out of the quiet; cut early, never late.
+- "Exact" means proven: sharp, isolated (30 dB quiet before), under 0.25 ms hidden, and no other note within 25 ms.
+- Measured:
+  - Synthetic notes, 20 random sets (`server/tests/test_onsets.py`): no note marked exact is more than 1 ms off (median 0.02 ms); at least 90% of truly isolated notes are marked exact; swell cuts are never late.
+  - Real instrument samples (GeneralUser GS, each note placed at a known sample; `modal run server/modal_app.py::notes_selftest`), separated notes, lossless:
+    - piano 30/30 exact (worst 0.25 ms)
+    - marimba 30/30 (0.16 ms)
+    - e-piano 24/30 (0.27 ms)
+    - strings 3/28 (the rest cut early)
+    - nylon guitar 0/30: its finger-noise lead-in makes every start an estimate; found about 2 ms early.
+  - No false "exact" in any test.
+  - `server/tests/e2e.mjs <url> notes` passes against the deployed API, from the server's lossless stem and from the app's MP3.
+- Limits:
+  - MP3 erases the first milliseconds of an attack (pre-echo). From an MP3, starts land 6–12 ms early and nothing is marked exact. That applies to an MP3 song even with lossless stems, so the app asks for WAV, FLAC or AIFF songs when exact cuts matter.
+  - Under other sound (notes ringing into each other) attacks are partly hidden. Those notes are never exact and can be cut a few ms late (worst: guitar and strings).
+  - Basic Pitch still adds some ghost notes for marimba and strings, whose overtones are not simple octaves.
 
 The drum-style and sound builders below (`hooks/useAiLab.ts`, `abai/drums.py`, `abai/sounds.py`) are not shown in the app until their step is retested.
 
