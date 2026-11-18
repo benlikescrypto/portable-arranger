@@ -48,9 +48,22 @@ Not implemented (Pa features with no equivalent here yet): Player / MP3 and MIDI
 
 Factory styles are drum-only by an earlier decision (`drumsOnlyStyle` in `FactoryStyles.cpp`), so bass / accompaniment features (NTT, Memory, Bass Inversion, Manual Bass) are only audible on imported SET styles.
 
-## AI Lab (v0.4)
+## AI (v0.5, rebuilt one step at a time)
 
-**Parked for v2:** the AI LAB tab is hidden in the app (`ProScreen.tsx`). Sounds from real songs were not convincing enough. The page, hook and server are kept unchanged.
+One **AI** tab. Each step of the pipeline is brought back only after it has been checked on its own.
+
+**Step 1: stems (live).**
+- Upload a song (up to 6 min). The server runs Demucs `htdemucs_6s` and returns the original plus vocals, drums, bass, piano, guitar and other as 320 kbps MP3. Each stem's loudness and how well the stems add back up to the song come with them.
+- The engine's `StemPlayer` (`modules/audio/cpp/StemPlayer.cpp`, MP3 via `dr_mp3`) decodes them to 16-bit RAM (about 70 MB per minute of song). It plays them sample-locked with per-stem gain, seek and declicked play/pause. The tab has mute/solo and Original/Stems A/B.
+- Checked:
+  - Host `test_engine` stem checks: sync, resampling 44.1 → 48 kHz, mute, seek, end of song, replace while playing.
+  - The real server stems line up with the original at lag 0, correlation 0.9985.
+  - `server/tests/e2e.mjs <url> stems` passes against the deployed API.
+- Needs an app build that includes `StemPlayer`; older builds show a notice instead of playing.
+
+The drum-style and sound builders below (`hooks/useAiLab.ts`, `abai/drums.py`, `abai/sounds.py`) are not shown in the app until their step is retested.
+
+### Earlier AI Lab (v0.4, parked)
 
 The AI LAB page sends a song to the ArrangerBox AI server (`server/`, Modal GPU) and loads the results into the engine.
 
