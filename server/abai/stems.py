@@ -46,7 +46,7 @@ KEEP_DAYS = 30  # lossless copies kept on the server for exact note timing (step
 def write_flac(path: str, x: np.ndarray) -> None:
     import soundfile as sf
 
-    sf.write(path, np.clip(x.T, -1.0, 1.0), SR, format="FLAC", subtype="PCM_16")
+    sf.write(path, np.clip(x.T, -1.0, 1.0), SR, format="FLAC", subtype="PCM_24")  # Demucs float output, 24-bit: nothing audible or measurable lost
 
 
 def extract_stems(path: str, name: str, out: str, report: Report, keep_dir: str | None = None) -> dict:

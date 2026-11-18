@@ -60,7 +60,7 @@ One **AI** tab. Each step of the pipeline is brought back only after it has been
   - The real server stems line up with the original at lag 0, correlation 0.9985.
   - `server/tests/e2e.mjs <url> stems` passes against the deployed API.
 - Needs an app build that includes `StemPlayer`; older builds show a notice instead of playing.
-- The stems job also keeps lossless FLAC copies of the stems on the server for 30 days (`/data/stems/<job>`), because MP3 smears attacks (step 2 reads these).
+- The stems job also keeps Demucs's own output for every stem on the server for 30 days, as 24-bit FLAC (`/data/stems/<job>`; the app's MP3s are only for playback). Step 2 finds notes in these and step 2b will cut its samples from them, sending 24-bit WAV with loop points (the sampler's `loadWav` reads 24-bit and `smpl` loops). `crop.mp3` in a notes job is only for auditioning, since the stem player decodes MP3 only.
 
 **Step 2a: notes in a stretch of a stem (live, no new build needed).**
 - In the AI tab, pick a stem and a stretch (0.5–120 s; "Here" marks the playhead), then Find notes. The server (CPU) runs Basic Pitch on the stretch, drops overtone ghosts, and moves every note's start to the exact sample (`server/abai/onsets.py`). It returns `crop.mp3` and `notes.json`.
