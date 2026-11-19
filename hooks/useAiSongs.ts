@@ -68,6 +68,9 @@ function writeSaved(saved: Saved) {
   }
 }
 
+/** The stems the AI tab shows and plays. The others (piano, guitar, other) stay on the device but are kept silent. */
+export const SHOWN_STEMS = ["vocals", "drums", "bass"]
+
 /** Engine gains for the stem player: track 0 is the original, 1.. the stems. */
 export function stemGains(count: number, p: Pick<StemPlayerState, "mode" | "muted" | "solo">): number[] {
   return Array.from({ length: count }, (_, i) => {
@@ -137,7 +140,8 @@ export function useAiSongs() {
         return
       }
       const n = song.manifest.stems.length
-      const next: StemPlayerState = { songId: id, loading: false, error: null, mode: "stems", muted: new Array(n).fill(false), solo: null }
+      const muted = song.manifest.stems.map((t, i) => i > 0 && !SHOWN_STEMS.includes(t.key))
+      const next: StemPlayerState = { songId: id, loading: false, error: null, mode: "stems", muted, solo: null }
       playerRef.current = next
       setPlayer(next)
       applyGains(next)

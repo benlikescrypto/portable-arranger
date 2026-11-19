@@ -1,17 +1,17 @@
 import { useState } from "react"
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 
-import { FindNotes, NotesResults, NotesView } from "@/components/pro/pages/AiNotes"
 import { LcdButton, LcdHeader } from "@/components/pro/ui"
 import { Lcd } from "@/constants/theme"
 import { useAuth, type Auth } from "@/hooks/useAuth"
 import type { AiNotes } from "@/hooks/useAiNotes"
-import type { AiSong, AiSongs, SongJob } from "@/hooks/useAiSongs"
+import { SHOWN_STEMS, type AiSong, type AiSongs, type SongJob } from "@/hooks/useAiSongs"
 import { useTelemetry } from "@/lib/telemetry"
 
 /**
  * The AI tab. Built and checked one step at a time; step 1 is the stem split:
  * upload a song, Demucs separates it on the GPU server, and the stems play here in sync.
+ * For now only vocals, drums and bass are shown (SHOWN_STEMS); note finding (AiNotes) is parked.
  */
 
 const STEM_COLORS: Record<string, string> = {
@@ -60,8 +60,8 @@ export function AiPage({ ai, notes }: { ai: AiSongs; notes: AiNotes }) {
         ) : (
           <Section title="Song → Stems">
             <Text style={styles.hint}>
-              Step 1: pick a song. The GPU server splits it with Demucs into vocals, drums, bass, piano, guitar and other. Play them here, alone or
-              together, and compare with the original.
+              Pick a song. The GPU server splits it with Demucs, and you can play the vocals, drums and bass here, alone or together, and
+              compare with the original.
             </Text>
             <View style={styles.row}>
               <LcdButton label="Choose song…" primary disabled={!ai.configured || busy} onPress={() => void ai.pickAndRun()} style={styles.flex} />
@@ -97,9 +97,6 @@ export function AiPage({ ai, notes }: { ai: AiSongs; notes: AiNotes }) {
             <LcdButton label="Back to song" onPress={() => void notes.backToSong()} />
           </Section>
         ) : null}
-        <NotesView notes={notes} />
-        {loaded || notes.auditioning ? <FindNotes ai={ai} notes={notes} /> : null}
-        <NotesResults notes={notes} />
         <SongList ai={ai} />
       </ScrollView>
     </View>
@@ -181,11 +178,11 @@ function StemPlayer({ song, ai }: { song: AiSong; ai: AiSongs }) {
           ? "Playing the original song. Tap Stems to hear the separation."
           : p.solo != null
             ? `Solo: ${stems[p.solo]?.label}. Tap S again to hear every stem.`
-            : "Playing the stems added together. Mute (M) or solo (S) a stem to hear it alone."}
+            : "Playing vocals, drums and bass together. Mute (M) or solo (S) a stem to hear it alone."}
       </Text>
       <View style={{ gap: 6 }}>
         {stems.map((t, i) =>
-          i === 0 ? null : (
+          i === 0 || !SHOWN_STEMS.includes(t.key) ? null : (
             <View key={t.key} style={styles.stemRow}>
               <View style={[styles.swatch, { backgroundColor: STEM_COLORS[t.key] ?? Lcd.dim }]} />
               <View style={{ width: 70 }}>
@@ -200,9 +197,7 @@ function StemPlayer({ song, ai }: { song: AiSong; ai: AiSongs }) {
         )}
       </View>
       <Text style={styles.small}>
-        {`${m.model ?? "Demucs"} · ${fmtTime(m.duration)}${m.cut ? " (cut to the first 10 min)" : ""}${
-          m.residual_db != null ? ` · stems add up to the song within ${m.residual_db} dB` : ""
-        } · dB = loudness against the whole song`}
+        {`${m.model ?? "Demucs"} · ${fmtTime(m.duration)}${m.cut ? " (cut to the first 10 min)" : ""} · dB = loudness against the whole song`}
       </Text>
     </Section>
   )
@@ -251,7 +246,7 @@ function SongList({ ai }: { ai: AiSongs }) {
                 {s.name}
               </Text>
               <Text style={styles.small} numberOfLines={1}>
-                {`${fmtTime(s.manifest.duration)} · ${(s.manifest.stems?.length ?? 1) - 1} stems · ${new Date(s.created).toLocaleDateString()}`}
+                {`${fmtTime(s.manifest.duration)} · ${(s.manifest.stems ?? []).filter((t) => SHOWN_STEMS.includes(t.key)).length} stems · ${new Date(s.created).toLocaleDateString()}`}
               </Text>
             </View>
             <LcdButton label={on ? "● Open" : "Open"} primary={on} disabled={on || ai.player.loading || !ai.canPlay} onPress={() => void ai.open(s.id)} />

@@ -62,7 +62,9 @@ One **AI** tab. Each step of the pipeline is brought back only after it has been
 - Needs an app build that includes `StemPlayer`; older builds show a notice instead of playing.
 - The stems job also keeps Demucs's own output for every stem on the server for 30 days, as 24-bit FLAC (`/data/stems/<job>`; the app's MP3s are only for playback). Step 2 finds notes in these and step 2b will cut its samples from them, sending 24-bit WAV with loop points (the sampler's `loadWav` reads 24-bit and `smpl` loops). `crop.mp3` in a notes job is only for auditioning, since the stem player decodes MP3 only.
 
-**Step 2a: notes in a stretch of a stem (live, no new build needed).**
+**For now the AI tab is stems only (2026-11-19).** The owner felt AI-made sounds weren't good enough yet, so the tab shows only vocals, drums and bass (`SHOWN_STEMS` in `hooks/useAiSongs.ts`). Piano, guitar and other are still split and kept but stay muted and hidden. The note-finding UI below (step 2a) is hidden; its code and server endpoint remain, and step 2b is not started.
+
+**Step 2a (parked, hidden in the app): notes in a stretch of a stem.**
 - In the AI tab, pick a stem and a stretch (0.5–120 s; "Here" marks the playhead), then Find notes. The server (CPU) runs Basic Pitch on the stretch, drops overtone ghosts, and moves every note's start to the exact sample (`server/abai/onsets.py`). It returns `crop.mp3` and `notes.json`.
 - The app shows a piano roll (green = exact, amber = close estimate, blue = swell), a key map with each key's best take, and per note: start in ms, the cut point (on a zero crossing, before the start), Basic Pitch's error, attack type, how quiet it was before, and a zoomed 20 ms waveform with the start and cut marked. Tapping a note plays it from its cut. It also suggests Held or One-shot.
 - How a start is found:
