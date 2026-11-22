@@ -68,6 +68,7 @@ void Engine::prepare(float sr) {
     eqHighL.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f);
     eqHighR.setPeaking(sampleRate, 6500.0f, 0.8f, 1.8f);
     if (gmFont) tsf_set_output(gmFont, TSF_STEREO_INTERLEAVED, (int)sampleRate, -4.0f);
+    stems.prepare(sampleRate);
 }
 
 void Engine::noteOn(int ch, int note, int vel) {
@@ -130,6 +131,7 @@ float Engine::query(int what) const {
         case QStemPos: return stems.posShown.load();
         case QStemLen: return stems.lenShown.load();
         case QStemPlaying: return (float)stems.playingShown.load();
+        case QStemSpeed: return stems.speedShown.load();
         // Wraps at 2^24 so the float stays exact; the UI only compares with its last read.
         case QPressSeq: return (float)(pressSeq.load(std::memory_order_acquire) & 0xFFFFFF);
         default:
@@ -231,7 +233,8 @@ void Engine::handleControl(const MidiEvent& e) {
     switch (e.a) {
         case CmdStemPlay:
         case CmdStemSeek:
-        case CmdStemGain: stems.command(e.a, a, v); break;
+        case CmdStemGain:
+        case CmdStemSpeed: stems.command(e.a, a, v); break;
         case CmdChannelGain: chanGain[a & 15] = clampf(v, 0.0f, 1.5f); break;
         case CmdChannelPan: chanPan[a & 15] = clampf(v, -1.0f, 1.0f); break;
         case CmdChannelMute:
@@ -1673,6 +1676,8 @@ void Engine::render(float* out, int frames) {
     StemSet* stemSet = stems.beginBlock();
     MidiEvent e;
     while (midi.pop(e)) handle(e);
+    // The stems for the whole block at once (the time-stretcher works in blocks).
+    stems.render(stemSet, frames, sampleRate);
 
     // Style fade in / out, stepped per block (SoundFont volumes update per block too).
     if (fadeLevel != fadeTarget) {
@@ -1747,7 +1752,7 @@ void Engine::render(float* out, int frames) {
         L = eqHighL.process(eqMidL.process(eqLowL.process(L)));
         R = eqHighR.process(eqMidR.process(eqLowR.process(R)));
         // AI stems go out as they are: no EQ or effects on them.
-        stems.mix(stemSet, L, R, sampleRate);
+        stems.mixAt(i, L, R);
         L *= mix.g[BusMaster];
         R *= mix.g[BusMaster];
         L = limiter.process(outDcL.process(L));

@@ -306,6 +306,8 @@ export function useAiSongs() {
   // Transport.
   const play = useCallback((on: boolean) => audio.control(EngineCmd.StemPlay, 0, 0, on ? 1 : 0), [])
   const seek = useCallback((seconds: number) => audio.control(EngineCmd.StemSeek, 0, 0, Math.max(0, seconds)), [])
+  /** Playback speed 0.5..1; slower keeps the pitch (and so the notes). */
+  const setSpeed = useCallback((speed: number) => audio.control(EngineCmd.StemSpeed, 0, 0, speed), [])
   const setMode = useCallback((mode: ListenMode) => updatePlayer((p) => ({ ...p, mode })), [updatePlayer])
   const toggleMute = useCallback(
     (i: number) => updatePlayer((p) => ({ ...p, mode: "stems", solo: null, muted: p.muted.map((m, k) => (k === i ? !m : m)) })),
@@ -352,6 +354,7 @@ export function useAiSongs() {
     release,
     play,
     seek,
+    setSpeed,
     setMode,
     toggleMute,
     toggleSolo,

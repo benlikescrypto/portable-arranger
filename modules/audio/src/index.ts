@@ -262,6 +262,7 @@ export const EngineCmd = {
   StemPlay: 23,
   StemSeek: 24,
   StemGain: 25,
+  StemSpeed: 26,
 } as const
 
 /** Mirrors pa::EngineQuery. */
@@ -285,5 +286,6 @@ export const EngineQuery = {
   /** Count of keyboard note-ons; Press + (n % 8) holds the sounding note of press n. */
   PressSeq: 38,
   Press: 39,
-  Count: 47,
+  StemSpeed: 47,
+  Count: 48,
 } as const

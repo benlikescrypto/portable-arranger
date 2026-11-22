@@ -81,7 +81,7 @@ function NowNote({ doc, color }: { doc: LearnDoc; color: string }) {
     let raf = 0
     const tick = () => {
       const t = telemetryNow()
-      const ahead = t.stemPlaying && t.at > 0 ? Math.min(0.1, (performance.now() - t.at) / 1000) : 0
+      const ahead = t.stemPlaying && t.at > 0 ? Math.min(0.1, (performance.now() - t.at) / 1000) * (t.stemSpeed || 1) : 0
       const next = shownAt(doc, t.stemPos + ahead)
       if (next !== last) {
         last = next

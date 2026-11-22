@@ -1,6 +1,7 @@
 #include "../Dsp.h"
 #include "../Engine.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -962,6 +963,80 @@ int main() {
         e->clearStems();
         run(4800);
         expect(e->query(pa::QStemLen) == 0.0f, "stems_clear");
+    }
+
+    // AI stems slowed down (Signalsmith Stretch): half speed takes twice as long, keeps the
+    // pitch, shows the position being heard, pauses and resumes in place, and goes back to
+    // full speed cleanly.
+    {
+        std::string here = __FILE__;
+        here = here.substr(0, here.find_last_of("/\\"));
+        auto e = std::make_unique<pa::Engine>();
+        e->prepare(48000.0f);
+        char rep[256];
+        expect(e->loadStems((here + "/fixtures/stem_a440.mp3").c_str(), rep, sizeof(rep)) == 1, "stems_speed_load");
+        std::vector<float> b((size_t)48000 * 2 * 4);
+        auto run = [&](int frames, int from = 0) {
+            for (int off = 0; off < frames; off += 256) e->render(b.data() + (size_t)(from + off) * 2, std::min(256, frames - off));
+        };
+        auto tone = [&](float f, int from, int count) {  // Goertzel power at f (left channel)
+            const float w = 2.0f * 3.14159265f * f / 48000.0f, c = 2.0f * std::cos(w);
+            float s1 = 0, s2 = 0;
+            for (int i = 0; i < count; ++i) {
+                const float s0 = b[(size_t)(from + i) * 2] + c * s1 - s2;
+                s2 = s1;
+                s1 = s0;
+            }
+            return std::sqrt(std::max(0.0f, s1 * s1 + s2 * s2 - c * s1 * s2)) / (float)count;
+        };
+        e->control(pa::CmdStemGain, 0, 0, 1.0f);
+        e->control(pa::CmdStemSpeed, 0, 0, 0.5f);
+        e->control(pa::CmdStemPlay, 0, 0, 1.0f);
+        run(4800);  // the speed applies before any sound (nothing was playing)
+        expect(std::fabs(e->query(pa::QStemSpeed) - 0.5f) < 1e-6f, "stems_speed_reported");
+        const auto t0 = std::chrono::steady_clock::now();
+        run(48000, 4800);  // 1 s of output
+        const double cpu = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        const float pos = e->query(pa::QStemPos);
+        const float a = tone(440, 24000, 24000), lo = tone(220, 24000, 24000), hi = tone(880, 24000, 24000);
+        bool finite = true;
+        float pk = 0.0f;
+        for (size_t i = 0; i < (size_t)52800 * 2; ++i) {
+            finite = finite && std::isfinite(b[i]);
+            pk = std::max(pk, std::fabs(b[i]));
+        }
+        std::printf("  half speed: pos %.3f s after 1.1 s, 440 Hz %.3f (220 Hz %.4f, 880 Hz %.4f), peak %.2f, %.1f ms CPU per s\n", pos, a,
+                    lo, hi, pk, cpu * 1000.0);
+        expect(pos > 0.45f && pos < 0.56f, "stems_half_speed_takes_twice_as_long");
+        expect(a > 0.05f && lo < a * 0.05f && hi < a * 0.05f, "stems_half_speed_keeps_the_pitch");
+        expect(finite && pk < 1.0f, "stems_half_speed_clean_output");
+        // Pause, wait, resume: it carries on from what was heard.
+        e->control(pa::CmdStemPlay, 0, 0, 0.0f);
+        run(4800);
+        const float paused = e->query(pa::QStemPos);
+        run(24000);
+        expect(std::fabs(e->query(pa::QStemPos) - paused) < 1e-4f && e->query(pa::QStemPlaying) == 0.0f, "stems_half_speed_pause_holds");
+        e->control(pa::CmdStemPlay, 0, 0, 1.0f);
+        run(240);
+        const float resumed = e->query(pa::QStemPos);
+        std::printf("  paused at %.3f s, shown %.3f s just after Play\n", paused, resumed);
+        expect(std::fabs(resumed - paused) < 0.06f, "stems_half_speed_resume_in_place");
+        run(24000);
+        const float later = e->query(pa::QStemPos);
+        expect(later - resumed > 0.2f && later - resumed < 0.3f, "stems_half_speed_after_resume");
+        // Back to full speed while playing: fades, then plays at 1x from where it was heard.
+        e->control(pa::CmdStemSpeed, 0, 0, 1.0f);
+        run(480);
+        const float switched = e->query(pa::QStemPos);
+        run(9600);
+        const float after = e->query(pa::QStemPos);
+        std::printf("  to full speed: %.3f s -> %.3f s over 0.2 s (speed %.2f)\n", switched, after, e->query(pa::QStemSpeed));
+        expect(std::fabs(switched - later) < 0.06f && std::fabs((after - switched) - 0.2f) < 0.02f && e->query(pa::QStemSpeed) == 1.0f,
+               "stems_back_to_full_speed");
+        // Out of range values are held to 0.5..1.
+        e->control(pa::CmdStemSpeed, 0, 0, 0.1f);
+        run(480);
+        expect(std::fabs(e->query(pa::QStemSpeed) - 0.5f) < 1e-6f, "stems_speed_clamped");
     }
 
     // AI Learn reads the keys you press: a count and a ring of the last 8 sounding notes.

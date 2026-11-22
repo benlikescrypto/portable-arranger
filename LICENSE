@@ -28,6 +28,8 @@ licenses, which this notice does not change. Their licenses are kept beside them
   modules/audio/factory/SWIFT_F0.LICENSE.txt
 - GeneralUser GS sound bank (modules/audio/factory/GeneralUser-GS.sf2):
   modules/audio/factory/LICENSE.txt
+- Signalsmith Stretch and Signalsmith Linear (time-stretching, MIT):
+  modules/audio/cpp/third_party/signalsmith/STRETCH.LICENSE.txt and LINEAR.LICENSE.txt
 - TinySoundFont and other bundled libraries (modules/audio/cpp/third_party/):
   modules/audio/cpp/third_party/
 - Factory sound sources: assets/factory/LICENSE_MANIFEST.md

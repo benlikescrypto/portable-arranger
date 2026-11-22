@@ -150,6 +150,7 @@ enum EngineCmd : int {
     CmdStemPlay = 23,      // v = 1 play, 0 pause (AI stems, see StemPlayer)
     CmdStemSeek = 24,      // v = seconds
     CmdStemGain = 25,      // a = stem 0..7, v = gain 0..2
+    CmdStemSpeed = 26,     // v = playback speed 0.5..1, pitch kept (time-stretched)
 };
 
 // Engine::query() values for the UI.
@@ -172,7 +173,8 @@ enum EngineQuery : int {
     QStemLevel = 30, // QStemLevel + i: recent peak of stem i (8 entries)
     QPressSeq = 38,  // count of keyboard note-ons (MIDI in and the on-screen keys)
     QPress = 39,     // QPress + (n % 8): the sounding note of press n (8 entries, for AI Learn)
-    QCount = 47,
+    QStemSpeed = 47, // stem player speed 0.5..1
+    QCount = 48,
 };
 
 template <size_t N>

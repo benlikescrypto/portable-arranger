@@ -172,6 +172,7 @@ function StemPlayer({ song, ai }: { song: AiSong; ai: AiSongs }) {
         <Clock duration={m.duration} />
       </View>
       <Scrubber duration={m.duration} onSeek={ai.seek} />
+      <SpeedRow ai={ai} />
       <View style={styles.row}>
         <LcdButton label="Original" primary={p.mode === "original"} onPress={() => ai.setMode("original")} style={styles.flex} />
         <LcdButton label="Stems" primary={p.mode === "stems"} onPress={() => ai.setMode("stems")} style={styles.flex} />
@@ -205,6 +206,22 @@ function StemPlayer({ song, ai }: { song: AiSong; ai: AiSongs }) {
         } · dB = loudness against the whole song`}
       </Text>
     </Section>
+  )
+}
+
+const SPEEDS = [0.5, 0.6, 0.75, 0.85, 1]
+
+/** Slow the song down to follow it: the pitch stays, so the notes stay the same. */
+function SpeedRow({ ai }: { ai: AiSongs }) {
+  const speed = useTelemetry((t) => Math.round(t.stemSpeed * 100) / 100)
+  if (!speed) return null // this app build cannot change the speed yet
+  return (
+    <View style={styles.row}>
+      <Text style={[styles.small, { width: 42 }]}>Speed</Text>
+      {SPEEDS.map((v) => (
+        <LcdButton key={v} label={`${Math.round(v * 100)}%`} primary={Math.abs(speed - v) < 0.01} onPress={() => ai.setSpeed(v)} style={styles.flex} />
+      ))}
+    </View>
   )
 }
 
