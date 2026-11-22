@@ -15,6 +15,8 @@ Pod::Spec.new do |s|
   s.source         = { git: '' }
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
+  # Runs the SwiftF0 pitch model (factory/swift_f0.onnx) for AI Learn.
+  s.dependency 'onnxruntime-objc', '1.30.0'
   s.frameworks     = 'AudioToolbox', 'AVFoundation', 'Accelerate'
   s.libraries      = 'z'
   s.pod_target_xcconfig = {
@@ -34,6 +36,6 @@ Pod::Spec.new do |s|
   s.private_header_files = 'cpp/*.{h,hpp}'
   s.exclude_files = 'cpp/tests/**/*'
   s.resource_bundles = {
-    'ArrangerBoxAudio' => ['factory/GeneralUser-GS.sf2', 'factory/LICENSE.txt']
+    'ArrangerBoxAudio' => ['factory/GeneralUser-GS.sf2', 'factory/LICENSE.txt', 'factory/swift_f0.onnx', 'factory/SWIFT_F0.LICENSE.txt']
   }
 end

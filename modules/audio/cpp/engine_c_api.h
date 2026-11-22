@@ -77,6 +77,19 @@ int arrangerbox_load_soundfont(const char* path);
 int arrangerbox_load_stems(const char* paths, char* report, int reportLen);
 void arrangerbox_clear_stems(void);
 
+// SwiftF0 note finding on a stem (PitchTrack.cpp). The platform runs the ONNX model:
+//   id = open(mp3) ; for w < windows(id): window(id, w, buf) -> model -> put(id, w, pitch, conf)
+//   json = finish(id, holdMs) ; free(json)
+// open() returns 0 on failure (reason in the report). finish() frees the job; close() drops it.
+int arrangerbox_f0_open(const char* path, char* report, int reportLen);
+int arrangerbox_f0_windows(int id);
+int arrangerbox_f0_window_size(int id, int w);
+int arrangerbox_f0_window(int id, int w, float* out, int cap);
+int arrangerbox_f0_put(int id, int w, const float* pitch, const float* conf, int frames);
+char* arrangerbox_f0_finish(int id, float pitchHoldMs);
+void arrangerbox_f0_close(int id);
+void arrangerbox_f0_free(char* s);
+
 #ifdef __cplusplus
 }
 #endif

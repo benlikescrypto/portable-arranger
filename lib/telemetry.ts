@@ -31,6 +31,8 @@ export type Telemetry = {
   stemLen: number
   stemPlaying: boolean
   stemLevels: number[]
+  /** Keyboard note-ons so far (MIDI in and the on-screen keys); see onKeyPress. */
+  pressSeq: number
 }
 
 const empty: Telemetry = {
@@ -57,6 +59,7 @@ const empty: Telemetry = {
   stemLen: 0,
   stemPlaying: false,
   stemLevels: new Array(8).fill(0),
+  pressSeq: 0,
 }
 
 let current: Telemetry = empty
@@ -98,7 +101,9 @@ function poll() {
     stemLen: q[EngineQuery.StemLen] ?? 0,
     stemPlaying: (q[EngineQuery.StemPlaying] ?? 0) > 0.5,
     stemLevels: q.length > EngineQuery.StemLevel ? q.slice(EngineQuery.StemLevel, EngineQuery.StemLevel + 8) : empty.stemLevels,
+    pressSeq: q[EngineQuery.PressSeq] ?? current.pressSeq,
   }
+  emitPresses(q)
   current = next
   listeners.forEach((fn) => fn())
 }
@@ -135,4 +140,38 @@ export function useBlink() {
 
 export function telemetryNow() {
   return snapshot()
+}
+
+// Key presses (AI Learn): the engine keeps the last 8 note-ons in a ring and counts them.
+const pressListeners = new Set<(note: number) => void>()
+let lastPressSeq: number | null = null
+
+function emitPresses(q: number[]) {
+  if (q.length <= EngineQuery.Press + 7) return
+  const seq = q[EngineQuery.PressSeq] ?? 0
+  if (lastPressSeq == null || seq < lastPressSeq) {
+    lastPressSeq = seq // first read, or the counter wrapped: nothing new to report
+    return
+  }
+  const fresh = Math.min(8, seq - lastPressSeq)
+  for (let n = seq - fresh; n < seq; n++) {
+    const note = q[EngineQuery.Press + (n % 8)] ?? -1
+    if (note >= 0) pressListeners.forEach((fn) => fn(note))
+  }
+  lastPressSeq = seq
+}
+
+/** Calls `fn` with the sounding note of every key pressed (polled with the display, ~30 Hz). */
+export function onKeyPress(fn: (note: number) => void) {
+  pressListeners.add(fn)
+  const unsubscribe = subscribe(() => {})
+  return () => {
+    pressListeners.delete(fn)
+    unsubscribe()
+  }
+}
+
+/** Calls `fn` after every poll (~30 Hz) while subscribed; for logic, not rendering. */
+export function onTelemetry(fn: (t: Telemetry) => void) {
+  return subscribe(() => fn(current))
 }

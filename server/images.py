@@ -54,7 +54,7 @@ def _download_models():
 
     from demucs.pretrained import get_model
 
-    for name in ("htdemucs", "htdemucs_6s"):
+    for name in ("htdemucs", "htdemucs_ft", "htdemucs_6s"):
         get_model(name)
     _beat_this_checkpoint()
     from beat_this.inference import Audio2Beats

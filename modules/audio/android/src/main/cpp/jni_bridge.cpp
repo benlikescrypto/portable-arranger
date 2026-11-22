@@ -2,6 +2,7 @@
 
 #include <jni.h>
 
+#include <algorithm>
 #include <string>
 
 static std::string jstr(JNIEnv* env, jstring value) {
@@ -304,3 +305,53 @@ Java_expo_modules_arrangerboxmidi_MidiNative_nativeContinue(JNIEnv*, jclass) {
 }
 
 }
+
+// SwiftF0 note finding (PitchTrack.cpp). Kotlin runs the ONNX model; see SwiftF0Runner.kt.
+extern "C" {
+
+JNIEXPORT jint JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeF0Open(JNIEnv* env, jclass, jstring path, jobjectArray reportOut) {
+    const auto p = jstr(env, path);
+    char buf[256];
+    const int id = arrangerbox_f0_open(p.c_str(), buf, sizeof(buf));
+    if (reportOut && env->GetArrayLength(reportOut) > 0) env->SetObjectArrayElement(reportOut, 0, jutf(env, buf));
+    return id;
+}
+JNIEXPORT jint JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeF0Windows(JNIEnv*, jclass, jint id) {
+    return arrangerbox_f0_windows(id);
+}
+JNIEXPORT jfloatArray JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeF0Window(JNIEnv* env, jclass, jint id, jint w) {
+    const int n = arrangerbox_f0_window_size(id, w);
+    jfloatArray out = env->NewFloatArray(n > 0 ? n : 0);
+    if (!out || n <= 0) return out;
+    jfloat* data = env->GetFloatArrayElements(out, nullptr);
+    const int got = arrangerbox_f0_window(id, w, data, n);
+    env->ReleaseFloatArrayElements(out, data, 0);
+    return got == n ? out : env->NewFloatArray(0);
+}
+JNIEXPORT jint JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeF0Put(JNIEnv* env, jclass, jint id, jint w, jfloatArray pitch, jfloatArray conf) {
+    if (!pitch || !conf) return 0;
+    const int n = std::min(env->GetArrayLength(pitch), env->GetArrayLength(conf));
+    jfloat* p = env->GetFloatArrayElements(pitch, nullptr);
+    jfloat* c = env->GetFloatArrayElements(conf, nullptr);
+    const int put = arrangerbox_f0_put(id, w, p, c, n);
+    env->ReleaseFloatArrayElements(conf, c, JNI_ABORT);
+    env->ReleaseFloatArrayElements(pitch, p, JNI_ABORT);
+    return put;
+}
+JNIEXPORT jstring JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeF0Finish(JNIEnv* env, jclass, jint id, jfloat holdMs) {
+    char* s = arrangerbox_f0_finish(id, holdMs);
+    jstring out = jutf(env, s);
+    arrangerbox_f0_free(s);
+    return out;
+}
+JNIEXPORT void JNICALL
+Java_expo_modules_arrangerboxaudio_EngineNative_nativeF0Close(JNIEnv*, jclass, jint id) {
+    arrangerbox_f0_close(id);
+}
+
+}  // extern "C"

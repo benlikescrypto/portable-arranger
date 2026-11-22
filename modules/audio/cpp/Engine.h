@@ -170,7 +170,9 @@ enum EngineQuery : int {
     QStemLen = 28,   // loaded stems length, seconds (0 none)
     QStemPlaying = 29,
     QStemLevel = 30, // QStemLevel + i: recent peak of stem i (8 entries)
-    QCount = 38,
+    QPressSeq = 38,  // count of keyboard note-ons (MIDI in and the on-screen keys)
+    QPress = 39,     // QPress + (n % 8): the sounding note of press n (8 entries, for AI Learn)
+    QCount = 47,
 };
 
 template <size_t N>
@@ -494,6 +496,9 @@ private:
     int8_t ensNotes[128][3];
     int8_t manualBassNote[128];
     std::atomic<int> metroBeatShown{-1};
+    // Recent key presses for the display (AI Learn checks the notes you play).
+    std::atomic<int> pressNote[8]{};
+    std::atomic<uint32_t> pressSeq{0};
     mutable std::atomic<float> peakL{0.0f}, peakR{0.0f};
     std::atomic<float> activity[16];
     std::atomic<int> voiceCount{0};

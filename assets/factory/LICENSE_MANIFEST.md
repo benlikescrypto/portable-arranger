@@ -6,6 +6,8 @@
 | TinySoundFont (`modules/audio/cpp/third_party/tsf.h`) | TinySoundFont | https://github.com/schellingb/TinySoundFont | MIT | Yes | Copyright Bernhard Schelling / SFZero | Vendored header |
 | Factory patch names / GM mapping in `Factory.cpp` | ArrangerBox | this repository | Proprietary ArrangerBox | Yes, with the app | None required | Maps UI names onto GeneralUser GS GM programs |
 | Factory styles in `FactoryStyles.cpp` | ArrangerBox original MIDI arrangements | this repository | Proprietary ArrangerBox | Yes, with the app | None required | Original patterns |
+| SwiftF0 pitch model (`modules/audio/factory/swift_f0.onnx`) | SwiftF0 v0.3.0 by Lars Nieradzik | https://github.com/lars76/swift-f0 | MIT, see `modules/audio/factory/SWIFT_F0.LICENSE.txt` | Yes, bundled with the app and its license | Copyright Lars Nieradzik | `pitch` output cast to float32 (weights unchanged) |
+| ONNX Runtime (Android AAR / iOS pod, not vendored) | Microsoft ONNX Runtime | https://github.com/microsoft/onnxruntime | MIT | Yes | Copyright Microsoft Corporation | None |
 
 ## Approved external sources (not bundled here)
 

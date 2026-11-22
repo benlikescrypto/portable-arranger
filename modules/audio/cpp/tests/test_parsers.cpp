@@ -964,6 +964,28 @@ int main() {
         expect(e->query(pa::QStemLen) == 0.0f, "stems_clear");
     }
 
+    // AI Learn reads the keys you press: a count and a ring of the last 8 sounding notes.
+    {
+        auto e = std::make_unique<pa::Engine>();
+        e->prepare(48000.0f);
+        std::vector<float> buf(256 * 2);
+        const float seq0 = e->query(pa::QPressSeq);
+        for (int i = 0; i < 10; ++i) {
+            e->noteOn(0, 60 + i, 100);
+            e->render(buf.data(), 256);
+            e->noteOff(0, 60 + i);
+        }
+        e->render(buf.data(), 256);
+        const int seq = (int)e->query(pa::QPressSeq);
+        bool ring = true;
+        for (int n = seq - 8; n < seq; ++n) ring = ring && (int)e->query(pa::QPress + n % 8) == 60 + n;
+        expect(seq0 == 0.0f && seq == 10 && ring, "key_presses_counted_with_their_notes");
+        e->setTranspose(2);
+        e->noteOn(0, 60, 100);
+        e->render(buf.data(), 256);
+        expect((int)e->query(pa::QPress + 10 % 8) == 62, "key_press_reports_the_transposed_note");
+    }
+
     // Real AI-server stems (AB_AI_STEMS="original.mp3;vocals.mp3;…" from server/tests/e2e.mjs stems):
     // they decode, line up with each other, and the stems added together sound like the original.
     if (const char* aiStems = std::getenv("AB_AI_STEMS")) {

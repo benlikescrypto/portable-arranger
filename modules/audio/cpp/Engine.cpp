@@ -130,7 +130,10 @@ float Engine::query(int what) const {
         case QStemPos: return stems.posShown.load();
         case QStemLen: return stems.lenShown.load();
         case QStemPlaying: return (float)stems.playingShown.load();
+        // Wraps at 2^24 so the float stays exact; the UI only compares with its last read.
+        case QPressSeq: return (float)(pressSeq.load(std::memory_order_acquire) & 0xFFFFFF);
         default:
+            if (what >= QPress && what < QPress + 8) return (float)pressNote[what - QPress].load(std::memory_order_relaxed);
             if (what >= QActivity && what < QActivity + 16) return activity[what - QActivity].load();
             if (what >= QStemLevel && what < QStemLevel + kMaxStems) return stems.level[what - QStemLevel].load();
             return 0.0f;
@@ -998,6 +1001,12 @@ void Engine::handle(const MidiEvent& e) {
             if (raw < 0 || raw > 127) return;
             const int vel = curveVelocity(e.c);
             held[ch & 15][raw] = 1;
+            {
+                // Publish the press (note first, then the count the UI watches).
+                const uint32_t n = pressSeq.load(std::memory_order_relaxed);
+                pressNote[n % 8].store(std::max(0, std::min(127, raw + transpose + octave * 12)), std::memory_order_relaxed);
+                pressSeq.store(n + 1, std::memory_order_release);
+            }
             const bool left = splitOn && raw <= splitNote;
             const bool chordKey = chordScan != 2 && (chordScan == 1 || !splitOn || left);
             if (chordKey) detectChord();

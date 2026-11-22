@@ -36,4 +36,6 @@ android {
 
 dependencies {
   implementation "com.google.oboe:oboe:1.9.0"
+  // Runs the SwiftF0 pitch model (factory/swift_f0.onnx) for AI Learn.
+  implementation "com.microsoft.onnxruntime:onnxruntime-android:1.30.0"
 }

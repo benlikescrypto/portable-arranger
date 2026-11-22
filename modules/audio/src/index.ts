@@ -64,6 +64,7 @@ type AudioNative = {
   loadAbStyle?: (path: string) => Promise<string>
   loadStems?: (paths: string) => Promise<string>
   clearStems?: () => Promise<void>
+  findNotes?: (path: string, fmin: number, fmax: number, holdMs: number) => Promise<string>
 }
 
 const native = requireOptionalNativeModule<AudioNative>("ArrangerBoxAudio")
@@ -217,6 +218,19 @@ export const audio = {
   clearStems() {
     return native?.clearStems ? native.clearStems() : Promise.resolve()
   },
+  /** True when this app build runs SwiftF0 on the device (AI Learn). */
+  hasNoteFinder(): boolean {
+    return native?.findNotes != null
+  },
+  /**
+   * SwiftF0 note finding on one stem MP3, on the device. Pitches between fmin and fmax Hz;
+   * pitchHoldMs is SwiftF0's segment_notes penalty (higher gives fewer, longer notes).
+   * Returns JSON: { ok: 1, seconds, hop, notes: [start, end, midi][], line: midiCents[] } or { ok: 0, reason }.
+   */
+  findNotes(path: string, fmin = 46.875, fmax = 2093.75, pitchHoldMs = 80) {
+    const find = native?.findNotes
+    return find ? find(path, fmin, fmax, pitchHoldMs) : Promise.resolve('{"ok":0,"reason":"this app build has no note finder"}')
+  },
 }
 
 export default audio
@@ -268,5 +282,8 @@ export const EngineQuery = {
   StemLen: 28,
   StemPlaying: 29,
   StemLevel: 30,
-  Count: 38,
+  /** Count of keyboard note-ons; Press + (n % 8) holds the sounding note of press n. */
+  PressSeq: 38,
+  Press: 39,
+  Count: 47,
 } as const

@@ -13,7 +13,12 @@ import numpy as np
 
 from .common import SR, Report, db, decode, rms, separate
 
-MODEL = "htdemucs_6s"
+# htdemucs_ft: the default Demucs v4 (htdemucs, 9.0 dB SDR on MUSDB18-HQ) fine-tuned once per
+# stem, so each of vocals, drums, bass and other comes from its own specialist model. The
+# Demucs authors rate it a bit better than htdemucs at four times the compute (well under a
+# minute per song on the GPU). htdemucs_6s adds piano and guitar, but its piano bleeds badly
+# ("not working great", Demucs README), so the app sticks to four clean stems.
+MODEL = "htdemucs_ft"
 MAX_SECONDS = 600.0  # the app holds every track in RAM: about 70 MB per minute of song
 BITRATE = "320k"
 LABELS = {
@@ -25,6 +30,7 @@ LABELS = {
     "guitar": "Guitar",
     "other": "Other",
 }
+# Display order; a model's stems outside this list follow in its own order.
 ORDER = ("vocals", "drums", "bass", "piano", "guitar", "other")
 
 
@@ -58,7 +64,7 @@ def extract_stems(path: str, name: str, out: str, report: Report, keep_dir: str 
     report("decode", 0.03, "Reading the song")
     x = decode(path, max_seconds=MAX_SECONDS)
     duration = x.shape[1] / SR
-    report("separate", 0.1, f"Separating the instruments (Demucs {MODEL})")
+    report("separate", 0.1, f"Separating vocals, drums, bass and other (Demucs {MODEL})")
     stems = separate(x, MODEL)
     report("encode", 0.75, "Saving the stems")
     song_rms = rms(x)
@@ -68,7 +74,8 @@ def extract_stems(path: str, name: str, out: str, report: Report, keep_dir: str 
     residual = residual - residual.mean(axis=1, keepdims=True)
     tracks = []
     files = []
-    for i, key in enumerate(("original",) + ORDER):
+    order = [k for k in ORDER if k in stems] + [k for k in stems if k not in ORDER]
+    for i, key in enumerate(["original"] + order):
         y = x if key == "original" else stems[key]
         fname = f"{key}.mp3"
         write_mp3(os.path.join(out, fname), y)
@@ -79,7 +86,7 @@ def extract_stems(path: str, name: str, out: str, report: Report, keep_dir: str 
         tracks.append(
             {
                 "key": key,
-                "label": LABELS[key],
+                "label": LABELS.get(key, key.title()),
                 "file": fname,
                 # How much of the song this stem carries, and its loudest point.
                 "rms_db": round(float(db(level)), 1),
@@ -87,7 +94,7 @@ def extract_stems(path: str, name: str, out: str, report: Report, keep_dir: str 
                 "peak": round(float(np.abs(y).max()), 3),
             }
         )
-        report("encode", 0.75 + 0.22 * (i + 1) / (len(ORDER) + 1), f"Saved {LABELS[key]}")
+        report("encode", 0.75 + 0.22 * (i + 1) / (len(order) + 1), f"Saved {LABELS.get(key, key)}")
     return {
         "kind": "stems",
         "name": name,

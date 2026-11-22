@@ -29,6 +29,7 @@ import { SongBookPage } from "@/components/pro/pages/SongBookPage"
 import { StylePlayPage } from "@/components/pro/pages/StylePlayPage"
 import { HwButton, Meter } from "@/components/pro/ui"
 import { Hw, noteName } from "@/constants/theme"
+import { useAiLearn } from "@/hooks/useAiLearn"
 import { useAiNotes } from "@/hooks/useAiNotes"
 import { useAiSongs } from "@/hooks/useAiSongs"
 import { useArranger } from "@/hooks/useArranger"
@@ -61,6 +62,7 @@ export function ProScreen() {
   const perf = usePerformance(vm)
   const ai = useAiSongs()
   const aiNotes = useAiNotes(ai)
+  const aiLearn = useAiLearn(ai)
   const s = vm.state
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
@@ -159,7 +161,7 @@ export function ProScreen() {
       case "fx":
         return <EffectsPage vm={vm} perf={perf} />
       case "ai":
-        return <AiPage ai={ai} notes={aiNotes} />
+        return <AiPage ai={ai} notes={aiNotes} learn={aiLearn} />
       case "global":
         return <GlobalPage vm={vm} perf={perf} />
       default:

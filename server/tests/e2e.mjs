@@ -1,7 +1,7 @@
 // End-to-end test of the deployed API, the same calls the app makes:
 // health, auth, demo download, multipart upload, polling, result download, delete.
 //   node server/tests/e2e.mjs <api url> [stems|notes|drums|sounds|both|all] [out dir]   (both = drums + sounds)
-// notes: a stems job, then notes in a stretch of its piano stem, from the server's lossless copy
+// notes: a stems job, then notes in a stretch of its other stem (the demo keys; htdemucs_ft has no piano stem), from the server's lossless copy
 // (source=<stems job>) and from the downloaded MP3 (the fallback; never "exact").
 // Then the C++ host test plays the downloaded files:
 //   AB_AI_STYLE=<out>/drums/<name>.abstyle AB_AI_SFZ="<a.sfz>;<b.sfz>" AB_AI_STEMS="<a.mp3>;…" test_engine
@@ -108,21 +108,21 @@ async function run(kind, demo, name, opts = {}) {
 }
 
 async function notesFrom(stems) {
-  const window = { start: 6, end: 36, stem: "piano", mode: "" }
+  const window = { start: 6, end: 36, stem: "other", mode: "" }
   const gone = new FormData()
   for (const [k, v] of Object.entries({ kind: "notes", name: "x", ...window, source: "0000000000000000" })) gone.append(k, String(v))
   const r410 = await fetch(`${url}/v1/jobs`, { method: "POST", headers: auth, body: gone })
   check(r410.status === 410, "notes: unknown lossless source without a file is refused", `${r410.status}`)
   const lossless = await run("notes", null, "Piano – Ноты", { label: "notes-lossless", fields: { ...window, source: stems.id } })
-  const mp3 = readFileSync(join(stems.dir, "piano.mp3"))
-  const lossy = await run("notes", null, "Piano (MP3) – Ноты", { label: "notes-mp3", fields: window, file: mp3, fileName: "piano.mp3" })
+  const mp3 = readFileSync(join(stems.dir, "other.mp3"))
+  const lossy = await run("notes", null, "Piano (MP3) – Ноты", { label: "notes-mp3", fields: window, file: mp3, fileName: "other.mp3" })
   for (const r of [lossless, lossy]) {
     if (!r) continue
     const m = r.manifest
     const doc = JSON.parse(readFileSync(join(r.dir, "notes.json"), "utf8"))
     const n = doc.notes
     const tag = m.audio === "lossless" ? "notes-lossless" : "notes-mp3"
-    check(n.length >= 10 && n.length === m.count, `${tag}: notes found in 30 s of the piano stem`, `${n.length} notes, ${m.keys.length} keys, ${m.exact} exact`)
+    check(n.length >= 10 && n.length === m.count, `${tag}: notes found in 30 s of the other stem`, `${n.length} notes, ${m.keys.length} keys, ${m.exact} exact`)
     check(n.every((x) => x.cut <= x.t + 1e-9 && x.t >= -0.25 && x.t < 30 && x.wave.length === 120), `${tag}: every note has a start, a cut at or before it, and a zoomed waveform`)
     check(n.every((x, i) => i === 0 || n[i - 1].t <= x.t), `${tag}: notes are in time order`)
     check(["held", "oneshot"].includes(m.suggest.mode), `${tag}: suggests held or one-shot`, `${m.suggest.mode}: ${m.suggest.why}`)
@@ -161,7 +161,7 @@ if (want("sounds")) jobs.push(run("sounds", "demo_keys.mp3", "Clé Ünïcode –
 await Promise.all(jobs)
 if (out.stems) {
   const m = out.stems.manifest
-  check(m.stems.length === 7 && m.stems[0].key === "original" && m.files.every((f) => f.endsWith(".mp3")), "stems: original + 6 Demucs stems as MP3", m.stems.map((t) => `${t.label} ${t.share_db} dB`).join(", "))
+  check(m.stems.length === 5 && m.stems[0].key === "original" && m.model === "htdemucs_ft" && m.files.every((f) => f.endsWith(".mp3")), "stems: original + 4 Demucs (htdemucs_ft) stems as MP3", m.stems.map((t) => `${t.label} ${t.share_db} dB`).join(", "))
   // Demucs varies run to run on this demo: -19.2 to -20.6 dB seen.
   check(m.residual_db < -18, "stems: stems add back up to the song", `residual ${m.residual_db} dB`)
   check(m.lossless_days === 30 && m.source_lossless === false, "stems: lossless copies kept 30 days; an MP3 song is flagged", `${m.lossless_days} days, source_lossless ${m.source_lossless}`)

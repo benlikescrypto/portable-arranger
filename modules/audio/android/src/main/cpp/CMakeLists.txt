@@ -20,6 +20,7 @@ add_library(arranger_engine SHARED
         ${PA_CPP}/StyleFormat.cpp
         ${PA_CPP}/PcgParser.cpp
         ${PA_CPP}/StemPlayer.cpp
+        ${PA_CPP}/PitchTrack.cpp
         ${PA_CPP}/TsfHost.cpp)
 
 find_library(log-lib log)

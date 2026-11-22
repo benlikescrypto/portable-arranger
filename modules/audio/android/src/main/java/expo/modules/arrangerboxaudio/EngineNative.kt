@@ -53,4 +53,12 @@ internal object EngineNative {
   @JvmStatic external fun nativeLoadAbStyle(path: String): String
   @JvmStatic external fun nativeLoadStems(paths: String): String
   @JvmStatic external fun nativeClearStems()
+
+  // SwiftF0 note finding (PitchTrack.cpp); the model itself runs in SwiftF0Runner.
+  @JvmStatic external fun nativeF0Open(path: String, report: Array<String?>): Int
+  @JvmStatic external fun nativeF0Windows(id: Int): Int
+  @JvmStatic external fun nativeF0Window(id: Int, w: Int): FloatArray
+  @JvmStatic external fun nativeF0Put(id: Int, w: Int, pitch: FloatArray, conf: FloatArray): Int
+  @JvmStatic external fun nativeF0Finish(id: Int, holdMs: Float): String
+  @JvmStatic external fun nativeF0Close(id: Int)
 }

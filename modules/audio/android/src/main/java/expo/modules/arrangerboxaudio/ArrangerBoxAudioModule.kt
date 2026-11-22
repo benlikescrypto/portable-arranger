@@ -172,5 +172,12 @@ class ArrangerBoxAudioModule : Module() {
     AsyncFunction("clearStems") {
       EngineNative.nativeClearStems()
     }
+
+    // SwiftF0 on the device: the notes in one stem MP3, as JSON (see SwiftF0Runner).
+    AsyncFunction("findNotes") { path: String, fmin: Double, fmax: Double, holdMs: Double ->
+      val ctx = appContext.reactContext?.applicationContext
+        ?: return@AsyncFunction """{"ok":0,"reason":"no app context"}"""
+      SwiftF0Runner.findNotes(ctx, path, fmin.toFloat(), fmax.toFloat(), holdMs.toFloat())
+    }
   }
 }

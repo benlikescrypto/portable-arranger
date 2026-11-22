@@ -1,17 +1,19 @@
 import { useState } from "react"
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 
+import { LearnPanel } from "@/components/pro/pages/AiLearn"
 import { LcdButton, LcdHeader } from "@/components/pro/ui"
 import { Lcd } from "@/constants/theme"
 import { useAuth, type Auth } from "@/hooks/useAuth"
+import type { AiLearn } from "@/hooks/useAiLearn"
 import type { AiNotes } from "@/hooks/useAiNotes"
-import { SHOWN_STEMS, type AiSong, type AiSongs, type SongJob } from "@/hooks/useAiSongs"
+import type { AiSong, AiSongs, SongJob } from "@/hooks/useAiSongs"
 import { useTelemetry } from "@/lib/telemetry"
 
 /**
- * The AI tab. Built and checked one step at a time; step 1 is the stem split:
- * upload a song, Demucs separates it on the GPU server, and the stems play here in sync.
- * For now only vocals, drums and bass are shown (SHOWN_STEMS); note finding (AiNotes) is parked.
+ * The AI tab. Step 1 is the stem split: upload a song, Demucs (htdemucs_ft) separates it on
+ * the GPU server, and every stem plays here in sync. Learn (AiLearn) then finds a stem's notes
+ * on the device with SwiftF0 to play along with. Server note finding (AiNotes) stays parked.
  */
 
 const STEM_COLORS: Record<string, string> = {
@@ -35,7 +37,7 @@ const STEPS: { label: string; done: (j: SongJob) => boolean; now: (j: SongJob) =
   { label: "Download", done: (j) => j.phase === "done", now: (j) => j.phase === "downloading" },
 ]
 
-export function AiPage({ ai, notes }: { ai: AiSongs; notes: AiNotes }) {
+export function AiPage({ ai, notes, learn }: { ai: AiSongs; notes: AiNotes; learn: AiLearn }) {
   const auth = useAuth()
   const status = !ai.configured ? "Not set up" : ai.online == null ? "Connecting…" : ai.online ? "Server online" : "Server offline"
   const busy = !!ai.job && ai.job.phase !== "done" && ai.job.phase !== "error"
@@ -60,8 +62,8 @@ export function AiPage({ ai, notes }: { ai: AiSongs; notes: AiNotes }) {
         ) : (
           <Section title="Song → Stems">
             <Text style={styles.hint}>
-              Pick a song. The GPU server splits it with Demucs, and you can play the vocals, drums and bass here, alone or together, and
-              compare with the original.
+              Pick a song. The GPU server splits it with Demucs into vocals, drums, bass and other. Play them here, alone or together,
+              compare with the original, and learn a part's notes below.
             </Text>
             <View style={styles.row}>
               <LcdButton label="Choose song…" primary disabled={!ai.configured || busy} onPress={() => void ai.pickAndRun()} style={styles.flex} />
@@ -91,6 +93,7 @@ export function AiPage({ ai, notes }: { ai: AiSongs; notes: AiNotes }) {
           </Section>
         ) : null}
         {loaded ? <StemPlayer song={loaded} ai={ai} /> : null}
+        {loaded && !notes.auditioning ? <LearnPanel ai={ai} learn={learn} colors={STEM_COLORS} /> : null}
         {notes.auditioning && notes.song ? (
           <Section title={`${notes.song.name} · auditioning notes`}>
             <Text style={styles.hint}>The stem player holds the stretch you searched. Go back to hear the whole song.</Text>
@@ -178,11 +181,11 @@ function StemPlayer({ song, ai }: { song: AiSong; ai: AiSongs }) {
           ? "Playing the original song. Tap Stems to hear the separation."
           : p.solo != null
             ? `Solo: ${stems[p.solo]?.label}. Tap S again to hear every stem.`
-            : "Playing vocals, drums and bass together. Mute (M) or solo (S) a stem to hear it alone."}
+            : "Playing the stems added together. Mute (M) or solo (S) a stem to hear it alone."}
       </Text>
       <View style={{ gap: 6 }}>
         {stems.map((t, i) =>
-          i === 0 || !SHOWN_STEMS.includes(t.key) ? null : (
+          i === 0 ? null : (
             <View key={t.key} style={styles.stemRow}>
               <View style={[styles.swatch, { backgroundColor: STEM_COLORS[t.key] ?? Lcd.dim }]} />
               <View style={{ width: 70 }}>
@@ -197,7 +200,9 @@ function StemPlayer({ song, ai }: { song: AiSong; ai: AiSongs }) {
         )}
       </View>
       <Text style={styles.small}>
-        {`${m.model ?? "Demucs"} · ${fmtTime(m.duration)}${m.cut ? " (cut to the first 10 min)" : ""} · dB = loudness against the whole song`}
+        {`${m.model ?? "Demucs"} · ${fmtTime(m.duration)}${m.cut ? " (cut to the first 10 min)" : ""}${
+          m.residual_db != null ? ` · stems add up to the song within ${m.residual_db} dB` : ""
+        } · dB = loudness against the whole song`}
       </Text>
     </Section>
   )
@@ -246,7 +251,7 @@ function SongList({ ai }: { ai: AiSongs }) {
                 {s.name}
               </Text>
               <Text style={styles.small} numberOfLines={1}>
-                {`${fmtTime(s.manifest.duration)} · ${(s.manifest.stems ?? []).filter((t) => SHOWN_STEMS.includes(t.key)).length} stems · ${new Date(s.created).toLocaleDateString()}`}
+                {`${fmtTime(s.manifest.duration)} · ${(s.manifest.stems?.length ?? 1) - 1} stems · ${new Date(s.created).toLocaleDateString()}`}
               </Text>
             </View>
             <LcdButton label={on ? "● Open" : "Open"} primary={on} disabled={on || ai.player.loading || !ai.canPlay} onPress={() => void ai.open(s.id)} />

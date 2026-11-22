@@ -60,3 +60,9 @@ else()
         target_compile_definitions(test_set_load PRIVATE ARRANGERBOX_NO_ZLIB)
     endif()
 endif()
+
+# On-device SwiftF0 (PitchTrack.cpp) against the swift-f0 Python package; see test_pitch.cpp.
+add_executable(test_pitch
+        test_pitch.cpp
+        ${PA_CPP}/PitchTrack.cpp)
+target_include_directories(test_pitch PRIVATE ${PA_CPP})

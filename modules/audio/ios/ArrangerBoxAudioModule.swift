@@ -376,5 +376,10 @@ public class ArrangerBoxAudioModule: Module {
     AsyncFunction("clearStems") {
       arrangerbox_clear_stems()
     }
+
+    // SwiftF0 on the device: the notes in one stem MP3, as JSON (see SwiftF0Runner).
+    AsyncFunction("findNotes") { (path: String, fmin: Double, fmax: Double, holdMs: Double) -> String in
+      SwiftF0Runner.shared.findNotes(path: path, fmin: Float(fmin), fmax: Float(fmax), holdMs: Float(holdMs))
+    }
   }
 }

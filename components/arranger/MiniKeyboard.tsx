@@ -123,7 +123,7 @@ function JsMiniKeyboard({ onNoteOn, onNoteOff, startNote = 60, octaves = 2, styl
   )
 }
 
-function buildKeys(startNote: number, octaves: number) {
+export function buildKeys(startNote: number, octaves: number) {
   const end = startNote + octaves * 12
   const whites: number[] = []
   const blacks: { note: number; afterWhite: number }[] = []
