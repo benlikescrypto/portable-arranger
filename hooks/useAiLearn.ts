@@ -38,6 +38,9 @@ const RANGES: Record<string, { fmin: number; fmax: number; hold: number }> = {
 }
 const FULL = { fmin: 46.875, fmax: 2093.75, hold: 80 }
 
+/** The stem whose notes are shown. */
+export const NOTES_STEM = "other"
+
 /** Stems with notes to show (not the mix, not drums). */
 export function learnableStems(song: AiSong | null) {
   return (song?.manifest.stems ?? []).filter((t) => t.key !== "original" && t.key !== "drums")
@@ -144,7 +147,8 @@ export function useAiLearn(ai: AiSongs) {
     [available, find, song]
   )
 
-  // A new song: start on its vocals (or bass, or the first stem that is not silent).
+  // A new song: its notes always come from the "other" stem (the instruments that are not
+  // vocals, drums or bass). Songs separated before that stem existed use their first stem.
   useEffect(() => {
     if (!song) {
       findSeq.current++
@@ -153,8 +157,7 @@ export function useAiLearn(ai: AiSongs) {
       setStatus("idle")
       return
     }
-    const audible = stems.filter((t) => t.share_db > -40)
-    const first = audible.find((t) => t.key === "vocals") ?? audible.find((t) => t.key === "bass") ?? audible[0] ?? stems[0]
+    const first = stems.find((t) => t.key === NOTES_STEM) ?? stems[0]
     pick(first?.key ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [song?.id])

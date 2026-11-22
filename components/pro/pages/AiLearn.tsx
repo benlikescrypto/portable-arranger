@@ -23,23 +23,17 @@ export function LearnPanel({ learn, colors }: { learn: AiLearn; colors: Record<s
   const { doc, song } = learn
   if (!song) return null
   const color = colors[learn.stem ?? ""] ?? Lcd.tabOn
-  const stemLabel = learn.stems.find((t) => t.key === learn.stem)?.label ?? "stem"
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Notes</Text>
       {!learn.available ? (
         <Text style={[styles.hint, { color: "#FFE2B0" }]}>This app build cannot read notes yet. Install the new build.</Text>
       ) : (
-        <Text style={styles.hint}>Play the song to see the note being played. Pick which part to follow:</Text>
+        <Text style={styles.hint}>Play the song to see the note being played.</Text>
       )}
-      <View style={styles.wrapRow}>
-        {learn.stems.map((t) => (
-          <LcdButton key={t.key} label={t.label} primary={learn.stem === t.key} onPress={() => learn.setStem(t.key)} />
-        ))}
-      </View>
       {learn.status === "finding" ? (
         <View style={styles.box}>
-          <Text style={styles.wait}>{`Reading the ${stemLabel.toLowerCase()} notes…`}</Text>
+          <Text style={styles.wait}>Reading the notes…</Text>
         </View>
       ) : learn.status === "error" ? (
         <View style={[styles.box, { gap: 8 }]}>
@@ -48,7 +42,7 @@ export function LearnPanel({ learn, colors }: { learn: AiLearn; colors: Record<s
         </View>
       ) : doc && doc.notes.length === 0 ? (
         <View style={styles.box}>
-          <Text style={[styles.hint, { textAlign: "center" }]}>{`No notes found in the ${stemLabel.toLowerCase()}. Try another part.`}</Text>
+          <Text style={[styles.hint, { textAlign: "center" }]}>No notes found in this song.</Text>
         </View>
       ) : doc ? (
         <NowNote doc={doc} color={color} />
@@ -113,7 +107,6 @@ const styles = StyleSheet.create({
   section: { gap: 8, padding: 10, borderRadius: 8, backgroundColor: Lcd.bgDeep, borderWidth: 1, borderColor: Lcd.line },
   sectionTitle: { color: Lcd.text, fontSize: 13, fontWeight: "900", letterSpacing: 0.3 },
   hint: { color: Lcd.muted, fontSize: 11.5, fontWeight: "600", lineHeight: 16 },
-  wrapRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   box: {
     minHeight: 120,
     borderRadius: 8,
