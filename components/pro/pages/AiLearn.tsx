@@ -1,9 +1,10 @@
+import { useEffect, useState } from "react"
 import { StyleSheet, Text, View } from "react-native"
 
 import { LcdButton } from "@/components/pro/ui"
 import { Lcd } from "@/constants/theme"
 import { noteAt, type AiLearn, type LearnDoc } from "@/hooks/useAiLearn"
-import { useTelemetry } from "@/lib/telemetry"
+import { onTelemetry, telemetryNow } from "@/lib/telemetry"
 
 /**
  * AI Notes: the note the chosen stem is playing right now (A#, F, …), large, changing as the
@@ -56,16 +57,44 @@ export function LearnPanel({ learn, colors }: { learn: AiLearn; colors: Record<s
   )
 }
 
-/** The note under the play position. Re-renders only when the shown note changes. */
+/** What to show at `pos`: "<midi>|on" while a note sounds, "<midi>|rest" just after, or "". */
+function shownAt(doc: LearnDoc, pos: number) {
+  const i = noteAt(doc.notes, pos)
+  if (i < 0) return ""
+  const n = doc.notes[i]
+  if (pos < n.e) return `${n.midi}|on`
+  if (pos < n.e + REST_HOLD_S) return `${n.midi}|rest`
+  return ""
+}
+
+/**
+ * The note under the play position, checked every display frame (~16 ms). The engine's
+ * position is read ~30 times a second, so while the song plays it is carried forward by the
+ * time since that read; the name then changes within a frame of the note. Re-renders only
+ * when the shown note changes.
+ */
 function NowNote({ doc, color }: { doc: LearnDoc; color: string }) {
-  const shown = useTelemetry((t) => {
-    const i = noteAt(doc.notes, t.stemPos)
-    if (i < 0) return ""
-    const n = doc.notes[i]
-    if (t.stemPos <= n.e) return `${n.midi}|on`
-    if (t.stemPos <= n.e + REST_HOLD_S) return `${n.midi}|rest`
-    return ""
-  })
+  const [shown, setShown] = useState(() => shownAt(doc, telemetryNow().stemPos))
+  useEffect(() => {
+    const unsubscribe = onTelemetry(() => {}) // keeps the engine read-back running
+    let last = ""
+    let raf = 0
+    const tick = () => {
+      const t = telemetryNow()
+      const ahead = t.stemPlaying && t.at > 0 ? Math.min(0.1, (performance.now() - t.at) / 1000) : 0
+      const next = shownAt(doc, t.stemPos + ahead)
+      if (next !== last) {
+        last = next
+        setShown(next)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(raf)
+      unsubscribe()
+    }
+  }, [doc])
   const [midi, state] = shown.split("|")
   return (
     <View style={styles.box}>

@@ -3,6 +3,7 @@ import { File } from "expo-file-system"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { jobFolder, nativePath } from "@/lib/ai/client"
+import { measureTuning, trackNotes } from "@/lib/ai/noteTrack"
 import type { AiSong, AiSongs } from "@/hooks/useAiSongs"
 
 /**
@@ -15,19 +16,19 @@ import type { AiSong, AiSongs } from "@/hooks/useAiSongs"
  */
 
 /** One note. `midi` is the nearest key. */
-export type LearnNote = { s: number; e: number; midi: number; cents: number; target: boolean }
+export type LearnNote = { s: number; e: number; midi: number }
 
 export type LearnDoc = {
   v: number
   stem: string
   seconds: number
   notes: LearnNote[]
+  /** The recording's tuning against A = 440, semitones (allowed for when naming notes). */
+  tuning: number
   found: number
 }
 
-const DOC_VERSION = 2
-/** Shorter notes are ornaments, slides and breaths: not shown, so the name does not flicker. */
-const MIN_NOTE_S = 0.08
+const DOC_VERSION = 3
 
 /** Pitch range and note-length penalty per stem (SwiftF0 segment_notes pitch_hold_ms). */
 const RANGES: Record<string, { fmin: number; fmax: number; hold: number }> = {
@@ -67,12 +68,10 @@ function writeDoc(songId: string, d: LearnDoc) {
   }
 }
 
-function buildDoc(stem: string, raw: { seconds: number; notes: [number, number, number][] }): LearnDoc {
-  const notes: LearnNote[] = raw.notes.map(([s, e, m]) => {
-    const midi = Math.round(m)
-    return { s, e, midi, cents: Math.round((m - midi) * 100), target: e - s >= MIN_NOTE_S }
-  })
-  return { v: DOC_VERSION, stem, seconds: raw.seconds, notes: notes.filter((n) => n.target), found: Date.now() }
+/** Notes from SwiftF0's 16 ms pitch line (see lib/ai/noteTrack): quick enough for fast ornaments. */
+function buildDoc(stem: string, raw: { seconds: number; hop: number; line: number[] }): LearnDoc {
+  const tuning = measureTuning(raw.line)
+  return { v: DOC_VERSION, stem, seconds: raw.seconds, notes: trackNotes(raw.line, raw.hop || 0.016, tuning), tuning, found: Date.now() }
 }
 
 /** Index of the last note starting at or before `t` (-1 if none). */
@@ -111,11 +110,11 @@ export function useAiLearn(ai: AiSongs) {
       setStatus("finding")
       setError(null)
       const r = RANGES[key] ?? FULL
-      let raw: { ok?: number; reason?: string; seconds: number; notes: [number, number, number][] }
+      let raw: { ok?: number; reason?: string; seconds: number; hop: number; line: number[] }
       try {
         raw = JSON.parse(await audio.findNotes(nativePath(new File(jobFolder(song.id), t.file)), r.fmin, r.fmax, r.hold))
       } catch (e) {
-        raw = { ok: 0, reason: e instanceof Error ? e.message : "The notes could not be read.", seconds: 0, notes: [] }
+        raw = { ok: 0, reason: e instanceof Error ? e.message : "The notes could not be read.", seconds: 0, hop: 0, line: [] }
       }
       if (seq !== findSeq.current) return
       if (!raw.ok) {

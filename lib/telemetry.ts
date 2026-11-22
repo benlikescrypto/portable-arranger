@@ -33,6 +33,8 @@ export type Telemetry = {
   stemLevels: number[]
   /** Keyboard note-ons so far (MIDI in and the on-screen keys); see onKeyPress. */
   pressSeq: number
+  /** When this was read (performance.now(), ms): positions can be carried forward from it. */
+  at: number
 }
 
 const empty: Telemetry = {
@@ -60,6 +62,7 @@ const empty: Telemetry = {
   stemPlaying: false,
   stemLevels: new Array(8).fill(0),
   pressSeq: 0,
+  at: 0,
 }
 
 let current: Telemetry = empty
@@ -102,6 +105,7 @@ function poll() {
     stemPlaying: (q[EngineQuery.StemPlaying] ?? 0) > 0.5,
     stemLevels: q.length > EngineQuery.StemLevel ? q.slice(EngineQuery.StemLevel, EngineQuery.StemLevel + 8) : empty.stemLevels,
     pressSeq: q[EngineQuery.PressSeq] ?? current.pressSeq,
+    at: performance.now(),
   }
   emitPresses(q)
   current = next
