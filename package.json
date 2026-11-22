@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "main": "expo-router/entry",
   "private": true,
+  "license": "UNLICENSED",
   "scripts": {
     "start": "expo start --dev-client",
     "dev:tunnel": "node ./scripts/expo-start-tunnel-clean.js",
