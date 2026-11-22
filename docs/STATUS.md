@@ -65,19 +65,19 @@ One **AI** tab. Each step of the pipeline is brought back only after it has been
 
 **Every stem is shown and selectable again (2026-11-22).** From 2026-11-19 to 2026-11-22 only vocals, drums and bass were shown (`SHOWN_STEMS`, now removed). The server note-finding UI below (step 2a) stays hidden; its code and server endpoint remain, and step 2b is not started.
 
-**Learn (on the device, SwiftF0).**
-- Under the stem player: pick a stem (not drums), tap Find notes. SwiftF0 (`modules/audio/factory/swift_f0.onnx`, MIT, 135 KB) runs in ONNX Runtime 1.30.0 on the device (Android: `SwiftF0Runner.kt`, onnxruntime-android AAR; iOS: `SwiftF0Ort.mm`, the C++ API). Nothing is uploaded.
+**Notes (on the device, SwiftF0).**
+- Under the stem player: pick a stem (not drums; vocals first). Its notes are read at once (no button) and kept, and SwiftF0 (`modules/audio/factory/swift_f0.onnx`, MIT, 135 KB) runs in ONNX Runtime 1.30.0 on the device (Android: `SwiftF0Runner.kt`, onnxruntime-android AAR; iOS: `SwiftF0Ort.mm`, the C++ API). Nothing is uploaded.
   - iOS takes ONNX Runtime from the signed `Microsoft.ML.OnnxRuntime` NuGet package (`modules/audio/ios/vendor/onnxruntime-c.podspec`, SHA-256 pinned, added through `extraPods` in app.json). Since 2026-11-21 the CocoaPods trunk pods (`onnxruntime-c` / `-objc`) cannot be installed: their archive host download.onnxruntime.ai serves a wrong certificate and 404s. The notes are kept as `learn_<stem>.json` beside the stems.
 - `PitchTrack.cpp` decodes the stem MP3 (the same `dr_mp3` decode as the player, so times line up), resamples it to 16 kHz and cuts SwiftF0's 30 s windows. It runs the silence gate and loudness and segments notes with a C++ port of `swift_f0.segment_notes`. Pitch ranges and note-length settings are set per stem (`RANGES` in `hooks/useAiLearn.ts`).
-- The view: notes scroll past a play line with SwiftF0's pitch line over them. A strip over a keyboard shows the key to play now and the next one. Presses from any keyboard (MIDI in, the play slide or the keyboard here) are checked; the engine reports them through `QPressSeq` / `QPress`. There is a score (hit, missed, wrong keys), Wait for me (the song stops at each note until you play it; Play skips it), Any octave, and Mute this stem.
+- The view (simplified 2026-11-22 for players new to music): one large note name, sharps only (A#, F, …), for the note the stem is playing at the play position. It changes with each note; between notes the last one stays up dimmed for 1.2 s, then a dash. Notes under 80 ms are dropped so the name does not flicker. The earlier piano roll, keyboard guide, scoring and wait mode were removed (the engine still counts key presses, `QPressSeq` / `QPress`).
 - SwiftF0 follows one voice. Vocals, bass and lead lines read well; on chords (other, piano) it follows the strongest note.
 - Checked on the host:
   - `tests/test_pitch` against the swift-f0 0.3.0 Python package on a 57 s test melody: all 77 notes identical, loudness within 0.0000 dB, and the 44.1 → 16 kHz resampler with no time shift and residual under -60 dB.
   - Windowed inference matches whole-clip Python inference within 0.0002 cents (ONNX Runtime, Node).
   - Engine key-press checks in `test_engine`.
   - Real Demucs stems of the e2e demo song (136 s), C++ pipeline against the Python package: bass 34 / 34 notes, voiced frames agree 99.9%, same key 100%; other 70 / 67 notes, voiced frames 99.8%, same key 99.8%. The demo has no singing, so both find no vocal notes.
-  - The full Android debug app builds (x86_64) with ONNX Runtime packaged (2026-11-22).
-- Not yet checked: on a phone or tablet. iOS has not been compiled (it needs a Mac).
+  - iOS development build (EAS local build on GitHub macOS runner) compiles and links with the NuGet ONNX Runtime (2026-11-22).
+- Not yet checked: notes on a phone or tablet. A full local Android app build does not work on the Windows dev machine (path length); build Android with EAS.
 
 **Step 2a (parked, hidden in the app): notes in a stretch of a stem.**
 - In the AI tab, pick a stem and a stretch (0.5–120 s; "Here" marks the playhead), then Find notes. The server (CPU) runs Basic Pitch on the stretch, drops overtone ghosts, and moves every note's start to the exact sample (`server/abai/onsets.py`). It returns `crop.mp3` and `notes.json`.
