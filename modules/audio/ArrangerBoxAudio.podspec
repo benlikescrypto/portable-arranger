@@ -16,7 +16,9 @@ Pod::Spec.new do |s|
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
   # Runs the SwiftF0 pitch model (factory/swift_f0.onnx) for AI Learn.
-  s.dependency 'onnxruntime-objc', '1.30.0'
+  # ONNX Runtime's C/C++ API (SwiftF0Ort.mm). The app's Podfile takes this pod from
+  # ios/vendor/onnxruntime-c.podspec (NuGet), via expo-build-properties extraPods in app.json.
+  s.dependency 'onnxruntime-c', '1.30.0'
   s.frameworks     = 'AudioToolbox', 'AVFoundation', 'Accelerate'
   s.libraries      = 'z'
   s.pod_target_xcconfig = {

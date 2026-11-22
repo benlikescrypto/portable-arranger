@@ -116,7 +116,13 @@
         "expo-build-properties",
         {
           "ios": {
-            "deploymentTarget": "16.4"
+            "deploymentTarget": "16.4",
+            "extraPods": [
+              {
+                "name": "onnxruntime-c",
+                "podspec": "../modules/audio/ios/vendor/onnxruntime-c.podspec"
+              }
+            ]
           },
           "android": {
             "minSdkVersion": 26,
